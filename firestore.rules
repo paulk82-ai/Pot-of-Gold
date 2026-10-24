@@ -1,0 +1,124 @@
+rules_version = '2';
+
+// Rathsallagh Monthly: who can read and change what.
+// - Organisers (emails in config/admins) can change everything.
+// - Golfers sign in with the email the organiser saved for them (members/{email}).
+// - A golfer's card can only be marked by someone else in their group, while that round is open (Fri-Sun).
+// - Nobody can mark their own card.
+// - New cards are played off the golfer's current competition handicap (golfers/{id}.hcp, kept up to date by the organiser's app).
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function verified() { return signedIn() && request.auth.token.email_verified == true; }
+    function myEmail() { return request.auth.token.email.lower(); }
+    function adminsPath() { return /databases/$(database)/documents/config/admins; }
+    function isAdmin() { return verified() && exists(adminsPath()) && myEmail() in get(adminsPath()).data.emails; }
+    function memberPath() { return /databases/$(database)/documents/members/$(myEmail()); }
+    function isMember() { return verified() && exists(memberPath()); }
+    function myGid() { return get(memberPath()).data.golferId; }
+    function canRead() { return isAdmin() || isMember(); }
+
+    // Organiser list. The first person to set up the app can make themselves organiser.
+    match /config/admins {
+      allow read: if signedIn();
+      allow create: if verified() && request.resource.data.emails == [myEmail()];
+      allow update, delete: if isAdmin();
+    }
+
+    // Admin page code (stored as a salted hash).
+    match /config/admin {
+      allow read, write: if isAdmin();
+    }
+
+    // Entry fee, Revolut link, prizes, points, course card.
+    match /config/settings {
+      allow read: if canRead();
+      allow write: if isAdmin();
+    }
+
+    // Which email belongs to which golfer. Golfers can only look up their own.
+    match /members/{email} {
+      allow get: if verified() && email == myEmail();
+      allow read, write: if isAdmin();
+    }
+
+    match /golfers/{gid} {
+      allow read: if canRead();
+      allow write: if isAdmin();
+    }
+
+    match /comps/{cid} {
+      function comp() { return get(/databases/$(database)/documents/comps/$(cid)).data; }
+      function isOpen() { return comp().status == 'open'; }
+      function roundOpen(n) {
+        let r = comp().rounds[n - 1];
+        return request.time >= r.opens && request.time < r.closes;
+      }
+      function entered(gid) { return exists(/databases/$(database)/documents/comps/$(cid)/entries/$(gid)); }
+
+      allow read: if canRead();
+      allow write: if isAdmin();
+
+      // One entry per golfer per month. Golfers can enter themselves (unpaid); organisers record payments.
+      match /entries/{gid} {
+        allow read: if canRead();
+        allow write: if isAdmin();
+        allow create: if isMember() && gid == myGid() && isOpen()
+          && request.resource.data.keys().hasOnly(['compId', 'golferId', 'paid', 'method', 'paidAt', 'createdAt'])
+          && request.resource.data.compId == cid
+          && request.resource.data.golferId == gid
+          && request.resource.data.paid == false;
+      }
+
+      // Playing groups for each round: 2 to 4 golfers who are entered. Members manage their own group.
+      match /groups/{groupId} {
+        function validGroup(g) {
+          let m = g.members;
+          return g.keys().hasOnly(['compId', 'round', 'members', 'createdBy', 'createdAt'])
+            && g.compId == cid && g.round is int && m is list
+            && m.size() >= 2 && m.size() <= 4 && myGid() in m
+            && isOpen() && roundOpen(g.round)
+            && entered(m[0]) && entered(m[1])
+            && (m.size() < 3 || entered(m[2]))
+            && (m.size() < 4 || entered(m[3]));
+        }
+        allow read: if canRead();
+        allow write: if isAdmin();
+        allow create: if isMember() && validGroup(request.resource.data);
+        allow update: if isMember() && myGid() in resource.data.members
+          && request.resource.data.round == resource.data.round
+          && validGroup(request.resource.data);
+        allow delete: if isMember() && myGid() in resource.data.members && isOpen() && roundOpen(resource.data.round);
+      }
+
+      // Cards: one per golfer per round (id = "<round>_<golferId>").
+      // Only another member of the golfer's group can mark it, and only while the round is open.
+      match /cards/{cardId} {
+        function validMark(c) {
+          let me = myGid();
+          let g = get(/databases/$(database)/documents/comps/$(cid)/groups/$(c.groupId)).data;
+          let golfer = get(/databases/$(database)/documents/golfers/$(c.golferId)).data;
+          return c.keys().hasOnly(['compId', 'golferId', 'round', 'groupId', 'markerId', 'scores', 'hi', 'shots', 'updatedAt', 'updatedBy', 'scanned'])
+            && c.compId == cid && c.round is int && c.scores is map
+            && cardId == string(c.round) + '_' + c.golferId
+            && c.golferId != me && c.markerId == me
+            && g.round == c.round && me in g.members && c.golferId in g.members
+            && isOpen() && roundOpen(c.round)
+            && (resource == null
+                  ? (c.shots == null && c.hi == golfer.get('hcp', golfer.get('hi', null)))
+                  : (resource.data.golferId == c.golferId && resource.data.round == c.round
+                     && c.shots == resource.data.get('shots', null) && c.hi == resource.data.get('hi', null)));
+        }
+        allow read: if canRead();
+        allow write: if isAdmin();
+        allow create, update: if isMember() && validMark(request.resource.data);
+      }
+    }
+
+    // Reading across all competitions (league table and stats).
+    match /{path=**}/entries/{gid} { allow read: if canRead(); }
+    match /{path=**}/groups/{groupId} { allow read: if canRead(); }
+    match /{path=**}/cards/{cardId} { allow read: if canRead(); }
+  }
+}

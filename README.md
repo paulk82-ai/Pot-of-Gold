@@ -1,0 +1,118 @@
+# Rathsallagh Monthly — setup guide
+
+An installable phone app for the Rathsallagh monthly competition. Golfers sign in, enter for the month, set up their playing group, and mark each other's cards (or scan the card with the camera). The organiser manages golfers, payments and results. Everything runs on Google's Firebase free tier.
+
+**What's in the box**
+
+- `docs/` is the app itself (the folder that gets put online).
+- `firestore.rules` holds the security rules, which you paste into Firebase.
+- `docs/config.js` is the one file you fill in with your Firebase details.
+
+**How the competition works**
+
+- Each month has 4 weekend rounds, open Friday to Sunday. The organiser can change the number of rounds and the dates per month.
+- The €10 entry covers the month. Each golfer gets one card per round, and their best 3 cards count.
+- Golfers with fewer than 3 counting cards are ranked on what they have, below anyone with 3.
+- A card only counts once it is complete and marked by someone else in the golfer's group. Nobody can mark their own card.
+- Golfers form groups of 2 to 4 for each round in the app before they play.
+- Scanned cards are only accepted for golfers whose names match the golfer list. Unrecognised names are turned away.
+- League points: 1st 5, 2nd 4, 3rd 3, 4th 2, everyone else 1. They are added when the organiser finalises the month. You can change them in Admin.
+
+**Competition handicaps**
+
+These are worked out automatically each time a month is finalised:
+
+- The winner is cut by 2 and the runner-up by 1.
+- A golfer who plays 2 months in a row without a cut (winning or runner-up) goes up 0.5, and the count starts again. Months a golfer doesn't enter don't count.
+- Everyone can see each golfer's current handicap, starting handicap, history of changes, and when they're next due to rise, under **Golfers → Handicaps** and on each golfer's page.
+- Reopening a month undoes its changes. You can change the amounts, the number of months, and a top limit in **Admin → Handicap changes**.
+- Each card is played off the handicap the golfer had on the day it was marked.
+
+You can try every screen first with made-up golfers: open the app's address with `?sample=1` on the end.
+
+---
+
+## 1. Create the Firebase project (about 10 minutes)
+
+This is easiest on a computer, but it works in a phone browser too.
+
+1. Go to **console.firebase.google.com** and sign in with your Google account.
+2. Tap **Create a project** and name it, for example `rathsallagh-monthly`. You can leave Google Analytics off.
+3. On the project home, tap the **Web** icon (`</>`) to add a web app. Call it `Rathsallagh` and skip Firebase Hosting.
+4. Firebase shows a block of code with `firebaseConfig = { apiKey: ..., authDomain: ..., projectId: ... }`. Copy those six values into `docs/config.js`, or send them to Claude to fill in. These values aren't secret.
+5. Turn on sign-in: go to **Build → Authentication → Get started**, then under **Sign-in method**:
+   - turn on **Google**, choosing your email as the support email;
+   - turn on **Email/Password**, but not the separate "Email link" option.
+6. Create the database: go to **Build → Firestore Database → Create database**. Choose the **europe-west** location nearest you (for example `europe-west1`) and start in **production mode**.
+7. Paste in the rules: still in Firestore, open the **Rules** tab, replace everything with the contents of `firestore.rules`, and tap **Publish**.
+
+## 2. Turn on card scanning (Gemini)
+
+1. In the Firebase console, go to **AI Logic** (under *AI services* or *Build*) and tap **Get started**.
+2. Choose the **Gemini Developer API**, which has a free tier, and follow the prompts.
+3. Firebase now requires **App Check** for AI Logic. Go to **App Check → Apps**, pick your web app, and choose **reCAPTCHA Enterprise**.
+   - Firebase helps you create a site key; add your app's web address (step 3 below) as an allowed domain.
+   - Copy the **site key** into `recaptchaEnterpriseSiteKey` in `docs/config.js`.
+4. If Google ever renames the model, change `geminiModel` in `docs/config.js`.
+
+Without this step the app still works fully; golfers just type scores in instead of scanning.
+
+## 3. Put the app online (free, with GitHub Pages)
+
+1. Create a free account at **github.com**, then create a new repository called `rathsallagh`.
+2. In Claude, connect GitHub (claude.ai → Settings → Connectors → GitHub) and ask Claude to push the app to your repository. You can also upload the files yourself on github.com.
+3. In the repository, go to **Settings → Pages**. Under *Build and deployment*, choose **Deploy from a branch**, then branch **main** and folder **/docs**, and save.
+4. After a minute your app is live at `https://YOUR-GITHUB-NAME.github.io/rathsallagh/`.
+5. Back in Firebase, go to **Authentication → Settings → Authorized domains → Add domain** and add `YOUR-GITHUB-NAME.github.io`. Without this, sign-in won't work.
+
+## 4. First sign-in and setup
+
+1. Open the app address on your phone and sign in with Google using your own email.
+2. The app offers **"I'm the organiser"**. Tap it. You are now the organiser; only the first person can do this.
+3. Open **Admin**, set your 4 to 8 digit admin code, and check the entry fee, Revolut username, prize split and points.
+4. On **Golfers**, add each golfer with their name, handicap index, and the email they will sign in with. Golfers can only get in if their email is on this list.
+5. On **Comps**, tap **New competition**. The four Fridays are filled in for the next month; adjust them if needed.
+6. Share the app address with the golfers.
+
+## 5. Install it on phones
+
+- **iPhone:** open the address in Safari, tap **Share**, then **Add to Home Screen**.
+- **Android:** open it in Chrome, then tap **Install app** (or the menu, then **Add to Home screen**).
+
+It then opens full-screen like any other app, and it keeps working with a weak signal on the course. Cards save when the phone reconnects.
+
+---
+
+## How golfers use it
+
+1. Sign in with Google, or create an email and password account using the email the organiser has.
+2. On the month's competition, tap **Enter**, then pay €10 by Revolut or on the club's card reader. The organiser marks it paid.
+3. When a round is open (Friday to Sunday), tap **Start your group** and tick who you're playing with.
+4. During or after the round, tap **Mark card** next to each playing partner and enter their scores hole by hole. Or tap **Scan our card** and photograph the scorecard, then check the numbers before adding them.
+5. Someone else in the group marks your card. You can see it, but you can't change it.
+
+## What the organiser can do
+
+- Add and edit golfers and their emails, and add other organisers.
+- Create months, change round dates, and record payments (Revolut, card reader or cash).
+- Set up or change groups, enter or correct any card, set the marker, and override shots.
+- Scan any card. Recognised golfers on the card are grouped together automatically.
+- Finalise the month, which locks scores and adds league points. Months can be reopened.
+
+## Costs
+
+- **Firebase (Spark plan)** is free for a club of this size.
+- **Gemini scanning** uses the free tier of the Gemini Developer API. If you ever outgrow it, Google asks you to add billing first; it doesn't charge without it.
+- **GitHub Pages** is free.
+
+## Files
+
+| File | What it is |
+| --- | --- |
+| `docs/index.html` | Page layout and design |
+| `docs/app.js` | The app: competitions, scoring, groups, marking, league, stats, admin |
+| `docs/backend-firebase.js` | Sign-in, database and Gemini scanning via Firebase |
+| `docs/backend-mock.js` | Sample mode (`?sample=1`), kept on the phone only |
+| `docs/config.js` | Your Firebase details |
+| `docs/sw.js`, `docs/manifest.webmanifest`, `docs/icons/` | Install and offline support |
+| `firestore.rules` | Security rules for Firestore |
