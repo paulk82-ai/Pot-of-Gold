@@ -491,6 +491,17 @@ form.inline{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin
 .mgrid td.win{background:var(--gold-bg);color:var(--ink);font-weight:800}
 .mgrid td.second{box-shadow:inset 0 0 0 1.5px var(--gold);font-weight:700}
 .mgrid td.tot{font-family:var(--display);font-stretch:72%;font-weight:800;font-size:18px}
+
+.rrows{display:flex;flex-direction:column;gap:8px}
+.rrow{border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--card)}
+.rrow-top{display:grid;grid-template-columns:32px minmax(0,1fr);gap:8px;align-items:center}
+.rrow-top .rn{font-family:var(--display);font-stretch:72%;font-weight:800;font-size:20px}
+.rrow-opts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:8px}
+.rrow-opts label{display:flex;flex-direction:column;gap:3px;min-width:0}
+.rrow-opts label span{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.rrow-opts select{min-height:40px;font-size:14px;padding:0 6px}
+.check.toggle{border:1px solid var(--line);border-radius:10px;margin:-4px 0 14px}
+.rtile .rt-f{font-size:10px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 </style>
 </head>
 <body>

@@ -11,6 +11,7 @@ An installable phone app for the Rathsallagh monthly competition. Golfers sign i
 **How the competition works**
 
 - Each month has 4 weekend rounds, open Friday to Sunday. The organiser can change the number of rounds and the dates per month.
+- Each round can have its own format (Stableford, Medal, Gross or v Par), tees and holes (18 or 14). Each round's own table uses its format. When a month mixes formats or hole counts, the monthly table adds up Stableford points from each golfer's best 3 cards.
 - The €10 entry covers the month. Each golfer gets one card per round, and their best 3 cards count.
 - Golfers with fewer than 3 counting cards are ranked on what they have, below anyone with 3.
 - A card only counts once it is complete and marked by someone else in the golfer's group. Nobody can mark their own card.

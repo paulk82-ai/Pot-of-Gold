@@ -77,6 +77,16 @@ function seasonList(){ const ys = new Set(Object.values(D.comps).map(c => String
 /* ---------- Rounds (weekends, Friday to Sunday) ---------- */
 function compRounds(c){ return Array.isArray(c.rounds) && c.rounds.length ? c.rounds : [{n:1, from:c.date, to:c.date}]; }
 function compBest(c){ const n = compRounds(c).length; return Math.min(n, Math.max(1, Number(c.best) || n)); }
+// A round's own settings: format, tees, holes and allowance, falling back to the month's.
+function rcfg(c, n){
+  const r = compRounds(c).find(x => x.n === n) || {};
+  const allow = r.allowance !== null && r.allowance !== undefined && r.allowance !== '' && isFinite(r.allowance) ? Number(r.allowance) : (isFinite(c.allowance) ? Number(c.allowance) : 95);
+  return {id:c.id, n, name:c.name, status:c.status, format: r.format || c.format || 'stableford', tee: r.tee || c.tee || 'white', holes: Array.isArray(r.holes) && r.holes.length ? r.holes : (c.holes || range(1,18)), allowance: allow};
+}
+function roundsVary(c){ const rs = compRounds(c).map(r => rcfg(c, r.n)); const a = rs[0]; return rs.some(x => x.format !== a.format || x.tee !== a.tee || x.holes.join() !== a.holes.join() || x.allowance !== a.allowance); }
+// Same format and number of holes every round: the month adds up that format. Otherwise it adds up Stableford points.
+function monthMode(c){ const rs = compRounds(c).map(r => rcfg(c, r.n)); const f = rs[0].format, n = rs[0].holes.length; return rs.every(x => x.format === f && x.holes.length === n) ? {mixed:false, format:f} : {mixed:true, format:'stableford'}; }
+function unitFor(format){ return format === 'stableford' ? 'pts' : format === 'medal' ? 'nett' : format === 'gross' ? 'gross' : ''; }
 function firstFriday(y, m){ const d = new Date(y, m, 1); d.setDate(1 + ((5 - d.getDay() + 7) % 7)); return d; }
 function defaultFirstFri(){ const now = new Date(); let f = firstFriday(now.getFullYear(), now.getMonth()); if (iso(f) < iso(now) && addDays(iso(f), 2) < iso(now)) f = firstFriday(now.getFullYear(), now.getMonth() + 1); return iso(f); }
 function weekendRounds(firstFri, count){ return range(1, count).map(i => { const from = addDays(firstFri, 7*(i-1)); return {n:i, from, to:addDays(from, 2)}; }); }
@@ -120,8 +130,9 @@ function markedOK(card){
 }
 function scoreCard(comp, round, gid){
   const g = D.golfers[gid]; const card = cardOf(comp.id, round, gid);
-  const {par, si} = parsFor(g); const holes = comp.holes || [];
-  const total = cardShots(card, comp, g); const alloc = allocShots(holes, si, total);
+  const rc = rcfg(comp, round);
+  const {par, si} = parsFor(g); const holes = rc.holes;
+  const total = cardShots(card, rc, g); const alloc = allocShots(holes, si, total);
   const scores = (card && card.scores) || {};
   let gross = 0, runNett = 0, runPar = 0, pts = 0, pb = 0, filled = 0, pickups = 0, parSum = 0;
   const rows = holes.map(h => {
@@ -134,10 +145,10 @@ function scoreCard(comp, round, gid){
     return r;
   });
   const complete = holes.length > 0 && filled === holes.length;
-  const stroke = comp.format === 'medal' || comp.format === 'gross';
+  const stroke = rc.format === 'medal' || rc.format === 'gross';
   const marked = markedOK(card);
   const nr = stroke && pickups > 0;
-  return {comp, round, gid, golfer:g, card, rows, total, gross, runNett, runPar, pts, pb, filled, complete, nr, pickups, parSum, marked, valid: complete && !nr && marked};
+  return {comp, rc, round, gid, golfer:g, card, rows, total, gross, runNett, runPar, pts, pb, filled, complete, nr, pickups, parSum, marked, valid: complete && !nr && marked};
 }
 function metric(comp, rows){
   switch (comp.format) {
@@ -152,7 +163,7 @@ function cbSegments(n){ return [Math.ceil(n/2), Math.round(n/3), Math.round(n/6)
 function cbKeys(comp, sc){ return [metric(comp, sc.rows)].concat(cbSegments(sc.rows.length).map(n => metric(comp, sc.rows.slice(-n)))); }
 function cardStatus(sc){ if (!sc.card || !sc.filled) return 'No card'; if (!sc.complete) return 'Thru ' + sc.filled; if (sc.nr) return 'NR'; if (!sc.marked) return 'Not marked'; return ''; }
 function cardValueText(sc){
-  const c = sc.comp;
+  const c = sc.rc;
   if (c.format === 'medal') return String(sc.runNett);
   if (c.format === 'gross') return String(sc.gross);
   if (c.format === 'parbogey') return pbStr(sc.pb);
@@ -160,10 +171,10 @@ function cardValueText(sc){
 }
 function roundBoard(comp, n){
   const key = `rb:${comp.id}:${n}`; if (MEMO[key]) return MEMO[key];
-  const hi = higher(comp);
+  const rc = rcfg(comp, n); const hi = higher(rc);
   const all = entriesFor(comp.id).map(e => scoreCard(comp, n, e.golferId));
   const ranked = all.filter(sc => sc.valid);
-  ranked.forEach(sc => sc.keys = cbKeys(comp, sc));
+  ranked.forEach(sc => sc.keys = cbKeys(rc, sc));
   const cmp = (a,b) => { for (let i = 0; i < a.keys.length; i++) { const d = b.keys[i] - a.keys[i]; if (d) return hi ? d : -d; } return 0; };
   ranked.sort((a,b) => cmp(a,b) || byName(a.golfer, b.golfer));
   let pos = 0; ranked.forEach((sc,i) => { if (i === 0 || cmp(ranked[i-1], sc) !== 0) pos = i + 1; sc.pos = pos; });
@@ -173,16 +184,19 @@ function roundBoard(comp, n){
 }
 function leaderboard(comp){
   const key = 'lb:' + comp.id; if (MEMO[key]) return MEMO[key];
-  const k = cfg(); const rs = compRounds(comp); const best = compBest(comp); const hi = higher(comp); const final = comp.status === 'final';
+  const k = cfg(); const rs = compRounds(comp); const best = compBest(comp); const mm = monthMode(comp); const mf = {format: mm.format}; const hi = higher(mf); const final = comp.status === 'final';
   const rows = entriesFor(comp.id).map(e => {
     const cards = rs.map(r => scoreCard(comp, r.n, e.golferId));
-    const valid = cards.filter(sc => sc.valid).map(sc => ({sc, v: metric(comp, sc.rows)}));
+    // Mixed formats: a complete, marked card counts in Stableford points even if it was a no return in its own round.
+    const ok = sc => mm.mixed ? (sc.complete && sc.marked) : sc.valid;
+    cards.forEach(sc => { sc.counts = ok(sc); });
+    const valid = cards.filter(ok).map(sc => ({sc, v: metric(mf, sc.rows)}));
     valid.sort((a,b) => hi ? b.v - a.v : a.v - b.v);
     const counted = valid.slice(0, best);
     const countedNs = new Set(counted.map(x => x.sc.round));
     const total = counted.reduce((a,x) => a + x.v, 0);
     const last = counted.slice().sort((a,b) => b.sc.round - a.sc.round)[0];
-    return {entry:e, gid:e.golferId, golfer:D.golfers[e.golferId], cards, counted, countedNs, count:counted.length, total, keys: last ? cbKeys(comp, last.sc) : [], parSum: counted.reduce((a,x) => a + x.sc.runPar, 0), started: cards.some(c => c.filled > 0)};
+    return {entry:e, gid:e.golferId, golfer:D.golfers[e.golferId], cards, counted, countedNs, count:counted.length, total, keys: last ? cbKeys(mf, last.sc) : [], parSum: counted.reduce((a,x) => a + x.sc.runPar, 0), started: cards.some(c => c.filled > 0)};
   });
   const ranked = rows.filter(r => r.count > 0);
   const cmp = (a,b) => { if (b.count !== a.count) return b.count - a.count; if (a.total !== b.total) return hi ? b.total - a.total : a.total - b.total; for (let i = 0; i < Math.min(a.keys.length, b.keys.length); i++) { const d = b.keys[i] - a.keys[i]; if (d) return hi ? d : -d; } return 0; };
@@ -195,13 +209,14 @@ function leaderboard(comp){
   ranked.forEach(r => { if (r.pos <= k.points.length) r.points = Math.max(k.points[r.pos-1], k.entryPoint); });
   const st = compStats(comp);
   for (let i = 0; i < ranked.length;) { const p = ranked[i].pos; const grp = ranked.filter(r => r.pos === p); const cov = st.prizes.slice(p-1, p-1+grp.length).reduce((a,b) => a+b, 0); grp.forEach(r => r.prize = cov / grp.length); i += grp.length; }
-  return (MEMO[key] = {ranked, rest, all: ranked.concat(rest), stats: st, best, rounds: rs});
+  return (MEMO[key] = {ranked, rest, all: ranked.concat(rest), stats: st, best, rounds: rs, mode: mm});
 }
 function monthText(r, comp){
   if (!r.count) return '–';
-  if (comp.format === 'parbogey') return pbStr(r.total);
+  if (monthMode(comp).format === 'parbogey') return pbStr(r.total);
   return String(r.total);
 }
+function monthUnit(comp){ return unitFor(monthMode(comp).format); }
 function compStats(c){
   const es = entriesFor(c.id); const k = cfg();
   const fee = Number(c.fee != null ? c.fee : k.fee) || 0;
@@ -421,8 +436,10 @@ function doRender(){
 }
 function backBtn(label, act){ return `<button class="back" data-act="${act}">${ICONS.back}${esc(label)}</button>`; }
 function chipsFor(c){
-  const k = cfg(); const t = TEES[c.tee] || TEES.white; const rs = compRounds(c);
-  return `<span class="chip">${esc((FORMATS[c.format]||FORMATS.stableford).short)}</span><span class="chip">${(c.holes||[]).length} holes</span>${rs.length > 1 ? `<span class="chip">Best ${compBest(c)} of ${rs.length}</span>` : ''}<span class="chip">${t.name} tees</span><span class="chip">${euro(c.fee != null ? c.fee : k.fee)} entry</span>`;
+  const k = cfg(); const rs = compRounds(c); const best = rs.length > 1 ? `<span class="chip">Best ${compBest(c)} of ${rs.length}</span>` : ''; const fee = `<span class="chip">${euro(c.fee != null ? c.fee : k.fee)} entry</span>`;
+  if (roundsVary(c)) { const fs = [...new Set(rs.map(r => (FORMATS[rcfg(c, r.n).format] || FORMATS.stableford).short))]; return `<span class="chip">${esc(fs.join(' · '))}</span><span class="chip">Varies by round</span>${best}${fee}`; }
+  const rc = rcfg(c, rs[0].n); const t = TEES[rc.tee] || TEES.white;
+  return `<span class="chip">${esc((FORMATS[rc.format]||FORMATS.stableford).short)}</span><span class="chip">${rc.holes.length} holes</span>${best}<span class="chip">${t.name} tees</span>${fee}`;
 }
 
 /* ----- Signed-out screens ----- */
@@ -476,7 +493,7 @@ function viewComps(){
     const lb = fin ? leaderboard(c) : null;
     const win = lb && lb.ranked[0] ? ' · Won by ' + esc(lb.ranked.filter(r => r.pos === 1).map(r => r.golfer.name).join(' & ')) : '';
     const rs = compRounds(c);
-    return `<li><button class="row" data-act="openComp" data-id="${esc(c.id)}"><span class="row-date"><b>${p.day}</b>${p.mon}</span><span class="row-main"><span class="row-title">${esc(c.name)}</span><span class="row-sub">${esc((FORMATS[c.format]||FORMATS.stableford).short)} · ${rs.length > 1 ? `best ${compBest(c)} of ${rs.length}` : `${(c.holes||[]).length} holes`}${win}</span></span><span class="pill ${fin ? 'final' : 'open'}">${fin ? 'Final' : 'Open'}</span></button></li>`;
+    return `<li><button class="row" data-act="openComp" data-id="${esc(c.id)}"><span class="row-date"><b>${p.day}</b>${p.mon}</span><span class="row-main"><span class="row-title">${esc(c.name)}</span><span class="row-sub">${roundsVary(c) ? 'Mixed formats' : esc((FORMATS[rcfg(c, rs[0].n).format]||FORMATS.stableford).short)} · ${rs.length > 1 ? `best ${compBest(c)} of ${rs.length}` : `${rcfg(c, rs[0].n).holes.length} holes`}${win}</span></span><span class="pill ${fin ? 'final' : 'open'}">${fin ? 'Final' : 'Open'}</span></button></li>`;
   }).join('') + '</ul>';
   return h;
 }
@@ -493,7 +510,7 @@ function featured(c){
       <h2 class="feat-name">${esc(c.name)}</h2>
       <div class="chips">${chipsFor(c)}</div>
       <dl class="figs"><div><dt>Entries</dt><dd>${st.entries}</dd></div><div><dt>Paid</dt><dd>${st.paid}</dd></div><div><dt>Pot</dt><dd>${euro(st.pot)}</dd></div></dl>
-      ${leader ? `<p class="hint">Leading: <b>${esc(leader.golfer.name)}</b>, ${esc(monthText(leader, c))}${c.format === 'stableford' ? ' pts' : ''}</p>` : ''}
+      ${leader ? `<p class="hint">Leading: <b>${esc(leader.golfer.name)}</b>, ${esc(monthText(leader, c))} ${monthUnit(c)}</p>` : ''}
       <button class="btn primary" data-act="openComp" data-id="${esc(c.id)}">Open competition</button>
     </div>
   </section>`;
@@ -508,7 +525,8 @@ function emptyComps(){
     </ol></section>`;
 }
 function roundsStrip(c){
-  return `<div class="rstrip">${compRounds(c).map(r => { const st = roundState(r); return `<button class="rtile ${st}" data-act="boardSel" data-v="${r.n}"><span class="rt-n">R${r.n}</span><span class="rt-d">${esc(shortRange(r))}</span><span class="rt-s">${st === 'open' ? 'Open now' : st === 'played' ? 'Played' : 'Upcoming'}</span></button>`; }).join('')}</div>`;
+  const vary = roundsVary(c);
+  return `<div class="rstrip">${compRounds(c).map(r => { const st = roundState(r); const rc = rcfg(c, r.n); return `<button class="rtile ${st}" data-act="boardSel" data-v="${r.n}"><span class="rt-n">R${r.n}</span><span class="rt-d">${esc(shortRange(r))}</span>${vary ? `<span class="rt-f">${esc((FORMATS[rc.format] || FORMATS.stableford).short)} · ${rc.holes.length}h · ${esc((TEES[rc.tee] || TEES.white).name)}</span>` : ''}<span class="rt-s">${st === 'open' ? 'Open now' : st === 'played' ? 'Played' : 'Upcoming'}</span></button>`; }).join('')}</div>${monthMode(c).mixed ? `<p class="hint" style="margin-top:6px">Rounds use different formats, so the monthly table adds up Stableford points from each golfer's best ${compBest(c)} cards.</p>` : ''}`;
 }
 function viewComp(){
   const c = D.comps[S.compId]; if (!c) { S.compId = null; return viewComps(); }
@@ -553,8 +571,9 @@ function myPanel(c){
   return h;
 }
 function roundCells(c, row){
+  const mixed = monthMode(c).mixed; const val = sc => mixed ? String(sc.pts) : cardValueText(sc);
   return compRounds(c).map(r => { const sc = row.cards.find(x => x.round === r.n); let v = '–', cls = '';
-    if (sc && sc.filled) { if (sc.valid) { v = cardValueText(sc); if (!row.countedNs.has(r.n)) { v = '(' + v + ')'; cls = 'dropped'; } } else { v = sc.complete && !sc.marked && !sc.nr ? cardValueText(sc) + '*' : sc.nr ? 'NR' : '…'; cls = 'pending'; } }
+    if (sc && sc.filled) { if (sc.counts) { v = val(sc); if (!row.countedNs.has(r.n)) { v = '(' + v + ')'; cls = 'dropped'; } } else { v = sc.complete && !sc.marked && (mixed || !sc.nr) ? val(sc) + '*' : (!mixed && sc.nr) ? 'NR' : '…'; cls = 'pending'; } }
     return `<span class="rc ${cls}"><i>R${r.n}</i>${esc(v)}</span>`; }).join('');
 }
 function entriesHtml(c, lb){
@@ -567,7 +586,7 @@ function entriesHtml(c, lb){
   h += `<p class="hint entry-hint">Tap a golfer to see their cards. A * means the card isn't marked by someone in their group yet, so it doesn't count. Brackets show a dropped round.</p>`;
   h += '<ul class="list">' + all.map(r => {
     const e = r.entry; const pay = A ? (e.paid ? `<button class="paytag paid" data-act="pay" data-id="${esc(c.id + '/' + r.gid)}">${esc(METHODS[e.method] || 'Paid')}</button>` : `<button class="paytag unpaid" data-act="pay" data-id="${esc(c.id + '/' + r.gid)}">Unpaid</button>`) : (e.paid ? '<span class="paytag paid">Paid</span>' : '<span class="paytag unpaid">Unpaid</span>');
-    return `<li class="entry"><button class="entry-main" data-act="openCard" data-cid="${esc(c.id)}" data-round="${cur}" data-gid="${esc(r.gid)}"><span class="entry-name">${esc(r.golfer.name)}<span class="rcells">${roundCells(c, r)}</span></span><span class="entry-score ${r.count ? '' : 'dim'}">${r.count ? esc(monthText(r, c)) + (c.format === 'stableford' ? '<small>pts</small>' : '') : 'No total'}</span></button>${pay}</li>`;
+    return `<li class="entry"><button class="entry-main" data-act="openCard" data-cid="${esc(c.id)}" data-round="${cur}" data-gid="${esc(r.gid)}"><span class="entry-name">${esc(r.golfer.name)}<span class="rcells">${roundCells(c, r)}</span></span><span class="entry-score ${r.count ? '' : 'dim'}">${r.count ? esc(monthText(r, c)) + (monthUnit(c) ? `<small>${monthUnit(c)}</small>` : '') : 'No total'}</span></button>${pay}</li>`;
   }).join('') + '</ul>';
   return h;
 }
@@ -595,19 +614,21 @@ function monthListHtml(c, lb){
   const rows = lb.ranked.map(r => {
     const tag = r.pos === 1 ? (fin ? 'Winner' : 'Leading') : r.pos === 2 ? 'Runner-up' : '';
     const note = r.count < compBest(c) ? `${r.count} of ${compBest(c)} rounds` : r.onCb ? 'on countback' : r.tied ? 'tied' : '';
-    return `<li class="lb-row ${r.pos === 1 ? 'first' : ''}"><span class="lb-pos">${r.tied ? 'T' : ''}${r.pos}</span><button class="lb-name" data-act="openPlayer" data-id="${esc(r.gid)}">${esc(r.golfer.name)}${rs.length > 1 ? `<span class="rcells">${roundCells(c, r)}</span>` : ''}${note ? `<small>${note}</small>` : ''}${tag ? `<span class="tag">${tag}</span>` : ''}</button><span class="lb-score">${esc(monthText(r, c))}<small>${c.format === 'stableford' ? 'pts' : c.format === 'medal' ? 'nett' : c.format === 'gross' ? 'gross' : ''}</small></span><span class="lb-pts"><b>${r.points} pt${r.points === 1 ? '' : 's'}</b>${r.prize > 0.004 ? euro(r.prize) : ''}</span></li>`;
+    return `<li class="lb-row ${r.pos === 1 ? 'first' : ''}"><span class="lb-pos">${r.tied ? 'T' : ''}${r.pos}</span><button class="lb-name" data-act="openPlayer" data-id="${esc(r.gid)}">${esc(r.golfer.name)}${rs.length > 1 ? `<span class="rcells">${roundCells(c, r)}</span>` : ''}${note ? `<small>${note}</small>` : ''}${tag ? `<span class="tag">${tag}</span>` : ''}</button><span class="lb-score">${esc(monthText(r, c))}<small>${monthUnit(c)}</small></span><span class="lb-pts"><b>${r.points} pt${r.points === 1 ? '' : 's'}</b>${r.prize > 0.004 ? euro(r.prize) : ''}</span></li>`;
   }).join('');
   const rest = lb.rest.map(r => `<li class="lb-row lb-rest"><span class="lb-pos">–</span><button class="lb-name" data-act="openPlayer" data-id="${esc(r.gid)}">${esc(r.golfer.name)}<small>${esc(r.status)}</small></button><span class="lb-score"></span><span class="lb-pts"><b>${r.points} pt${r.points === 1 ? '' : 's'}</b></span></li>`).join('');
-  const note = fin ? '' : `<p class="hint" style="margin-top:10px">Provisional. Only complete cards marked by someone in the golfer's group count. Golfers with fewer than ${compBest(c)} counting cards rank below those with ${compBest(c)}. League points are added when the organiser finalises the month.</p>`;
+  const mixNote = lb.mode && lb.mode.mixed ? `<p class="hint" style="margin-top:10px">Rounds use different formats, so this table adds up Stableford points from each golfer's best ${compBest(c)} cards.</p>` : '';
+  const note = mixNote + (fin ? '' : `<p class="hint" style="margin-top:10px">Provisional. Only complete cards marked by someone in the golfer's group count. Golfers with fewer than ${compBest(c)} counting cards rank below those with ${compBest(c)}. League points are added when the organiser finalises the month.</p>`);
   return `<ul class="list">${head}${rows}${rest}</ul>${note}`;
 }
 function roundBoardHtml(c, n){
-  const rb = roundBoard(c, n); const lb = leaderboard(c);
+  const rb = roundBoard(c, n); const lb = leaderboard(c); const rc = rcfg(c, n); const r = compRounds(c).find(x => x.n === n);
+  const info = `<p class="hint" style="margin-bottom:10px">Round ${n}${r ? ' · ' + esc(roundLabel(r)) : ''} · ${esc((FORMATS[rc.format] || FORMATS.stableford).name)} · ${rc.holes.length} holes · ${esc((TEES[rc.tee] || TEES.white).name)} tees</p>`;
   const head = `<div class="lb-head"><span>Pos</span><span>Golfer</span><span>Score</span><span>Month</span></div>`;
   const rows = rb.ranked.map(sc => { const row = lb.all.find(r => r.gid === sc.gid); const counts = row && row.countedNs.has(n);
-    return `<li class="lb-row ${sc.pos === 1 ? 'first' : ''}"><span class="lb-pos">${sc.tied ? 'T' : ''}${sc.pos}</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>Marked by ${esc(gName(sc.card.markerId))}${sc.onCb ? ' · on countback' : ''}</small></button><span class="lb-score">${esc(cardValueText(sc))}<small>${c.format === 'stableford' ? 'pts' : ''}</small></span><span class="lb-pts"><b>${counts ? 'Counts' : 'Dropped'}</b></span></li>`; }).join('');
+    return `<li class="lb-row ${sc.pos === 1 ? 'first' : ''}"><span class="lb-pos">${sc.tied ? 'T' : ''}${sc.pos}</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>Marked by ${esc(gName(sc.card.markerId))}${sc.onCb ? ' · on countback' : ''}</small></button><span class="lb-score">${esc(cardValueText(sc))}<small>${unitFor(rc.format)}</small></span><span class="lb-pts"><b>${counts ? 'Counts' : 'Dropped'}</b></span></li>`; }).join('');
   const rest = rb.rest.map(sc => `<li class="lb-row lb-rest"><span class="lb-pos">–</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>${esc(cardStatus(sc))}</small></button><span class="lb-score"></span><span class="lb-pts"></span></li>`).join('');
-  return `<ul class="list">${head}${rows}${rest}</ul>`;
+  return `${info}<ul class="list">${head}${rows}${rest}</ul>`;
 }
 
 /* ----- Scorecard ----- */
@@ -616,13 +637,13 @@ function viewCard(){
   if (!c || !g) { S.card = null; return viewComp(); }
   const sc = scoreCard(c, round, gid); const fin = c.status === 'final';
   const W = !fin && canMark(cid, round, gid);
-  const grp = groupOf(cid, round, gid); const fmt = c.format;
-  if (!c.holes.includes(S.activeHole)) S.activeHole = c.holes.find(h => !(sc.card && sc.card.scores && sc.card.scores[h] !== undefined)) || c.holes[0];
+  const grp = groupOf(cid, round, gid); const rc = sc.rc; const fmt = rc.format;
+  if (!rc.holes.includes(S.activeHole)) S.activeHole = rc.holes.find(h => !(sc.card && sc.card.scores && sc.card.scores[h] !== undefined)) || rc.holes[0];
   const resHead = fmt === 'stableford' ? 'Pts' : fmt === 'medal' ? 'Nett' : fmt === 'parbogey' ? '±' : 'vs Par';
-  const t = g.gender === 'L' ? RED : (TEES[c.tee] || TEES.white); const rs = compRounds(c);
+  const t = g.gender === 'L' ? RED : (TEES[rc.tee] || TEES.white); const rs = compRounds(c);
   let h = backBtn(c.name, 'closeCard');
   if (rs.length > 1) h += `<div class="bsel rtabs">${rs.map(r => `<button data-act="cardRound" data-v="${r.n}" aria-pressed="${r.n === round}">R${r.n}<small>${esc(shortRange(r))}</small></button>`).join('')}</div>`;
-  h += `<div class="card-head"><div><span class="eyebrow">${g.gender === 'L' ? "Ladies' card" : "Men's card"} · ${t.name} tees · Round ${round}</span><h1 class="card-name">${esc(g.name)}</h1><p class="hint">Hcp ${fmtHi(cardHi(sc.card, g))} · ${c.holes.length} holes · ${esc((FORMATS[fmt]||FORMATS.stableford).name)}</p></div>
+  h += `<div class="card-head"><div><span class="eyebrow">${g.gender === 'L' ? "Ladies' card" : "Men's card"} · ${t.name} tees · Round ${round}</span><h1 class="card-name">${esc(g.name)}</h1><p class="hint">Hcp ${fmtHi(cardHi(sc.card, g))} · ${rc.holes.length} holes · ${esc((FORMATS[fmt]||FORMATS.stableford).name)}</p></div>
     ${S.isAdmin && !fin ? `<button class="shotsbtn" data-act="editShots"><b>${sc.total}</b><span>Shots ✎</span></button>` : `<div class="shotsbtn" style="cursor:default"><b>${sc.total}</b><span>Shots</span></div>`}</div>`;
   // group & marker
   let mk;
@@ -693,7 +714,7 @@ function monthTableHtml(){
   const lb = leaderboard(c); const st = lb.stats; const rs = compRounds(c); const fin = c.status === 'final';
   const played = rs.filter(r => roundState(r) !== 'upcoming').length;
   let h = `<div class="mt-head"><label class="field" style="margin:0"><span>Month</span><select id="leagueMonth">${comps.map(x => `<option value="${esc(x.id)}" ${x.id === c.id ? 'selected' : ''}>${esc(x.name)}${x.status === 'final' ? '' : ' (open)'}</option>`).join('')}</select></label>
-    <div class="mt-meta"><span class="pill ${fin ? 'final' : 'open'}">${fin ? 'Final' : 'Provisional'}</span><span class="hint">${rs.length > 1 ? `${played} of ${rs.length} rounds started · best ${compBest(c)} count` : esc((FORMATS[c.format] || FORMATS.stableford).short)} · pot ${euro(st.pot)}</span></div></div>`;
+    <div class="mt-meta"><span class="pill ${fin ? 'final' : 'open'}">${fin ? 'Final' : 'Provisional'}</span><span class="hint">${rs.length > 1 ? `${played} of ${rs.length} rounds started · best ${compBest(c)} count` : esc((FORMATS[rcfg(c, rs[0].n).format] || FORMATS.stableford).short)}${lb.mode.mixed ? ' · Stableford points' : ''} · pot ${euro(st.pot)}</span></div></div>`;
   h += monthListHtml(c, lb);
   h += `<button class="btn block" style="margin-top:12px" data-act="openComp" data-id="${esc(c.id)}">Open ${esc(c.name)}</button>`;
   return h;
@@ -761,7 +782,7 @@ function viewPlayer(){
   const bk = Object.keys(st.bests).sort((a,b) => b - a);
   if (bk.length) h += `<div class="sec-head"><h2>Personal bests</h2></div><div class="panel">${bk.map(n => { const b = st.bests[n]; return `<div class="pb-row"><span class="label">${n} holes</span><span><b>${b.pts}</b><small>pts</small></span><span><b>${b.gross == null ? '–' : b.gross}</b><small>gross</small></span><span><b>${b.nett == null ? '–' : b.nett}</b><small>nett</small></span></div>`; }).join('')}</div>`;
   if (st.months.length) h += `<div class="sec-head"><h2>Months</h2></div><ul class="list">${st.months.map(m => { const c = m.comp, r = m.row, d = dParts(c.date), fin = c.status === 'final'; const place = r.pos ? (m.tied ? 'T' + r.pos : ord(r.pos)) : '–';
-    return `<li><button class="row" data-act="openComp" data-id="${esc(c.id)}"><span class="row-date"><b>${d.day}</b>${d.mon}</span><span class="row-main"><span class="row-title">${esc(c.name)}</span><span class="row-sub">${r.count ? esc(monthText(r, c)) + (c.format === 'stableford' ? ' pts' : '') + ` from ${r.count} card${r.count === 1 ? '' : 's'}` : 'No counting cards'}${fin ? ` · ${r.points} league pt${r.points === 1 ? '' : 's'}` : ''}${r.prize > 0.004 ? ' · ' + euro(r.prize) : ''}</span></span><span class="pill ${fin ? 'final' : 'open'}">${fin ? place : 'Open'}</span></button></li>`; }).join('')}</ul>`;
+    return `<li><button class="row" data-act="openComp" data-id="${esc(c.id)}"><span class="row-date"><b>${d.day}</b>${d.mon}</span><span class="row-main"><span class="row-title">${esc(c.name)}</span><span class="row-sub">${r.count ? esc(monthText(r, c)) + ' ' + monthUnit(c) + ` from ${r.count} card${r.count === 1 ? '' : 's'}` : 'No counting cards'}${fin ? ` · ${r.points} league pt${r.points === 1 ? '' : 's'}` : ''}${r.prize > 0.004 ? ' · ' + euro(r.prize) : ''}</span></span><span class="pill ${fin ? 'final' : 'open'}">${fin ? place : 'Open'}</span></button></li>`; }).join('')}</ul>`;
   return h;
 }
 
@@ -877,20 +898,30 @@ function sheetComp(){
   const is = arr => holes.length === arr.length && holes.every((h,i) => h === arr[i]);
   const preset = is(range(1,18)) ? '18' : is(range(1,14)) ? '14' : 'custom';
   const best = c ? compBest(c) : Math.min(k.best, rs.length);
+  const perRound = !!(c && compRounds(c).some(r => r.format || r.tee || (Array.isArray(r.holes) && r.holes.length)));
   return `<form data-form="comp"><h3>${c ? 'Edit competition' : 'New month'}</h3><p class="sub">${c ? esc(c.name) : 'Weekend rounds, open Friday to Sunday.'}</p>
     <label class="field"><span>Name</span><input type="text" id="f-name" name="name" value="${esc(c ? c.name : '')}" placeholder="${esc(dParts(rs[0].from).month + ' ' + FORMATS[fmt].short)}"></label>
     <div class="grid2"><label class="field"><span>Weekend rounds</span><select id="f-rcount" name="rcount">${range(1,5).map(i => `<option value="${i}" ${i === rs.length ? 'selected' : ''}>${i}</option>`).join('')}</select></label>
     <label class="field"><span>Best cards count</span><select id="f-best" name="best">${range(1,5).map(i => `<option value="${i}" ${i === best ? 'selected' : ''}>${i}</option>`).join('')}</select></label></div>
-    <div class="field"><span>Round Fridays</span><div id="f-rounds" class="rdates">${rs.map(r => roundDateInput(r.n, r.from)).join('')}</div><p class="hint">Each round runs Friday, Saturday and Sunday.</p></div>
+    <div class="field"><span>Rounds</span><div id="f-rounds" class="rrows">${rs.map(r => roundRow(r.n, r, perRound)).join('')}</div><p class="hint">Pick each round's Friday; it runs Friday, Saturday and Sunday.</p></div>
+    <label class="check toggle"><input type="checkbox" id="f-perround" name="perround" ${perRound ? 'checked' : ''}><span>Different format, tees or holes for some rounds. "Default" uses the month's settings below.</span></label>
     <label class="field"><span>Entry fee for the month (€)</span><input type="number" id="f-fee" name="fee" min="0" step="1" value="${esc(c && c.fee != null ? c.fee : k.fee)}"></label>
-    <div class="field"><span>Format</span><div class="radios">${Object.entries(FORMATS).map(([key,f]) => radio('format', key, f.name, fmt === key)).join('')}</div></div>
+    <div class="field"><span>Format${'' /* default */}</span><div class="radios">${Object.entries(FORMATS).map(([key,f]) => radio('format', key, f.name, fmt === key)).join('')}</div></div>
     <div class="field"><span>Holes</span><div class="radios">${radio('holes','18','18 holes', preset === '18')}${radio('holes','14','14 holes (1–14)', preset === '14')}${radio('holes','custom','Pick holes', preset === 'custom')}</div>
       <div class="holepick" id="holepick" ${preset === 'custom' ? '' : 'hidden'}>${range(1,18).map(h => `<label class="hp"><input type="checkbox" id="f-h-${h}" name="h" value="${h}" ${holes.includes(h) ? 'checked' : ''}><span>${h}</span></label>`).join('')}</div></div>
     <div class="grid2"><label class="field"><span>Men's tees</span><select id="f-tee" name="tee">${Object.entries(TEES).map(([key,t]) => `<option value="${key}" ${((c && c.tee) || k.tee) === key ? 'selected' : ''}>${t.name}</option>`).join('')}</select></label>
     <label class="field"><span>Allowance %</span><input type="number" id="f-allow" name="allowance" min="0" max="100" value="${esc(c && c.allowance != null ? c.allowance : k.allowance)}"></label></div>
     <button class="btn primary block" type="submit">${c ? 'Save changes' : 'Create month'}</button></form>`;
 }
-function roundDateInput(n, from){ return `<label class="rdate"><span>R${n}</span><input type="date" id="f-r-${n}" name="r${n}" value="${esc(from)}" required></label>`; }
+function roundRow(n, r, show){
+  r = r || {}; const hv = Array.isArray(r.holes) && r.holes.length ? (r.holes.length === 18 ? '18' : '14') : '';
+  return `<div class="rrow"><label class="rrow-top"><span class="rn">R${n}</span><input type="date" id="f-r-${n}" name="r${n}" value="${esc(r.from || '')}" required aria-label="Round ${n} Friday"></label>
+    <div class="rrow-opts" ${show ? '' : 'hidden'}>
+      <label><span>Format</span><select id="f-rf-${n}" name="rf${n}" aria-label="Round ${n} format"><option value="">Default</option>${Object.entries(FORMATS).map(([k, f]) => `<option value="${k}" ${r.format === k ? 'selected' : ''}>${f.short}</option>`).join('')}</select></label>
+      <label><span>Tees</span><select id="f-rt-${n}" name="rt${n}" aria-label="Round ${n} tees"><option value="">Default</option>${Object.entries(TEES).map(([k, t]) => `<option value="${k}" ${r.tee === k ? 'selected' : ''}>${t.name}</option>`).join('')}</select></label>
+      <label><span>Holes</span><select id="f-rh-${n}" name="rh${n}" aria-label="Round ${n} holes"><option value="">Default</option><option value="18" ${hv === '18' ? 'selected' : ''}>18</option><option value="14" ${hv === '14' ? 'selected' : ''}>14 (1–14)</option></select></label>
+    </div></div>`;
+}
 function sheetAddEntry(){
   const c = D.comps[S.compId]; if (!c) return null;
   const avail = sortedGolfers().filter(g => !entryOf(c.id, g.id));
@@ -922,10 +953,10 @@ function sheetGolfer(){
 }
 function sheetShots(){
   const {cid, round, gid} = S.card || {}; const c = D.comps[cid]; const g = D.golfers[gid]; if (!c || !g) return null;
-  const card = cardOf(cid, round, gid); const calc = defaultShots(g, c, cardHi(card, g)); const cur = cardShots(card, c, g); const t = g.gender === 'L' ? RED : (TEES[c.tee] || TEES.white);
+  const rc = rcfg(c, round); const card = cardOf(cid, round, gid); const calc = defaultShots(g, rc, cardHi(card, g)); const cur = cardShots(card, rc, g); const t = g.gender === 'L' ? RED : (TEES[rc.tee] || TEES.white);
   return `<form data-form="shots"><h3>Shots received</h3><p class="sub">${esc(g.name)} · Round ${round}</p>
-    <label class="field"><span>Shots over ${c.holes.length} holes</span><input type="number" id="sh-val" name="shots" step="1" value="${cur}"></label>
-    <p class="hint" style="margin-bottom:16px">Calculated: <b>${calc}</b> from index ${fmtHi(cardHi(card, g))}, ${t.name} tees (${t.cr} / ${t.slope}), ${c.allowance != null ? c.allowance : 95}% allowance${c.holes.length !== 18 ? `, ${c.holes.length}/18 of the round` : ''}.</p>
+    <label class="field"><span>Shots over ${rc.holes.length} holes</span><input type="number" id="sh-val" name="shots" step="1" value="${cur}"></label>
+    <p class="hint" style="margin-bottom:16px">Calculated: <b>${calc}</b> from index ${fmtHi(cardHi(card, g))}, ${t.name} tees (${t.cr} / ${t.slope}), ${rc.allowance}% allowance${rc.holes.length !== 18 ? `, ${rc.holes.length}/18 of the round` : ''}.</p>
     <div class="confirm-actions"><button type="button" class="btn" data-act="resetShots">Use ${calc}</button><button class="btn primary" type="submit">Save</button></div></form>`;
 }
 function sheetGroup(){
@@ -958,12 +989,13 @@ function recognise(match, onCard){
   }
   return hit.length === 1 ? hit[0].id : null;
 }
-function scanPrompt(c){
+function scanPrompt(c, round){
+  const holes = rcfg(c, round).holes;
   const k = cfg().course;
   const pars = range(1,18).map(h => `${h}: par ${k.parM[h-1]}${k.parL[h-1] !== k.parM[h-1] ? ` (ladies ${k.parL[h-1]})` : ''}`).join('; ');
   const names = sortedGolfers().map(g => g.name).join(', ');
   return ['Read this photo of a golf scorecard from Rathsallagh Golf Club, Co. Wicklow, and turn the handwritten scores into data.',
-    `Holes played: ${c.holes.join(', ')}. Ignore other holes.`, `Pars: ${pars}.`, `Golfers on the club list: ${names}.`, '',
+    `Holes played: ${holes.join(', ')}. Ignore other holes.`, `Pars: ${pars}.`, `Golfers on the club list: ${names}.`, '',
     'Rules:',
     '- Read the gross strokes written for each golfer on each hole. A card holds up to four golfers.',
     '- Ignore printed hole numbers, yardages, par, stroke index, totals, handicap, nett and Stableford points columns.',
@@ -999,7 +1031,7 @@ async function runScan(){
   sh.phase = 'reading'; renderSheet(); const ctl = {aborted:false}; SCAN_CTL = ctl;
   try {
     const img = await imageToBase64(sh.file); if (ctl.aborted) return;
-    const text = await be.scan(scanPrompt(c), img.data, img.mime); if (ctl.aborted || S.sheet !== sh) return;
+    const text = await be.scan(scanPrompt(c, sh.ctx.round), img.data, img.mime); if (ctl.aborted || S.sheet !== sh) return;
     const res = parseJSON(text); if (!res || !Array.isArray(res.golfers)) throw new Error('unreadable');
     sh.rows = buildScanRows(res, c, sh.ctx); sh.notes = typeof res.notes === 'string' ? res.notes.slice(0, 300) : ''; sh.phase = 'review';
   } catch (e) {
@@ -1009,15 +1041,15 @@ async function runScan(){
   if (SCAN_CTL === ctl) SCAN_CTL = null; renderSheet();
 }
 function buildScanRows(res, c, ctx){
-  const round = ctx.round; const mine = !S.isAdmin ? myGroup(c.id, round) : null;
+  const round = ctx.round; const holes = rcfg(c, round).holes; const mine = !S.isAdmin ? myGroup(c.id, round) : null;
   const seen = new Set();
   const rows = res.golfers.slice(0, 6).map(g => {
     const raw = (g && typeof g.scores === 'object' && g.scores) || {}; const scores = {};
-    c.holes.forEach(h => { const v = raw[h] !== undefined ? raw[h] : raw[String(h)]; if (v === undefined || v === null || v === '') return; if (/^\s*p\s*$/i.test(String(v))) { scores[h] = 'P'; return; } const n = Number(v); if (Number.isInteger(n) && n >= 1 && n <= 20) scores[h] = n; });
+    holes.forEach(h => { const v = raw[h] !== undefined ? raw[h] : raw[String(h)]; if (v === undefined || v === null || v === '') return; if (/^\s*p\s*$/i.test(String(v))) { scores[h] = 'P'; return; } const n = Number(v); if (Number.isInteger(n) && n >= 1 && n <= 20) scores[h] = n; });
     const name = String((g && g.name_on_card) || '').slice(0, 60);
     const gid = recognise(g && typeof g.match === 'string' ? g.match : null, name);
     const markerGid = g && g.marker ? recognise(null, String(g.marker)) : null;
-    const unclear = Array.isArray(g && g.unclear) ? g.unclear.map(Number).filter(h => c.holes.includes(h)) : [];
+    const unclear = Array.isArray(g && g.unclear) ? g.unclear.map(Number).filter(h => holes.includes(h)) : [];
     let status = 'ok', why = '';
     if (!gid) { status = 'reject'; why = "Name not recognised from the golfer list, so this card isn't accepted."; }
     else if (seen.has(gid)) { status = 'reject'; why = 'This golfer appears twice on the card.'; }
@@ -1038,7 +1070,7 @@ function buildScanRows(res, c, ctx){
   return rows;
 }
 function sheetScan(){
-  const sh = S.sheet; const c = D.comps[sh.ctx.cid]; if (!c) return null; const round = sh.ctx.round;
+  const sh = S.sheet; const c = D.comps[sh.ctx.cid]; if (!c) return null; const round = sh.ctx.round; const holes = rcfg(c, round).holes;
   let h = `<h3>Scan scorecard</h3><p class="sub">${esc(c.name)} · Round ${round}</p>`;
   if (sh.thumbs && sh.thumbs.length) h += `<div class="thumbs">${sh.thumbs.map(u => `<img src="${esc(u)}" alt="Scorecard photo">`).join('')}</div>`;
   if (sh.phase === 'reading') return h + `<div class="reading"><span class="pulse"></span><p><b>Reading the card…</b> This usually takes 10 to 30 seconds.</p></div><button class="btn block" data-act="stopScan">Stop</button>`;
@@ -1053,20 +1085,20 @@ function sheetScan(){
     return `<div class="scanrow"><div class="scanrow-head"><span class="oncard"><span class="label">On the card</span><b>${esc(r.name)}</b></span><span class="oncard"><span class="label">Golfer</span><b class="okname">${esc(gName(r.gid))}</b></span></div>
       ${S.isAdmin ? `<label class="field" style="margin:0"><span>Marked by</span><select id="sm-${i}"><option value="">Not marked</option>${pool.map(x => `<option value="${esc(x)}" ${r.marker === x ? 'selected' : ''}>${esc(gName(x))}</option>`).join('')}</select></label>` : `<p class="hint">You'll be the marker for this card.</p>`}
       ${r.why ? `<p class="hint">${esc(r.why)}</p>` : ''}
-      <div class="sgrid">${c.holes.map(hh => `<label class="sg ${r.unclear.includes(hh) ? 'unclear' : ''}"><span>${hh}</span><input type="text" inputmode="numeric" maxlength="2" autocomplete="off" id="sv-${i}-${hh}" value="${r.scores[hh] !== undefined ? esc(String(r.scores[hh])) : ''}" aria-label="Hole ${hh}"></label>`).join('')}</div>
-      <p class="hint">${Object.keys(r.scores).length} of ${c.holes.length} holes read${r.unclear.length ? ` · check hole${r.unclear.length > 1 ? 's' : ''} ${r.unclear.join(', ')}` : ''}</p></div>`;
+      <div class="sgrid">${holes.map(hh => `<label class="sg ${r.unclear.includes(hh) ? 'unclear' : ''}"><span>${hh}</span><input type="text" inputmode="numeric" maxlength="2" autocomplete="off" id="sv-${i}-${hh}" value="${r.scores[hh] !== undefined ? esc(String(r.scores[hh])) : ''}" aria-label="Hole ${hh}"></label>`).join('')}</div>
+      <p class="hint">${Object.keys(r.scores).length} of ${holes.length} holes read${r.unclear.length ? ` · check hole${r.unclear.length > 1 ? 's' : ''} ${r.unclear.join(', ')}` : ''}</p></div>`;
   }).join('');
   h += okRows.length ? `<button class="btn primary block" data-act="applyScan">Add ${okRows.length} card${okRows.length === 1 ? '' : 's'}</button><p class="hint" style="margin-top:10px">Scanned holes replace what's on each card. Blank holes are left as they are.</p>` : `<div class="confirm-actions"><button class="btn" data-act="closeSheet">Close</button><button class="btn primary" data-act="newScan">New photo</button></div>`;
   return h;
 }
 async function applyScan(){
-  const sh = S.sheet; const c = sh && D.comps[sh.ctx.cid]; if (!c || !sh.rows) return; const round = sh.ctx.round;
+  const sh = S.sheet; const c = sh && D.comps[sh.ctx.cid]; if (!c || !sh.rows) return; const round = sh.ctx.round; const holes = rcfg(c, round).holes;
   document.querySelectorAll('#sheetIn .sg.bad').forEach(x => x.classList.remove('bad'));
   const ops = []; let bad = null; let newGroupId = null; const ok = sh.rows.map((r,i) => ({r, i})).filter(x => x.r.status === 'ok');
   if (S.isAdmin && ok.length >= 2 && ok.every(x => !x.r.groupId)) { newGroupId = newId(); ops.push({path:`comps/${c.id}/groups/${newGroupId}`, data:{compId:c.id, round, members: ok.map(x => x.r.gid), createdBy:'organiser', createdAt: Date.now()}}); }
   ok.forEach(({r, i}) => {
     const scores = {};
-    c.holes.forEach(hh => { const inp = document.getElementById(`sv-${i}-${hh}`); const t = (inp ? inp.value : '').trim().toUpperCase(); if (!t) return; if (t === 'P') { scores[hh] = 'P'; return; } const n = parseInt(t, 10); if (/^\d{1,2}$/.test(t) && n >= 1 && n <= 20) scores[hh] = n; else { if (inp) inp.closest('.sg').classList.add('bad'); bad = bad || `Hole ${hh} for ${gName(r.gid)} should be a number or P.`; } });
+    holes.forEach(hh => { const inp = document.getElementById(`sv-${i}-${hh}`); const t = (inp ? inp.value : '').trim().toUpperCase(); if (!t) return; if (t === 'P') { scores[hh] = 'P'; return; } const n = parseInt(t, 10); if (/^\d{1,2}$/.test(t) && n >= 1 && n <= 20) scores[hh] = n; else { if (inp) inp.closest('.sg').classList.add('bad'); bad = bad || `Hole ${hh} for ${gName(r.gid)} should be a number or P.`; } });
     const prev = cardOf(c.id, round, r.gid); const g = D.golfers[r.gid];
     let groupId, markerId;
     if (S.isAdmin) { groupId = r.groupId || newGroupId || (prev && prev.groupId) || null; const sel = document.getElementById('sm-' + i); markerId = sel && sel.value ? sel.value : null; }
@@ -1125,13 +1157,13 @@ const ACT = {
   hole(el){ S.activeHole = +el.dataset.h; render(); },
   key(el){
     const {cid, round, gid} = S.card || {}; const c = D.comps[cid]; if (!c || c.status === 'final' || !canMark(cid, round, gid)) return;
-    const h = S.activeHole; if (!c.holes.includes(h)) return;
+    const holes = rcfg(c, round).holes; const h = S.activeHole; if (!holes.includes(h)) return;
     const prev = cardOf(cid, round, gid); const scores = Object.assign({}, (prev && prev.scores) || {});
     const v = el.dataset.v; if (v === 'X') delete scores[h]; else scores[h] = v === 'P' ? 'P' : +v;
-    const idx = c.holes.indexOf(h); if (v !== 'X' && idx < c.holes.length - 1) S.activeHole = c.holes[idx+1];
+    const idx = holes.indexOf(h); if (v !== 'X' && idx < holes.length - 1) S.activeHole = holes[idx+1];
     saveCard(cid, round, gid, scores);
     requestAnimationFrame(() => requestAnimationFrame(() => { const a = document.querySelector('.hole.active'); if (a) a.scrollIntoView({block:'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'}); }));
-    if (v !== 'X' && idx === c.holes.length - 1 && Object.keys(scores).length >= c.holes.length) toast(S.isAdmin ? 'Card complete' : `Card complete, marked by you`);
+    if (v !== 'X' && idx === holes.length - 1 && Object.keys(scores).length >= holes.length) toast(S.isAdmin ? 'Card complete' : `Card complete, marked by you`);
   },
   editShots(){ openSheet({type:'shots'}); },
   async resetShots(){ const {cid, round, gid} = S.card; const prev = cardOf(cid, round, gid); if (prev) await put(`comps/${cid}/cards/${round}_${gid}`, Object.assign({}, prev, {shots:null, id:undefined})); closeSheet(); toast('Using calculated shots'); },
@@ -1204,12 +1236,12 @@ const FORMS = {
     const fd = new FormData(f); const k = cfg(); const preset = fd.get('holes');
     const holes = preset === '18' ? range(1,18) : preset === '14' ? range(1,14) : fd.getAll('h').map(Number).sort((a,b) => a-b);
     if (!holes.length) { toast('Pick at least one hole'); return; }
-    const count = Math.max(1, Math.min(5, Number(fd.get('rcount')) || 4));
-    const froms = range(1, count).map(i => fd.get('r' + i)).filter(Boolean);
-    if (froms.length !== count) { toast('Set a date for every round'); return; }
-    if (froms.some(d => parseDate(d).getDay() !== 5)) { toast('Each round should start on a Friday'); return; }
-    const sorted = froms.slice().sort();
-    const rounds = sorted.map((from, i) => { const to = addDays(from, 2); const opens = parseDate(from); const closes = parseDate(addDays(from, 3)); return {n:i+1, from, to, opens: be.stamp(opens), closes: be.stamp(closes)}; });
+    const count = Math.max(1, Math.min(5, Number(fd.get('rcount')) || 4)); const per = !!fd.get('perround');
+    const rows = range(1, count).map(i => ({from: fd.get('r' + i), format: per ? fd.get('rf' + i) || null : null, tee: per ? fd.get('rt' + i) || null : null, holes: per ? ({'18': range(1,18), '14': range(1,14)})[fd.get('rh' + i)] || null : null}));
+    if (rows.some(r => !r.from)) { toast('Set a date for every round'); return; }
+    if (rows.some(r => parseDate(r.from).getDay() !== 5)) { toast('Each round should start on a Friday'); return; }
+    rows.sort((a, b) => a.from.localeCompare(b.from)); const sorted = rows.map(r => r.from);
+    const rounds = rows.map((r, i) => ({n:i+1, from:r.from, to:addDays(r.from, 2), opens: be.stamp(parseDate(r.from)), closes: be.stamp(parseDate(addDays(r.from, 3))), format:r.format, tee:r.tee, holes:r.holes}));
     const best = Math.min(count, Math.max(1, Number(fd.get('best')) || count));
     const id = S.sheet.id || newId(); const prev = D.comps[id] || {}; const format = fd.get('format') || 'stableford';
     const data = Object.assign({}, prev, {name: String(fd.get('name') || '').trim() || `${dParts(sorted[0]).month} ${FORMATS[format].short}`, date: sorted[0], rounds, best, format, holes, tee: fd.get('tee') || k.tee, fee: num(fd.get('fee'), k.fee), allowance: num(fd.get('allowance'), k.allowance), status: prev.status || 'open', createdAt: prev.createdAt || Date.now()});
@@ -1309,9 +1341,12 @@ document.addEventListener('change', ev => {
     localSet(`comps/${cid}/cards/${round}_${gid}`, data); put(`comps/${cid}/cards/${round}_${gid}`, data).then(ok => ok && toast(t.value ? `Marked by ${gName(t.value)}` : 'Marker removed')); return; }
   if (t.closest('#setupForm')) { saveSettings(); return; }
   if (t.name === 'holes' && t.closest('form[data-form=comp]')) { $('#holepick').hidden = t.value !== 'custom'; return; }
-  if (t.id === 'f-rcount') { const n = Number(t.value); const box = $('#f-rounds'); const have = [...box.querySelectorAll('input')].map(i => i.value); const first = have[0] || defaultFirstFri();
-    box.innerHTML = range(1, n).map(i => roundDateInput(i, have[i-1] || addDays(first, 7*(i-1)))).join(''); const b = $('#f-best'); if (b && Number(b.value) > n) b.value = String(n); return; }
-  if (t.id === 'f-r-1') { const box = $('#f-rounds'); const ins = [...box.querySelectorAll('input')]; ins.slice(1).forEach((inp, i) => { inp.value = addDays(t.value, 7*(i+1)); }); }
+  if (t.id === 'f-rcount') { const n = Number(t.value); const box = $('#f-rounds'); const show = !!($('#f-perround') || {}).checked;
+    const have = [...box.querySelectorAll('.rrow')].map((row, i) => { const v = id => (document.getElementById(id + (i + 1)) || {}).value || ''; const hv = v('f-rh-'); return {from:v('f-r-'), format:v('f-rf-') || null, tee:v('f-rt-') || null, holes: hv === '18' ? range(1,18) : hv === '14' ? range(1,14) : null}; });
+    const first = (have[0] && have[0].from) || defaultFirstFri();
+    box.innerHTML = range(1, n).map(i => roundRow(i, have[i-1] && have[i-1].from ? have[i-1] : {from: addDays(first, 7*(i-1))}, show)).join(''); const b = $('#f-best'); if (b && Number(b.value) > n) b.value = String(n); return; }
+  if (t.id === 'f-perround') { document.querySelectorAll('#f-rounds .rrow-opts').forEach(x => { x.hidden = !t.checked; }); return; }
+  if (t.id === 'f-r-1') { const ins = [...document.querySelectorAll('#f-rounds input[type=date]')]; ins.slice(1).forEach((inp, i) => { inp.value = addDays(t.value, 7*(i+1)); }); }
 });
 document.addEventListener('toggle', ev => { if (ev.target.id === 'courseDetails') S.courseOpen = ev.target.open; }, true);
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && S.sheet) closeSheet(); });
