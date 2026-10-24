@@ -31,7 +31,7 @@ const D = { golfers:{}, comps:{}, entries:{}, groups:{}, cards:{}, members:{}, s
 const S = {
   phase:'boot', user:null, myGid:null, isAdmin:false, view:'comps', compId:null, compTab:'entries', boardSel:'month',
   card:null, activeHole:null, playerId:null, season:String(new Date().getFullYear()), sheet:null, loaded:{},
-  adminHash:null, pin:null, changing:false, golferTab:'list', hcpSynced:false, pinRemember:true, courseOpen:false, installEvt:null, signinMode:'signin', busy:false
+  adminHash:null, pin:null, changing:false, golferTab:'list', hcpSynced:false, leagueTab:'month', leagueMonth:null, pinRemember:true, courseOpen:false, installEvt:null, signinMode:'signin', busy:false
 };
 let MEMO = {}, CONFIRM_FN = null, unsubs = [], SCAN_CTL = null, SCAN_PENDING = null;
 const cardTimers = {};
@@ -585,7 +585,11 @@ function boardHtml(c, lb){
   const rs = compRounds(c); const sel = S.boardSel;
   let h = rs.length > 1 ? `<div class="bsel"><button data-act="boardSel" data-v="month" aria-pressed="${sel === 'month'}">Month</button>${rs.map(r => `<button data-act="boardSel" data-v="${r.n}" aria-pressed="${String(sel) === String(r.n)}">R${r.n}</button>`).join('')}</div>` : '';
   if (sel !== 'month' && rs.length > 1) return h + roundBoardHtml(c, Number(sel));
-  if (!lb.all.length) return h + '<div class="empty"><p class="hint">The leaderboard fills in as marked cards come in.</p></div>';
+  return h + monthListHtml(c, lb);
+}
+function monthListHtml(c, lb){
+  const rs = compRounds(c);
+  if (!lb.all.length) return '<div class="empty"><p class="hint">The table fills in as marked cards come in.</p></div>';
   const fin = c.status === 'final';
   const head = `<div class="lb-head"><span>Pos</span><span>Golfer</span><span>${rs.length > 1 ? 'Best ' + compBest(c) : 'Score'}</span><span>League</span></div>`;
   const rows = lb.ranked.map(r => {
@@ -595,7 +599,7 @@ function boardHtml(c, lb){
   }).join('');
   const rest = lb.rest.map(r => `<li class="lb-row lb-rest"><span class="lb-pos">–</span><button class="lb-name" data-act="openPlayer" data-id="${esc(r.gid)}">${esc(r.golfer.name)}<small>${esc(r.status)}</small></button><span class="lb-score"></span><span class="lb-pts"><b>${r.points} pt${r.points === 1 ? '' : 's'}</b></span></li>`).join('');
   const note = fin ? '' : `<p class="hint" style="margin-top:10px">Provisional. Only complete cards marked by someone in the golfer's group count. Golfers with fewer than ${compBest(c)} counting cards rank below those with ${compBest(c)}. League points are added when the organiser finalises the month.</p>`;
-  return h + `<ul class="list">${head}${rows}${rest}</ul>${note}`;
+  return `<ul class="list">${head}${rows}${rest}</ul>${note}`;
 }
 function roundBoardHtml(c, n){
   const rb = roundBoard(c, n); const lb = leaderboard(c);
@@ -677,15 +681,38 @@ function viewCard(){
 /* ----- League, golfers, stats ----- */
 function seasonSelect(){ const ys = seasonList(); return `<select id="season" aria-label="Season">${ys.map(y => `<option value="${y}" ${S.season === y ? 'selected' : ''}>${y}</option>`).join('')}<option value="all" ${S.season === 'all' ? 'selected' : ''}>All time</option></select>`; }
 function viewLeague(){
+  let h = `<div class="pagehead"><div><span class="eyebrow">Tables</span><h1>League</h1></div>${S.leagueTab === 'year' ? seasonSelect() : ''}</div>`;
+  h += `<div class="seg" role="group" aria-label="Table" style="margin-top:0"><button data-act="leagueTab" data-v="month" aria-pressed="${S.leagueTab !== 'year'}">Monthly table</button><button data-act="leagueTab" data-v="year" aria-pressed="${S.leagueTab === 'year'}">Year table</button></div>`;
+  return h + (S.leagueTab === 'year' ? yearTableHtml() : monthTableHtml());
+}
+function monthTableHtml(){
+  const comps = Object.values(D.comps).sort((a,b) => String(b.date||'').localeCompare(String(a.date||'')));
+  if (!comps.length) return `<section class="empty"><p class="hint">No months yet. The monthly table appears once the organiser creates a month.</p></section>`;
+  const open = comps.filter(c => c.status !== 'final').sort((a,b) => String(a.date||'').localeCompare(String(b.date||'')));
+  let c = D.comps[S.leagueMonth]; if (!c) c = open[0] || comps[0];
+  const lb = leaderboard(c); const st = lb.stats; const rs = compRounds(c); const fin = c.status === 'final';
+  const played = rs.filter(r => roundState(r) !== 'upcoming').length;
+  let h = `<div class="mt-head"><label class="field" style="margin:0"><span>Month</span><select id="leagueMonth">${comps.map(x => `<option value="${esc(x.id)}" ${x.id === c.id ? 'selected' : ''}>${esc(x.name)}${x.status === 'final' ? '' : ' (open)'}</option>`).join('')}</select></label>
+    <div class="mt-meta"><span class="pill ${fin ? 'final' : 'open'}">${fin ? 'Final' : 'Provisional'}</span><span class="hint">${rs.length > 1 ? `${played} of ${rs.length} rounds started · best ${compBest(c)} count` : esc((FORMATS[c.format] || FORMATS.stableford).short)} · pot ${euro(st.pot)}</span></div></div>`;
+  h += monthListHtml(c, lb);
+  h += `<button class="btn block" style="margin-top:12px" data-act="openComp" data-id="${esc(c.id)}">Open ${esc(c.name)}</button>`;
+  return h;
+}
+function yearTableHtml(){
   const rows = league(S.season); const k = cfg();
-  let h = `<div class="pagehead"><div><span class="eyebrow">Order of Merit</span><h1>League table</h1></div>${seasonSelect()}</div>`;
-  h += `<div class="pointskey">${k.points.map((p,i) => `<span class="chip">${ord(i+1)} · ${p} pts</span>`).join('')}<span class="chip">Played · ${k.entryPoint} pt</span></div>`;
-  if (!rows.length) return h + `<section class="empty"><p class="hint">No finalised months ${S.season === 'all' ? 'yet' : 'in ' + S.season + ' yet'}. Points are added when a month is finalised.</p></section>`;
+  let h = `<div class="pointskey">${k.points.map((p,i) => `<span class="chip">${ord(i+1)} · ${p} pts</span>`).join('')}<span class="chip">Played · ${k.entryPoint} pt</span></div>`;
+  const open = Object.values(D.comps).filter(c => c.status !== 'final' && inSeason(c, S.season));
+  if (!rows.length) return h + `<section class="empty"><p class="hint">No finalised months ${S.season === 'all' ? 'yet' : 'in ' + S.season + ' yet'}. Points are added to the year table when a month is finalised.</p></section>`;
   h += `<ul class="list"><li class="lg-head"><span>Pos</span><span>Golfer</span><span>P</span><span>W</span><span>Pts</span></li>` + rows.map(r => {
     const p = D.golfers[r.id]; const tied = rows.filter(x => x.pos === r.pos).length > 1;
     return `<li><button class="lg-row ${r.pos === 1 ? 'p1' : ''}" data-act="openPlayer" data-id="${esc(r.id)}"><span class="lb-pos">${tied ? 'T' : ''}${r.pos}</span><span class="lg-name">${esc(p.name)}<small>${r.seconds ? r.seconds + '× runner-up · ' : ''}${r.won > 0.004 ? euro(r.won) + ' won' : 'Hcp ' + fmtHi(curHcp(p.id))}</small></span><span class="lg-n">${r.played}</span><span class="lg-n">${r.wins}</span><span class="lg-pts">${r.pts}</span></button></li>`;
   }).join('') + '</ul>';
-  h += `<p class="hint" style="margin-top:12px">Tap a golfer for their stats. P = months played, W = wins.</p>`;
+  if (open.length) h += `<p class="hint" style="margin-top:10px">${open.map(c => esc(c.name)).join(' and ')} ${open.length === 1 ? 'is' : 'are'} still open. ${open.length === 1 ? 'Its' : 'Their'} points are added when finalised; see the Monthly table for where things stand.</p>`;
+  // month-by-month grid
+  const months = Object.values(D.comps).filter(c => c.status === 'final' && inSeason(c, S.season)).sort((a,b) => String(a.date||'').localeCompare(String(b.date||'')));
+  const pts = {}; months.forEach(c => leaderboard(c).all.forEach(r => { (pts[r.gid] || (pts[r.gid] = {}))[c.id] = r; }));
+  h += `<div class="sec-head"><h2>Points by month</h2></div><div class="tscroll"><table class="mgrid"><thead><tr><th>Golfer</th>${months.map(c => `<th title="${esc(c.name)}">${esc(dParts(c.date).mon)}</th>`).join('')}<th>Total</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(D.golfers[r.id].name)}</td>${months.map(c => { const x = pts[r.id] && pts[r.id][c.id]; return `<td class="${x && x.pos === 1 ? 'win' : x && x.pos === 2 ? 'second' : ''}">${x ? x.points : '–'}</td>`; }).join('')}<td class="tot">${r.pts}</td></tr>`).join('')}</tbody></table></div>`;
+  h += `<p class="hint" style="margin-top:10px">Gold = monthly winner, outlined = runner-up. P = months played, W = wins. Tap a golfer above for their stats.</p>`;
   return h;
 }
 function viewGolfers(){
@@ -1145,6 +1172,7 @@ const ACT = {
   openPlayer(el){ closeSheetQuiet(); if (!D.golfers[el.dataset.id]) return; S.view = 'golfers'; S.playerId = el.dataset.id; top(); render(); },
   closePlayer(){ S.playerId = null; top(); render(); },
   golferTab(el){ S.golferTab = el.dataset.v; render(); },
+  leagueTab(el){ S.leagueTab = el.dataset.v; render(); },
   closeSheet(){ closeSheet(); },
   confirmOk(){ const f = CONFIRM_FN; closeSheet(); if (f) f(); },
   scan(el){ const c = D.comps[S.compId]; if (!c) return; const round = Number(el.dataset.round) || currentRound(c);
@@ -1273,6 +1301,7 @@ document.addEventListener('submit', ev => { const f = ev.target; const k = f.dat
 document.addEventListener('change', ev => {
   const t = ev.target;
   if (t.id === 'season') { S.season = t.value; render(); return; }
+  if (t.id === 'leagueMonth') { S.leagueMonth = t.value; t.blur(); render(); return; }
   if (t.id === 'scanFile') { startScan(t.files); return; }
   if (t.id === 'pinRemember') { S.pinRemember = t.checked; if (!t.checked) { try { localStorage.removeItem('rgc-admin'); } catch (_) {} } return; }
   if (t.id === 'markerSel' && S.card) { const {cid, round, gid} = S.card; const prev = cardOf(cid, round, gid); const grp = groupOf(cid, round, gid); const g = D.golfers[gid];

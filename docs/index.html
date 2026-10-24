@@ -479,6 +479,18 @@ form.inline{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin
 .hcp-hist li{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:8px;padding:6px 0;border-top:1px solid var(--line);font-size:13px;align-items:baseline}
 .hcp-hist li span:last-child{color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
 @media (max-width:370px){.hc-head,.hc-row{grid-template-columns:minmax(0,1fr) 40px 60px 76px;padding-inline:10px}}
+
+.mt-head{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.mt-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.tscroll{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+.mgrid{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:14px}
+.mgrid th,.mgrid td{padding:9px 10px;text-align:center;border-top:1px solid var(--line);white-space:nowrap}
+.mgrid thead th{border-top:0;background:var(--tint);font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.mgrid th:first-child,.mgrid td:first-child{text-align:left;position:sticky;left:0;background:var(--card);font-weight:600;max-width:150px;overflow:hidden;text-overflow:ellipsis}
+.mgrid thead th:first-child{background:var(--tint)}
+.mgrid td.win{background:var(--gold-bg);color:var(--ink);font-weight:800}
+.mgrid td.second{box-shadow:inset 0 0 0 1.5px var(--gold);font-weight:700}
+.mgrid td.tot{font-family:var(--display);font-stretch:72%;font-weight:800;font-size:18px}
 </style>
 </head>
 <body>

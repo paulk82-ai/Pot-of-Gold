@@ -17,6 +17,7 @@ An installable phone app for the Rathsallagh monthly competition. Golfers sign i
 - Golfers form groups of 2 to 4 for each round in the app before they play.
 - Scanned cards are only accepted for golfers whose names match the golfer list. Unrecognised names are turned away.
 - League points: 1st 5, 2nd 4, 3rd 3, 4th 2, everyone else 1. They are added when the organiser finalises the month. You can change them in Admin.
+- The **League** tab has a **Monthly table** (any month, with live provisional standings while it's open) and a **Year table** (the Order of Merit for the year, plus a points-by-month grid).
 
 **Competition handicaps**
 
