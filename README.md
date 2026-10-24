@@ -1,6 +1,6 @@
 # Rathsallagh Monthly — setup guide
 
-An installable phone app for the Rathsallagh monthly competition. Golfers sign in, enter for the month, set up their playing group, and mark each other's cards (or scan the card with the camera). The organiser manages golfers, payments and results. Everything runs on Google's Firebase free tier.
+An installable phone app for the Rathsallagh monthly competition. Golfers sign in, enter for the month, enter their own cards (or scan them with the camera) and approve the cards they marked. The organiser manages golfers, payments and results. Everything runs on Google's Firebase free tier.
 
 **What's in the box**
 
@@ -14,9 +14,8 @@ An installable phone app for the Rathsallagh monthly competition. Golfers sign i
 - Each round can have its own format (Stableford, Medal, Gross or v Par), tees and holes (18 or 14). Each round's own table uses its format. When a month mixes formats or hole counts, the monthly table adds up Stableford points from each golfer's best 3 cards.
 - The €10 entry covers the month. Each golfer gets one card per round, and their best 3 cards count.
 - Golfers with fewer than 3 counting cards are ranked on what they have, below anyone with 3.
-- A card only counts once it is complete and marked by someone else in the golfer's group. Nobody can mark their own card.
-- Golfers form groups of 2 to 4 for each round in the app before they play.
-- Scanned cards are only accepted for golfers whose names match the golfer list. Unrecognised names are turned away.
+- Each player enters (or scans) their own card and chooses their marker, another player entered that month. The card only counts once the marker taps **Approve** on their phone. If the player changes a score, the marker has to approve it again.
+- Scanned cards are only accepted for golfers whose names match the golfer list and who are entered that month. Unrecognised names are turned away.
 - League points: 1st 5, 2nd 4, 3rd 3, 4th 2, everyone else 1. They are added when the organiser finalises the month. You can change them in Admin.
 - The **League** tab has a **Monthly table** (any month, with live provisional standings while it's open) and a **Year table** (the Order of Merit for the year, plus a points-by-month grid).
 
@@ -89,16 +88,16 @@ It then opens full-screen like any other app, and it keeps working with a weak s
 
 1. Sign in with Google, or create an email and password account using the email the organiser has.
 2. On the month's competition, tap **Enter**, then pay €10 by Revolut or on the club's card reader. The organiser marks it paid.
-3. When a round is open (Friday to Sunday), tap **Start your group** and tick who you're playing with.
-4. During or after the round, tap **Mark card** next to each playing partner and enter their scores hole by hole. Or tap **Scan our card** and photograph the scorecard, then check the numbers before adding them.
-5. Someone else in the group marks your card. You can see it, but you can't change it.
+3. When a round is open (Friday to Sunday), open **Your card**, choose your marker and enter your scores hole by hole. Or tap **Scan my card** and photograph it, then check the numbers.
+4. Your marker sees your card under **Cards to approve** and taps **Approve**. Your card counts from then.
+5. When you mark someone else's card, review it under Cards to approve and approve it.
 
 ## What the organiser can do
 
 - Add and edit golfers and their emails, and add other organisers.
 - Create months, change round dates, and record payments (Revolut, card reader or cash).
-- Set up or change groups, enter or correct any card, set the marker, and override shots.
-- Scan any card. Recognised golfers on the card are grouped together automatically.
+- Enter or correct any card, change the marker, approve a card as organiser if needed, and override shots.
+- Scan any card. Only golfers on your list are accepted, and you choose each card's marker.
 - Finalise the month, which locks scores and adds league points. Months can be reopened.
 
 ## Costs
@@ -112,7 +111,7 @@ It then opens full-screen like any other app, and it keeps working with a weak s
 | File | What it is |
 | --- | --- |
 | `docs/index.html` | Page layout and design |
-| `docs/app.js` | The app: competitions, scoring, groups, marking, league, stats, admin |
+| `docs/app.js` | The app: competitions, scoring, markers and approvals, league, stats, admin |
 | `docs/backend-firebase.js` | Sign-in, database and Gemini scanning via Firebase |
 | `docs/backend-mock.js` | Sample mode (`?sample=1`), kept on the phone only |
 | `docs/config.js` | Your Firebase details |

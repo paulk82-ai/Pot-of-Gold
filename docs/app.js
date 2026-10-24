@@ -27,7 +27,7 @@ const METHODS = {revolut:'Revolut', card:'Card reader', cash:'Cash'};
 
 /* ---------- State ---------- */
 let be = null;
-const D = { golfers:{}, comps:{}, entries:{}, groups:{}, cards:{}, members:{}, settings:null, admins:undefined, adminCode:undefined, member:undefined };
+const D = { golfers:{}, comps:{}, entries:{}, cards:{}, members:{}, settings:null, admins:undefined, adminCode:undefined, member:undefined };
 const S = {
   phase:'boot', user:null, myGid:null, isAdmin:false, view:'comps', compId:null, compTab:'entries', boardSel:'month',
   card:null, activeHole:null, playerId:null, season:String(new Date().getFullYear()), sheet:null, loaded:{},
@@ -100,8 +100,6 @@ function shortRange(r){ const a = dParts(r.from), b = dParts(r.to); return a.mon
 function entriesFor(cid){ return Object.values(D.entries).filter(e => e.compId === cid && D.golfers[e.golferId]); }
 function entryOf(cid, gid){ return D.entries[cid + '/' + gid] || null; }
 function cardOf(cid, round, gid){ return D.cards[`${cid}/${round}_${gid}`] || null; }
-function groupsFor(cid, round){ return Object.values(D.groups).filter(g => g.compId === cid && g.round === round); }
-function groupOf(cid, round, gid){ return groupsFor(cid, round).find(g => (g.members || []).includes(gid)) || null; }
 
 /* ---------- Handicaps & scoring ---------- */
 function parsFor(g){ const c = cfg().course; const L = g && g.gender === 'L'; return {par: L ? c.parL : c.parM, si: L ? c.siL : c.siM}; }
@@ -123,10 +121,15 @@ function allocShots(holes, si, total){
   (sign > 0 ? ranked : ranked.slice().reverse()).forEach((h,i) => { res[h] = sign * (base + (i < extra ? 1 : 0)); });
   return res;
 }
+// A card counts once the player's marker (another player entered that month) has approved it.
 function markedOK(card){
-  if (!card || !card.markerId || card.markerId === card.golferId) return false;
-  const g = D.groups[card.compId + '/' + card.groupId];
-  return !!(g && g.round === card.round && (g.members || []).includes(card.markerId) && (g.members || []).includes(card.golferId));
+  if (!card || !card.markerId || card.markerId === card.golferId || card.approved !== true) return false;
+  return !!entryOf(card.compId, card.markerId) && (card.approvedBy === card.markerId || card.approvedBy === 'organiser');
+}
+function approvalText(card){
+  if (!card || !card.markerId) return 'No marker chosen';
+  if (markedOK(card)) return card.approvedBy === 'organiser' ? `Marker ${gName(card.markerId)} · approved by the organiser` : `Approved by ${gName(card.markerId)}`;
+  return `Waiting for ${gName(card.markerId)} to approve`;
 }
 function scoreCard(comp, round, gid){
   const g = D.golfers[gid]; const card = cardOf(comp.id, round, gid);
@@ -161,7 +164,7 @@ function metric(comp, rows){
 const higher = c => (FORMATS[c.format] || FORMATS.stableford).better === 'high';
 function cbSegments(n){ return [Math.ceil(n/2), Math.round(n/3), Math.round(n/6), 1].filter(k => k > 0); }
 function cbKeys(comp, sc){ return [metric(comp, sc.rows)].concat(cbSegments(sc.rows.length).map(n => metric(comp, sc.rows.slice(-n)))); }
-function cardStatus(sc){ if (!sc.card || !sc.filled) return 'No card'; if (!sc.complete) return 'Thru ' + sc.filled; if (sc.nr) return 'NR'; if (!sc.marked) return 'Not marked'; return ''; }
+function cardStatus(sc){ if (!sc.card || !sc.filled) return 'No card'; if (!sc.complete) return 'Thru ' + sc.filled; if (sc.nr) return 'NR'; if (!sc.marked) return sc.card.markerId ? 'Waiting for approval' : 'No marker'; return ''; }
 function cardValueText(sc){
   const c = sc.rc;
   if (c.format === 'medal') return String(sc.runNett);
@@ -313,16 +316,20 @@ function previewHcp(cid, status){
 }
 
 /* ---------- Who can do what (mirrors firestore.rules) ---------- */
-function myGroup(cid, round){ return S.myGid ? groupOf(cid, round, S.myGid) : null; }
-function canMark(cid, round, gid){
+// Players enter their own card (Friday to Sunday) and choose a marker; the organiser can enter any card.
+function canEnter(cid, round, gid){
   const c = D.comps[cid]; if (!c) return false;
   if (S.isAdmin) return true;
-  if (!S.myGid || gid === S.myGid || c.status !== 'open' || !roundOpenNow(c, round)) return false;
-  const g = myGroup(cid, round); return !!(g && g.members.includes(gid));
+  return !!(S.myGid && gid === S.myGid && c.status === 'open' && roundOpenNow(c, round) && entryOf(cid, S.myGid));
 }
+function canApprove(card){
+  const c = card && D.comps[card.compId]; if (!c || c.status !== 'open') return false;
+  return S.isAdmin || (!!S.myGid && card.markerId === S.myGid && card.golferId !== S.myGid);
+}
+function toApprove(cid){ return S.myGid ? Object.values(D.cards).filter(x => x.compId === cid && x.markerId === S.myGid && x.golferId !== S.myGid && !markedOK(x)) : []; }
 function errText(e){
   const code = e && e.code || '';
-  if (code === 'permission-denied' || /permission/i.test(e && e.message || '')) return (e && e.message && !/Missing or insufficient/i.test(e.message)) ? e.message : "That isn't allowed. Only someone from the group can mark a card, and only while the round is open.";
+  if (code === 'permission-denied' || /permission/i.test(e && e.message || '')) return (e && e.message && !/Missing or insufficient/i.test(e.message)) ? e.message : "That isn't allowed. You can enter your own card while the round is open, and approve cards where you're the marker.";
   if (code === 'unavailable') return "You're offline. It will save when you're back online.";
   return 'Something went wrong. Check your connection and try again.';
 }
@@ -354,7 +361,7 @@ async function boot(){
 function stopData(){ unsubs.forEach(f => { try { f(); } catch (_) {} }); unsubs = []; }
 function onUser(u){
   stopData();
-  Object.assign(D, { golfers:{}, comps:{}, entries:{}, groups:{}, cards:{}, members:{}, settings:null, admins:undefined, adminCode:undefined, member:undefined });
+  Object.assign(D, { golfers:{}, comps:{}, entries:{}, cards:{}, members:{}, settings:null, admins:undefined, adminCode:undefined, member:undefined });
   S.loaded = {}; S.user = u; S.myGid = null; S.isAdmin = false; MEMO = {};
   if (!u) { S.phase = 'signin'; render(); return; }
   if (!u.emailVerified) { S.phase = 'verify'; render(); return; }
@@ -381,8 +388,8 @@ function startData(){
   const coll = (path, key) => dataUnsubs.push(be.watch(path, docs => { D[key] = {}; docs.forEach(d => D[key][d.id] = Object.assign({}, d.data, {id:d.id})); S.loaded[key] = true; MEMO = {}; render(); }, err));
   const group = (name, key) => dataUnsubs.push(be.watchGroup(name, docs => { D[key] = {}; docs.forEach(d => { const s = d.path.split('/'); const cid = s[1]; D[key][cid + '/' + d.id] = Object.assign({}, d.data, {id:d.id, compId:cid}); }); S.loaded[key] = true; MEMO = {}; render(); }, err));
   coll('golfers', 'golfers'); coll('comps', 'comps');
-  if (S.isAdmin) { const wait = setInterval(() => { if (S.loaded.golfers && S.loaded.comps && S.loaded.entries && S.loaded.cards && S.loaded.groups && S.loaded.settings) { clearInterval(wait); if (!S.hcpSynced) { S.hcpSynced = true; syncHandicaps(); } } }, 800); dataUnsubs.push(() => clearInterval(wait)); }
-  group('entries', 'entries'); group('groups', 'groups'); group('cards', 'cards');
+  if (S.isAdmin) { const wait = setInterval(() => { if (S.loaded.golfers && S.loaded.comps && S.loaded.entries && S.loaded.cards && S.loaded.settings) { clearInterval(wait); if (!S.hcpSynced) { S.hcpSynced = true; syncHandicaps(); } } }, 800); dataUnsubs.push(() => clearInterval(wait)); }
+  group('entries', 'entries'); group('cards', 'cards');
   dataUnsubs.push(be.watch('config/settings', d => { D.settings = d ? d.data : null; S.loaded.settings = true; MEMO = {}; render(); }, err));
   if (S.isAdmin) {
     dataUnsubs.push(be.watch('config/admin', d => { D.adminCode = d ? d.data : null; restoreAdmin(); S.loaded.adminCode = true; render(); }, () => { D.adminCode = null; S.loaded.adminCode = true; render(); }));
@@ -424,7 +431,7 @@ function doRender(){
   else if (S.phase === 'verify') html = viewVerify();
   else if (S.phase === 'nomember') html = viewNoMember();
   else if (S.phase === 'bootstrap') html = viewBootstrap();
-  else if (!(S.loaded.golfers && S.loaded.comps && S.loaded.entries && S.loaded.cards && S.loaded.groups)) html = '<p class="loading">Loading the league…</p>';
+  else if (!(S.loaded.golfers && S.loaded.comps && S.loaded.entries && S.loaded.cards)) html = '<p class="loading">Loading the league…</p>';
   else if (S.view === 'league') html = viewLeague();
   else if (S.view === 'golfers') html = S.playerId ? viewPlayer() : viewGolfers();
   else if (S.view === 'admin') html = viewAdmin();
@@ -511,6 +518,7 @@ function featured(c){
       <div class="chips">${chipsFor(c)}</div>
       <dl class="figs"><div><dt>Entries</dt><dd>${st.entries}</dd></div><div><dt>Paid</dt><dd>${st.paid}</dd></div><div><dt>Pot</dt><dd>${euro(st.pot)}</dd></div></dl>
       ${leader ? `<p class="hint">Leading: <b>${esc(leader.golfer.name)}</b>, ${esc(monthText(leader, c))} ${monthUnit(c)}</p>` : ''}
+      ${toApprove(c.id).length ? `<p class="notebox"><b>${toApprove(c.id).length} card${toApprove(c.id).length === 1 ? '' : 's'} waiting for your approval.</b> Open the competition to review.</p>` : ''}
       <button class="btn primary" data-act="openComp" data-id="${esc(c.id)}">Open competition</button>
     </div>
   </section>`;
@@ -557,17 +565,16 @@ function myPanel(c){
   if (!e) return `<section class="mypanel"><span class="eyebrow">You</span><h3>Enter this month</h3><p class="hint">One entry covers all ${compRounds(c).length} rounds. Your best ${compBest(c)} cards count.</p><button class="btn primary block" data-act="selfEnter">Enter ${esc(c.name)}</button>${payNote(c)}</section>`;
   const rs = compRounds(c); const open = rs.find(r => roundState(r) === 'open'); const next = rs.find(r => roundState(r) === 'upcoming');
   let h = `<section class="mypanel"><div class="mp-head"><span class="eyebrow">You're entered</span>${e.paid ? `<span class="pill final">Paid · ${esc(METHODS[e.method] || 'Paid')}</span>` : '<button class="paytag unpaid" data-act="pay" data-id="' + esc(c.id + '/' + S.myGid) + '">Unpaid</button>'}</div>`;
-  if (!open) { h += `<p class="hint">${next ? `Round ${next.n} opens ${esc(roundLabel(next))}. Cards can only be marked Friday to Sunday.` : 'All rounds for this month have been played.'}</p></section>`; return h; }
-  const g = myGroup(c.id, open.n);
+  const pend = toApprove(c.id);
+  const approvals = pend.length ? `<div class="approvals"><span class="eyebrow">Cards to approve (${pend.length})</span><ul class="grp">${pend.map(x => { const sc = scoreCard(c, x.round, x.golferId);
+    return `<li><span class="avatar sm">${esc(initials(gName(x.golferId)))}</span><span class="grp-main"><b>${esc(gName(x.golferId))}</b><small>Round ${x.round} · ${sc.complete ? esc(cardValueText(sc)) + ' ' + unitFor(sc.rc.format) : 'Thru ' + sc.filled}</small></span><button class="btn small primary" data-act="openCard" data-cid="${esc(c.id)}" data-round="${x.round}" data-gid="${esc(x.golferId)}">Review</button></li>`; }).join('')}</ul></div>` : '';
+  if (!open) { h += approvals + `<p class="hint">${next ? `Round ${next.n} opens ${esc(roundLabel(next))}. Cards can be entered Friday to Sunday.` : 'All rounds for this month have been played.'}</p></section>`; return h; }
+  const mine = scoreCard(c, open.n, S.myGid);
+  const myStatus = !mine.filled ? 'No scores yet' : !mine.complete ? `Thru ${mine.filled} · ${esc(approvalText(mine.card))}` : esc(approvalText(mine.card));
   h += `<h3>Round ${open.n} · ${esc(roundLabel(open))}</h3>`;
-  if (!g) return h + `<p class="hint">Before you play, set up your group. Only someone from your group can mark your card.</p><button class="btn primary block" data-act="newGroup" data-round="${open.n}">${ICONS.group}Start your group</button></section>`;
-  h += `<ul class="grp">${g.members.map(gid => {
-    const sc = scoreCard(c, open.n, gid); const me = gid === S.myGid;
-    const status = !sc.filled ? 'No scores yet' : !sc.complete ? `Thru ${sc.filled}` : sc.marked ? `Marked by ${esc(gName(sc.card.markerId))}` : 'Complete, not marked';
-    return `<li><span class="avatar sm">${esc(initials(gName(gid)))}</span><span class="grp-main"><b>${esc(gName(gid))}${me ? ' (you)' : ''}</b><small>${status}</small></span>${me ? `<button class="btn small" data-act="openCard" data-cid="${esc(c.id)}" data-round="${open.n}" data-gid="${esc(gid)}">View</button>` : `<button class="btn small primary" data-act="openCard" data-cid="${esc(c.id)}" data-round="${open.n}" data-gid="${esc(gid)}">Mark card</button>`}</li>`;
-  }).join('')}</ul>`;
-  h += `<div class="mp-tools"><button class="btn primary" data-act="scan" data-round="${open.n}">${ICONS.camera}Scan our card</button><button class="btn" data-act="editGroup" data-id="${esc(g.id)}">Change group</button></div>`;
-  h += `<p class="hint">You mark the others in your group; someone else in the group marks yours.</p></section>`;
+  h += `<ul class="grp"><li><span class="avatar sm">${esc(initials(gName(S.myGid)))}</span><span class="grp-main"><b>Your card</b><small>${myStatus}</small></span><button class="btn small primary" data-act="openCard" data-cid="${esc(c.id)}" data-round="${open.n}" data-gid="${esc(S.myGid)}">${mine.filled ? 'Open' : 'Enter'}</button></li></ul>`;
+  h += `<div class="mp-tools one"><button class="btn" data-act="scan" data-round="${open.n}">${ICONS.camera}Scan my card</button></div>`;
+  h += approvals + `<p class="hint">Enter your scores and choose your marker. Your card counts once your marker taps Approve on their phone.</p></section>`;
   return h;
 }
 function roundCells(c, row){
@@ -580,24 +587,13 @@ function entriesHtml(c, lb){
   const A = S.isAdmin; const fin = c.status === 'final'; const cur = currentRound(c);
   const all = lb.all.slice().sort((a,b) => byName(a.golfer, b.golfer));
   let h = '';
-  if (A && !fin) h += `<div class="entry-tools"><button class="btn primary" data-act="scan" data-round="${cur}">${ICONS.camera}Scan a card</button><button class="btn" data-act="addEntry">+ Add entries</button></div><div class="entry-tools" style="margin-top:8px"><button class="btn" data-act="newGroup" data-round="${cur}">${ICONS.group}Set up a group</button><button class="btn" data-act="compTab" data-v="groups">Groups</button></div>`;
-  if (S.compTab === 'groups') return h + groupsHtml(c);
+  if (A && !fin) h += `<div class="entry-tools"><button class="btn primary" data-act="scan" data-round="${cur}">${ICONS.camera}Scan a card</button><button class="btn" data-act="addEntry">+ Add entries</button></div>`;
   if (!all.length) return h + `<div class="empty" style="margin-top:12px"><p class="hint">No entries yet.</p></div>`;
-  h += `<p class="hint entry-hint">Tap a golfer to see their cards. A * means the card isn't marked by someone in their group yet, so it doesn't count. Brackets show a dropped round.</p>`;
+  h += `<p class="hint entry-hint">Tap a golfer to see their cards. A * means the card is waiting for the marker's approval, so it doesn't count yet. Brackets show a dropped round.</p>`;
   h += '<ul class="list">' + all.map(r => {
     const e = r.entry; const pay = A ? (e.paid ? `<button class="paytag paid" data-act="pay" data-id="${esc(c.id + '/' + r.gid)}">${esc(METHODS[e.method] || 'Paid')}</button>` : `<button class="paytag unpaid" data-act="pay" data-id="${esc(c.id + '/' + r.gid)}">Unpaid</button>`) : (e.paid ? '<span class="paytag paid">Paid</span>' : '<span class="paytag unpaid">Unpaid</span>');
     return `<li class="entry"><button class="entry-main" data-act="openCard" data-cid="${esc(c.id)}" data-round="${cur}" data-gid="${esc(r.gid)}"><span class="entry-name">${esc(r.golfer.name)}<span class="rcells">${roundCells(c, r)}</span></span><span class="entry-score ${r.count ? '' : 'dim'}">${r.count ? esc(monthText(r, c)) + (monthUnit(c) ? `<small>${monthUnit(c)}</small>` : '') : 'No total'}</span></button>${pay}</li>`;
   }).join('') + '</ul>';
-  return h;
-}
-function groupsHtml(c){
-  const rs = compRounds(c);
-  let h = `<div class="sec-head"><h2>Groups by round</h2><button class="btn small" data-act="compTab" data-v="entries">Back to entries</button></div>`;
-  rs.forEach(r => {
-    const gs = groupsFor(c.id, r.n);
-    h += `<div class="sec-head" style="margin-top:14px"><h2>Round ${r.n} · ${esc(shortRange(r))}</h2>${S.isAdmin && c.status === 'open' ? `<button class="btn small" data-act="newGroup" data-round="${r.n}">+ Group</button>` : ''}</div>`;
-    h += gs.length ? `<ul class="list">${gs.map(g => `<li><button class="row" data-act="editGroup" data-id="${esc(g.id)}" ${S.isAdmin ? '' : 'disabled'}><span class="avatar sm">${g.members.length}</span><span class="row-main"><span class="row-title">${g.members.map(x => esc(gName(x))).join(', ')}</span><span class="row-sub">${g.members.filter(x => scoreCard(c, r.n, x).marked).length} of ${g.members.length} cards marked</span></span><span></span></button></li>`).join('')}</ul>` : '<p class="hint">No groups yet.</p>';
-  });
   return h;
 }
 function boardHtml(c, lb){
@@ -618,7 +614,7 @@ function monthListHtml(c, lb){
   }).join('');
   const rest = lb.rest.map(r => `<li class="lb-row lb-rest"><span class="lb-pos">–</span><button class="lb-name" data-act="openPlayer" data-id="${esc(r.gid)}">${esc(r.golfer.name)}<small>${esc(r.status)}</small></button><span class="lb-score"></span><span class="lb-pts"><b>${r.points} pt${r.points === 1 ? '' : 's'}</b></span></li>`).join('');
   const mixNote = lb.mode && lb.mode.mixed ? `<p class="hint" style="margin-top:10px">Rounds use different formats, so this table adds up Stableford points from each golfer's best ${compBest(c)} cards.</p>` : '';
-  const note = mixNote + (fin ? '' : `<p class="hint" style="margin-top:10px">Provisional. Only complete cards marked by someone in the golfer's group count. Golfers with fewer than ${compBest(c)} counting cards rank below those with ${compBest(c)}. League points are added when the organiser finalises the month.</p>`);
+  const note = mixNote + (fin ? '' : `<p class="hint" style="margin-top:10px">Provisional. Only complete cards approved by the player's marker count. Golfers with fewer than ${compBest(c)} counting cards rank below those with ${compBest(c)}. League points are added when the organiser finalises the month.</p>`);
   return `<ul class="list">${head}${rows}${rest}</ul>${note}`;
 }
 function roundBoardHtml(c, n){
@@ -626,7 +622,7 @@ function roundBoardHtml(c, n){
   const info = `<p class="hint" style="margin-bottom:10px">Round ${n}${r ? ' · ' + esc(roundLabel(r)) : ''} · ${esc((FORMATS[rc.format] || FORMATS.stableford).name)} · ${rc.holes.length} holes · ${esc((TEES[rc.tee] || TEES.white).name)} tees</p>`;
   const head = `<div class="lb-head"><span>Pos</span><span>Golfer</span><span>Score</span><span>Month</span></div>`;
   const rows = rb.ranked.map(sc => { const row = lb.all.find(r => r.gid === sc.gid); const counts = row && row.countedNs.has(n);
-    return `<li class="lb-row ${sc.pos === 1 ? 'first' : ''}"><span class="lb-pos">${sc.tied ? 'T' : ''}${sc.pos}</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>Marked by ${esc(gName(sc.card.markerId))}${sc.onCb ? ' · on countback' : ''}</small></button><span class="lb-score">${esc(cardValueText(sc))}<small>${unitFor(rc.format)}</small></span><span class="lb-pts"><b>${counts ? 'Counts' : 'Dropped'}</b></span></li>`; }).join('');
+    return `<li class="lb-row ${sc.pos === 1 ? 'first' : ''}"><span class="lb-pos">${sc.tied ? 'T' : ''}${sc.pos}</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>Marker ${esc(gName(sc.card.markerId))}${sc.onCb ? ' · on countback' : ''}</small></button><span class="lb-score">${esc(cardValueText(sc))}<small>${unitFor(rc.format)}</small></span><span class="lb-pts"><b>${counts ? 'Counts' : 'Dropped'}</b></span></li>`; }).join('');
   const rest = rb.rest.map(sc => `<li class="lb-row lb-rest"><span class="lb-pos">–</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>${esc(cardStatus(sc))}</small></button><span class="lb-score"></span><span class="lb-pts"></span></li>`).join('');
   return `${info}<ul class="list">${head}${rows}${rest}</ul>`;
 }
@@ -636,8 +632,9 @@ function viewCard(){
   const {cid, round, gid} = S.card; const c = D.comps[cid]; const g = D.golfers[gid];
   if (!c || !g) { S.card = null; return viewComp(); }
   const sc = scoreCard(c, round, gid); const fin = c.status === 'final';
-  const W = !fin && canMark(cid, round, gid);
-  const grp = groupOf(cid, round, gid); const rc = sc.rc; const fmt = rc.format;
+  const mId = sc.card && sc.card.markerId; const mine = gid === S.myGid && !S.isAdmin;
+  const W = !fin && canEnter(cid, round, gid) && (S.isAdmin || !!mId);
+  const rc = sc.rc; const fmt = rc.format;
   if (!rc.holes.includes(S.activeHole)) S.activeHole = rc.holes.find(h => !(sc.card && sc.card.scores && sc.card.scores[h] !== undefined)) || rc.holes[0];
   const resHead = fmt === 'stableford' ? 'Pts' : fmt === 'medal' ? 'Nett' : fmt === 'parbogey' ? '±' : 'vs Par';
   const t = g.gender === 'L' ? RED : (TEES[rc.tee] || TEES.white); const rs = compRounds(c);
@@ -645,20 +642,20 @@ function viewCard(){
   if (rs.length > 1) h += `<div class="bsel rtabs">${rs.map(r => `<button data-act="cardRound" data-v="${r.n}" aria-pressed="${r.n === round}">R${r.n}<small>${esc(shortRange(r))}</small></button>`).join('')}</div>`;
   h += `<div class="card-head"><div><span class="eyebrow">${g.gender === 'L' ? "Ladies' card" : "Men's card"} · ${t.name} tees · Round ${round}</span><h1 class="card-name">${esc(g.name)}</h1><p class="hint">Hcp ${fmtHi(cardHi(sc.card, g))} · ${rc.holes.length} holes · ${esc((FORMATS[fmt]||FORMATS.stableford).name)}</p></div>
     ${S.isAdmin && !fin ? `<button class="shotsbtn" data-act="editShots"><b>${sc.total}</b><span>Shots ✎</span></button>` : `<div class="shotsbtn" style="cursor:default"><b>${sc.total}</b><span>Shots</span></div>`}</div>`;
-  // group & marker
-  let mk;
-  if (!grp) mk = `<div class="marker warn"><b>Not in a group for round ${round}.</b> A card can only be marked by someone from the golfer's group.${S.isAdmin && !fin ? ` <button class="textbtn" data-act="newGroup" data-round="${round}" data-with="${esc(gid)}">Set up a group</button>` : ''}</div>`;
-  else {
-    const others = grp.members.filter(x => x !== gid);
-    const mId = sc.card && sc.card.markerId;
-    const status = sc.marked ? `Marked by <b>${esc(gName(mId))}</b>` : sc.card && sc.filled ? '<b>Not marked yet</b>' : 'No scores yet';
-    mk = `<div class="marker ${sc.marked ? 'ok' : sc.filled ? 'warn' : ''}"><span>Group: ${grp.members.map(x => esc(gName(x))).join(', ')}</span><span>${status}</span>`;
-    if (S.isAdmin && !fin) mk += `<label class="field" style="margin:8px 0 0"><span>Marked by</span><select id="markerSel">${['<option value="">Not marked</option>'].concat(others.map(x => `<option value="${esc(x)}" ${mId === x ? 'selected' : ''}>${esc(gName(x))}</option>`)).join('')}</select></label>`;
-    mk += '</div>';
+  // marker and approval
+  const pool = entriesFor(cid).map(e => e.golferId).filter(x => x !== gid).sort((a, b) => gName(a).localeCompare(gName(b)));
+  const canPick = !fin && (S.isAdmin || (mine && canEnter(cid, round, gid)));
+  let mk = `<div class="marker ${sc.marked ? 'ok' : sc.filled ? 'warn' : ''}"><span><b>${esc(approvalText(sc.card))}</b></span>`;
+  if (canPick) mk += `<label class="field" style="margin:8px 0 0"><span>${mine ? 'Who is marking your card?' : 'Marker'}</span><select id="markerSel"><option value="">Choose a player</option>${pool.map(x => `<option value="${esc(x)}" ${mId === x ? 'selected' : ''}>${esc(gName(x))}</option>`).join('')}</select></label>`;
+  if (sc.card && !sc.marked && canApprove(sc.card) && (S.isAdmin || sc.card.markerId === S.myGid)) {
+    const label = S.isAdmin && sc.card.markerId !== S.myGid ? 'Approve as organiser' : `Approve ${esc(g.name)}'s card`;
+    mk += sc.complete ? `<button class="btn primary block" style="margin-top:10px" data-act="approve">${label}</button>` : `<p class="hint" style="margin-top:8px">The card can be approved once all ${rc.holes.length} holes are entered.</p>`;
   }
-  h += mk;
-  if (gid === S.myGid && !S.isAdmin) h += `<p class="hint" style="margin:-4px 0 12px">Your card is marked by someone else in your group. You can check it here.</p>`;
-  else if (!W && !fin && !S.isAdmin) h += `<p class="hint" style="margin:-4px 0 12px">${roundOpenNow(c, round) ? 'Only someone from this golfer\'s group can mark this card.' : 'This round is closed. Cards can be marked Friday to Sunday.'}</p>`;
+  h += mk + '</div>';
+  if (mine && canEnter(cid, round, gid) && !mId) h += `<p class="hint" style="margin:-4px 0 12px">Choose your marker first, then enter your scores.</p>`;
+  else if (mine && sc.marked) h += `<p class="hint" style="margin:-4px 0 12px">Approved. If you change a score, your marker has to approve it again.</p>`;
+  else if (!S.isAdmin && sc.card && sc.card.markerId === S.myGid && !sc.marked) h += `<p class="hint" style="margin:-4px 0 12px">You're ${esc(g.name)}'s marker. Check the scores against their card, then approve.</p>`;
+  else if (!W && !fin && !S.isAdmin && mine) h += `<p class="hint" style="margin:-4px 0 12px">${roundOpenNow(c, round) ? 'Enter this month to add your card.' : 'This round is closed. Cards can be entered Friday to Sunday.'}</p>`;
   const nettRel = sc.runNett - sc.runPar;
   const cells = [['Gross', sc.gross || '–', '']];
   if (fmt === 'stableford') cells.push(['Nett', sc.filled ? sc.runNett : '–', ''], ['Thru', sc.filled, ''], ['Points', sc.pts, '']);
@@ -694,7 +691,7 @@ function viewCard(){
   h += `<p class="hint lockednote">Circle = birdie, double circle = eagle, square = bogey, double square = double bogey or worse. P = picked up.</p>`;
   if (W) {
     const r = sc.rows.find(x => x.h === S.activeHole) || sc.rows[0];
-    h += `<div class="keypad"><div class="wrap"><div class="kp-label"><b>Hole ${r.h}</b><span>${S.isAdmin ? '' : 'You are marking · '}Par ${r.par} · ${r.shots} shot${Math.abs(r.shots) === 1 ? '' : 's'}</span></div><div class="kp-grid">${range(1,12).map(n => `<button data-act="key" data-v="${n}" class="${n === r.par ? 'par' : ''}" aria-label="${n}">${n}</button>`).join('')}<button class="fn" data-act="key" data-v="P" aria-label="Picked up">P</button><button class="fn" data-act="key" data-v="X" aria-label="Clear hole">Clear</button></div></div></div>`;
+    h += `<div class="keypad"><div class="wrap"><div class="kp-label"><b>Hole ${r.h}</b><span>Par ${r.par} · ${r.shots} shot${Math.abs(r.shots) === 1 ? '' : 's'}</span></div><div class="kp-grid">${range(1,12).map(n => `<button data-act="key" data-v="${n}" class="${n === r.par ? 'par' : ''}" aria-label="${n}">${n}</button>`).join('')}<button class="fn" data-act="key" data-v="P" aria-label="Picked up">P</button><button class="fn" data-act="key" data-v="X" aria-label="Clear hole">Clear</button></div></div></div>`;
   }
   return h;
 }
@@ -873,7 +870,6 @@ function renderSheet(){
     case 'pay': h = sheetPay(); break;
     case 'golfer': h = sheetGolfer(); break;
     case 'shots': h = sheetShots(); break;
-    case 'group': h = sheetGroup(); break;
     case 'scan': h = sheetScan(); break;
     case 'account': h = sheetAccount(); break;
     case 'confirm': h = `<h3>${esc(S.sheet.title)}</h3><p class="sub">${esc(S.sheet.text)}</p><div class="confirm-actions"><button class="btn" data-act="closeSheet">Cancel</button><button class="btn ${S.sheet.danger ? 'danger-fill' : 'primary'}" data-act="confirmOk">${esc(S.sheet.ok)}</button></div>`; break;
@@ -959,22 +955,6 @@ function sheetShots(){
     <p class="hint" style="margin-bottom:16px">Calculated: <b>${calc}</b> from index ${fmtHi(cardHi(card, g))}, ${t.name} tees (${t.cr} / ${t.slope}), ${rc.allowance}% allowance${rc.holes.length !== 18 ? `, ${rc.holes.length}/18 of the round` : ''}.</p>
     <div class="confirm-actions"><button type="button" class="btn" data-act="resetShots">Use ${calc}</button><button class="btn primary" type="submit">Save</button></div></form>`;
 }
-function sheetGroup(){
-  const sh = S.sheet; const c = D.comps[sh.cid]; if (!c) return null;
-  const grp = sh.id ? D.groups[c.id + '/' + sh.id] : null; const round = grp ? grp.round : sh.round;
-  const inOther = gid => { const x = groupOf(c.id, round, gid); return x && (!grp || x.id !== grp.id); };
-  const entered = entriesFor(c.id).map(e => D.golfers[e.golferId]).sort(byName);
-  const cur = new Set(grp ? grp.members : (sh.with ? [sh.with] : (S.isAdmin ? [] : [S.myGid])));
-  const opts = entered.filter(g => !inOther(g.id) && (S.isAdmin || g.id !== S.myGid));
-  const r = compRounds(c).find(x => x.n === round);
-  return `<form data-form="group"><h3>${grp ? 'Change group' : 'Your group'}</h3><p class="sub">Round ${round}${r ? ' · ' + esc(roundLabel(r)) : ''}</p>
-    <p class="hint" style="margin-bottom:12px">${S.isAdmin ? 'Tick 2 to 4 golfers who are playing together.' : "Tick who you're playing with (1 to 3). You'll mark their cards and one of them marks yours."}</p>
-    ${opts.length ? `<div class="checklist">${opts.map(g => `<label class="check"><input type="checkbox" id="gp-${esc(g.id)}" name="gid" value="${esc(g.id)}" ${cur.has(g.id) ? 'checked' : ''}><span>${esc(g.name)}</span><small>Hcp ${fmtHi(curHcp(g.id))}</small></label>`).join('')}</div>` : '<p class="hint">Nobody else is free. Golfers must be entered and not in another group this round.</p>'}
-    <p class="hint" style="margin-bottom:14px">Only golfers entered this month, and not already in a group this round, are shown.</p>
-    <button class="btn primary block" type="submit">${grp ? 'Save group' : 'Create group'}</button>
-    ${grp ? `<button type="button" class="btn danger block" style="margin-top:8px" data-act="delGroup">Break up this group</button>` : ''}</form>`;
-}
-
 /* ---------- Scanning (Gemini reads the photo, only recognised golfers are accepted) ---------- */
 function normName(s){ return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z\s']/g, ' ').replace(/\s+/g, ' ').trim(); }
 function recognise(match, onCard){
@@ -1041,7 +1021,7 @@ async function runScan(){
   if (SCAN_CTL === ctl) SCAN_CTL = null; renderSheet();
 }
 function buildScanRows(res, c, ctx){
-  const round = ctx.round; const holes = rcfg(c, round).holes; const mine = !S.isAdmin ? myGroup(c.id, round) : null;
+  const round = ctx.round; const holes = rcfg(c, round).holes;
   const seen = new Set();
   const rows = res.golfers.slice(0, 6).map(g => {
     const raw = (g && typeof g.scores === 'object' && g.scores) || {}; const scores = {};
@@ -1053,20 +1033,16 @@ function buildScanRows(res, c, ctx){
     let status = 'ok', why = '';
     if (!gid) { status = 'reject'; why = "Name not recognised from the golfer list, so this card isn't accepted."; }
     else if (seen.has(gid)) { status = 'reject'; why = 'This golfer appears twice on the card.'; }
-    else if (!S.isAdmin && gid === S.myGid) { status = 'reject'; why = 'Your own card has to be marked by someone else in your group.'; }
-    else if (!S.isAdmin && !(mine && mine.members.includes(gid))) { status = 'reject'; why = "Not in your group this round, so you can't mark this card."; }
+    else if (!S.isAdmin && gid !== S.myGid) { status = 'reject'; why = 'Each player submits their own card, so this one is left for them.'; }
     else if (S.isAdmin && !entryOf(c.id, gid)) { why = "Not entered this month. Adding the card enters them (unpaid)."; }
     if (gid) seen.add(gid);
     return {name, gid, markerGid, scores, unclear, status, why};
   }).filter(r => Object.keys(r.scores).length || r.status === 'reject');
-  if (S.isAdmin) {
-    const ok = rows.filter(r => r.status === 'ok');
-    ok.forEach(r => { const g = groupOf(c.id, round, r.gid); const others = ok.filter(x => x !== r).map(x => x.gid);
-      if (g && ok.some(x => x !== r && !g.members.includes(x.gid))) { r.status = 'reject'; r.why = `Already in another group in round ${round}.`; } else r.groupId = g ? g.id : null;
-      const pool = g ? g.members.filter(x => x !== r.gid) : others;
-      r.marker = r.markerGid && pool.includes(r.markerGid) ? r.markerGid : (pool.length ? pool[(ok.indexOf(r) + 1) % Math.max(1, pool.length)] || pool[0] : '');
-      if (r.marker === r.gid) r.marker = pool.find(x => x !== r.gid) || ''; });
-  }
+  // Marker: the name in the card's marker box if they're a player in the competition, else the card's current marker, else another player on the card.
+  const ok = rows.filter(r => r.status === 'ok'); const onCard = ok.map(x => x.gid);
+  ok.forEach((r, k) => { const can = x => x && x !== r.gid && (entryOf(c.id, x) || (S.isAdmin && onCard.includes(x)));
+    const prev = cardOf(c.id, round, r.gid); const others = onCard.filter(x => x !== r.gid && (S.isAdmin || entryOf(c.id, x)));
+    r.marker = can(r.markerGid) ? r.markerGid : prev && can(prev.markerId) ? prev.markerId : (others.length ? others[k % others.length] : ''); });
   return rows;
 }
 function sheetScan(){
@@ -1081,9 +1057,9 @@ function sheetScan(){
   const okRows = sh.rows.filter(r => r.status === 'ok');
   h += sh.rows.map((r, i) => {
     if (r.status === 'reject') return `<div class="scanrow rejected"><div class="oncard"><span class="label">On the card</span><b>${esc(r.name || 'Unnamed golfer')}</b></div><p class="errbox">${esc(r.why)}</p></div>`;
-    const pool = S.isAdmin ? (r.groupId ? D.groups[c.id + '/' + r.groupId].members : okRows.map(x => x.gid)).filter(x => x !== r.gid) : [];
+    const pool = [...new Set(entriesFor(c.id).map(e => e.golferId).concat(S.isAdmin ? okRows.map(x => x.gid) : []))].filter(x => x !== r.gid).sort((a, b) => gName(a).localeCompare(gName(b)));
     return `<div class="scanrow"><div class="scanrow-head"><span class="oncard"><span class="label">On the card</span><b>${esc(r.name)}</b></span><span class="oncard"><span class="label">Golfer</span><b class="okname">${esc(gName(r.gid))}</b></span></div>
-      ${S.isAdmin ? `<label class="field" style="margin:0"><span>Marked by</span><select id="sm-${i}"><option value="">Not marked</option>${pool.map(x => `<option value="${esc(x)}" ${r.marker === x ? 'selected' : ''}>${esc(gName(x))}</option>`).join('')}</select></label>` : `<p class="hint">You'll be the marker for this card.</p>`}
+      <label class="field" style="margin:0"><span>Marker (approves the card)</span><select id="sm-${i}"><option value="">Choose a player</option>${pool.map(x => `<option value="${esc(x)}" ${r.marker === x ? 'selected' : ''}>${esc(gName(x))}</option>`).join('')}</select></label>
       ${r.why ? `<p class="hint">${esc(r.why)}</p>` : ''}
       <div class="sgrid">${holes.map(hh => `<label class="sg ${r.unclear.includes(hh) ? 'unclear' : ''}"><span>${hh}</span><input type="text" inputmode="numeric" maxlength="2" autocomplete="off" id="sv-${i}-${hh}" value="${r.scores[hh] !== undefined ? esc(String(r.scores[hh])) : ''}" aria-label="Hole ${hh}"></label>`).join('')}</div>
       <p class="hint">${Object.keys(r.scores).length} of ${holes.length} holes read${r.unclear.length ? ` · check hole${r.unclear.length > 1 ? 's' : ''} ${r.unclear.join(', ')}` : ''}</p></div>`;
@@ -1094,20 +1070,18 @@ function sheetScan(){
 async function applyScan(){
   const sh = S.sheet; const c = sh && D.comps[sh.ctx.cid]; if (!c || !sh.rows) return; const round = sh.ctx.round; const holes = rcfg(c, round).holes;
   document.querySelectorAll('#sheetIn .sg.bad').forEach(x => x.classList.remove('bad'));
-  const ops = []; let bad = null; let newGroupId = null; const ok = sh.rows.map((r,i) => ({r, i})).filter(x => x.r.status === 'ok');
-  if (S.isAdmin && ok.length >= 2 && ok.every(x => !x.r.groupId)) { newGroupId = newId(); ops.push({path:`comps/${c.id}/groups/${newGroupId}`, data:{compId:c.id, round, members: ok.map(x => x.r.gid), createdBy:'organiser', createdAt: Date.now()}}); }
+  const ops = []; let bad = null; const ok = sh.rows.map((r,i) => ({r, i})).filter(x => x.r.status === 'ok');
   ok.forEach(({r, i}) => {
     const scores = {};
     holes.forEach(hh => { const inp = document.getElementById(`sv-${i}-${hh}`); const t = (inp ? inp.value : '').trim().toUpperCase(); if (!t) return; if (t === 'P') { scores[hh] = 'P'; return; } const n = parseInt(t, 10); if (/^\d{1,2}$/.test(t) && n >= 1 && n <= 20) scores[hh] = n; else { if (inp) inp.closest('.sg').classList.add('bad'); bad = bad || `Hole ${hh} for ${gName(r.gid)} should be a number or P.`; } });
     const prev = cardOf(c.id, round, r.gid); const g = D.golfers[r.gid];
-    let groupId, markerId;
-    if (S.isAdmin) { groupId = r.groupId || newGroupId || (prev && prev.groupId) || null; const sel = document.getElementById('sm-' + i); markerId = sel && sel.value ? sel.value : null; }
-    else { const mg = myGroup(c.id, round); groupId = mg && mg.id; markerId = S.myGid; }
+    const sel = document.getElementById('sm-' + i); const markerId = sel && sel.value ? sel.value : null;
+    if (!S.isAdmin && !markerId) { bad = bad || 'Choose who marked your card.'; return; }
     if (S.isAdmin && !entryOf(c.id, r.gid)) ops.push({path:`comps/${c.id}/entries/${r.gid}`, data:{compId:c.id, golferId:r.gid, paid:false, method:null, paidAt:null, createdAt:Date.now()}});
-    ops.push({path:`comps/${c.id}/cards/${round}_${r.gid}`, data:{compId:c.id, golferId:r.gid, round, groupId, markerId, scores:Object.assign({}, (prev && prev.scores) || {}, scores), hi: prev && prev.hi != null ? prev.hi : snapHcp(g), shots: prev && prev.shots != null ? prev.shots : null, updatedAt:Date.now(), updatedBy:S.user.uid, scanned:true}});
+    ops.push({path:`comps/${c.id}/cards/${round}_${r.gid}`, data:{compId:c.id, golferId:r.gid, round, markerId, scores:Object.assign({}, (prev && prev.scores) || {}, scores), hi: prev && prev.hi != null ? prev.hi : snapHcp(g), shots: prev && prev.shots != null ? prev.shots : null, approved:false, approvedBy:null, approvedAt:null, updatedAt:Date.now(), updatedBy:S.user.uid, scanned:true}});
   });
   if (bad) { toast(bad); return; }
-  if (await batch(ops)) { closeSheet(); toast(`${ok.length} card${ok.length === 1 ? '' : 's'} added. Give ${ok.length === 1 ? 'it' : 'them'} a quick check.`); }
+  if (await batch(ops)) { closeSheet(); toast(`${ok.length} card${ok.length === 1 ? '' : 's'} added. ${ok.length === 1 ? 'The marker needs' : 'Each marker needs'} to approve before it counts.`); }
 }
 
 /* ---------- Actions ---------- */
@@ -1124,10 +1098,10 @@ function authErr(e){
   return 'Sign-in didn\'t work. Try again.';
 }
 function saveCard(cid, round, gid, scores){
-  const prev = cardOf(cid, round, gid); const g = D.golfers[gid]; const grp = groupOf(cid, round, gid);
-  let groupId = (grp && grp.id) || (prev && prev.groupId) || null; let markerId = prev ? prev.markerId : null;
-  if (!S.isAdmin) { const mg = myGroup(cid, round); groupId = mg && mg.id; markerId = S.myGid; }
-  const data = {compId:cid, golferId:gid, round, groupId, markerId, scores, hi: prev && prev.hi != null ? prev.hi : snapHcp(g), shots: prev && prev.shots != null ? prev.shots : null, updatedAt:Date.now(), updatedBy:S.user.uid};
+  const prev = cardOf(cid, round, gid); const g = D.golfers[gid];
+  const markerId = prev ? prev.markerId || null : null;
+  const keep = S.isAdmin && prev && prev.approved; // organiser corrections keep an approval
+  const data = {compId:cid, golferId:gid, round, markerId, scores, hi: prev && prev.hi != null ? prev.hi : snapHcp(g), shots: prev && prev.shots != null ? prev.shots : null, approved: !!keep, approvedBy: keep ? prev.approvedBy : null, approvedAt: keep ? prev.approvedAt : null, updatedAt:Date.now(), updatedBy:S.user.uid};
   const path = `comps/${cid}/cards/${round}_${gid}`;
   localSet(path, data); render();
   clearTimeout(cardTimers[path]); cardTimers[path] = setTimeout(() => put(path, data), 600);
@@ -1156,16 +1130,23 @@ const ACT = {
   closeCard(){ S.card = null; top(); render(); },
   hole(el){ S.activeHole = +el.dataset.h; render(); },
   key(el){
-    const {cid, round, gid} = S.card || {}; const c = D.comps[cid]; if (!c || c.status === 'final' || !canMark(cid, round, gid)) return;
+    const {cid, round, gid} = S.card || {}; const c = D.comps[cid]; if (!c || c.status === 'final' || !canEnter(cid, round, gid)) return;
+    if (!S.isAdmin && !(cardOf(cid, round, gid) || {}).markerId) { toast('Choose your marker first.'); return; }
     const holes = rcfg(c, round).holes; const h = S.activeHole; if (!holes.includes(h)) return;
     const prev = cardOf(cid, round, gid); const scores = Object.assign({}, (prev && prev.scores) || {});
     const v = el.dataset.v; if (v === 'X') delete scores[h]; else scores[h] = v === 'P' ? 'P' : +v;
     const idx = holes.indexOf(h); if (v !== 'X' && idx < holes.length - 1) S.activeHole = holes[idx+1];
     saveCard(cid, round, gid, scores);
     requestAnimationFrame(() => requestAnimationFrame(() => { const a = document.querySelector('.hole.active'); if (a) a.scrollIntoView({block:'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'}); }));
-    if (v !== 'X' && idx === holes.length - 1 && Object.keys(scores).length >= holes.length) toast(S.isAdmin ? 'Card complete' : `Card complete, marked by you`);
+    if (v !== 'X' && idx === holes.length - 1 && Object.keys(scores).length >= holes.length) toast(S.isAdmin ? 'Card complete' : `Card complete. ${gName((cardOf(cid, round, gid) || {}).markerId)} needs to approve it.`);
   },
   editShots(){ openSheet({type:'shots'}); },
+  async approve(){
+    const {cid, round, gid} = S.card || {}; const prev = cardOf(cid, round, gid); if (!prev || !canApprove(prev)) return;
+    const by = prev.markerId === S.myGid ? S.myGid : 'organiser';
+    const data = Object.assign({}, prev, {approved:true, approvedBy:by, approvedAt:Date.now()}); delete data.id;
+    if (await put(`comps/${cid}/cards/${round}_${gid}`, data)) { localSet(`comps/${cid}/cards/${round}_${gid}`, data); render(); toast(`${gName(gid)}'s card approved. It counts now.`); }
+  },
   async resetShots(){ const {cid, round, gid} = S.card; const prev = cardOf(cid, round, gid); if (prev) await put(`comps/${cid}/cards/${round}_${gid}`, Object.assign({}, prev, {shots:null, id:undefined})); closeSheet(); toast('Using calculated shots'); },
   addEntry(){ openSheet({type:'addEntry'}); },
   async selfEnter(){ const c = D.comps[S.compId]; if (!c) return; if (await put(`comps/${c.id}/entries/${S.myGid}`, {compId:c.id, golferId:S.myGid, paid:false, method:null, paidAt:null, createdAt:Date.now()})) toast("You're entered. Pay your entry to the organiser."); },
@@ -1178,7 +1159,7 @@ const ACT = {
     const c = D.comps[S.compId]; if (!c) return; const lb = leaderboard(c); const unpaid = entriesFor(c.id).filter(e => !e.paid).length;
     const unmarked = lb.all.reduce((a,r) => a + r.cards.filter(sc => sc.complete && !sc.marked).length, 0);
     const changes = previewHcp(c.id, 'final');
-    const bits = ['Scores lock and league points are added.']; if (changes.length) bits.push('Handicaps: ' + changes.map(x => `${gName(x.gid)} ${fmtHi(x.from)} → ${fmtHi(x.to)}`).join(', ') + '.'); if (unmarked) bits.push(`${unmarked} complete card${unmarked === 1 ? " isn't" : "s aren't"} marked and won't count.`); if (unpaid) bits.push(`${unpaid} entr${unpaid === 1 ? 'y is' : 'ies are'} unpaid.`); bits.push('You can reopen it later.');
+    const bits = ['Scores lock and league points are added.']; if (changes.length) bits.push('Handicaps: ' + changes.map(x => `${gName(x.gid)} ${fmtHi(x.from)} → ${fmtHi(x.to)}`).join(', ') + '.'); if (unmarked) bits.push(`${unmarked} complete card${unmarked === 1 ? " isn't" : "s aren't"} approved by the marker and won't count.`); if (unpaid) bits.push(`${unpaid} entr${unpaid === 1 ? 'y is' : 'ies are'} unpaid.`); bits.push('You can reopen it later.');
     askConfirm('Finalise the month?', bits.join(' '), 'Finalise', async () => { const data = Object.assign({}, c, {status:'final', finalisedAt:Date.now()}); delete data.id;
       if (await put(`comps/${c.id}`, data)) { localSet(`comps/${c.id}`, data); await syncHandicaps(); S.compTab = 'board'; S.boardSel = 'month'; toast(changes.length ? `Results finalised. ${changes.length} handicap${changes.length === 1 ? '' : 's'} updated.` : 'Results finalised'); } });
   },
@@ -1187,16 +1168,12 @@ const ACT = {
       const data = Object.assign({}, c, {status:'open'}); delete data.id; if (await put(`comps/${c.id}`, data)) { localSet(`comps/${c.id}`, data); await syncHandicaps(); toast('Scoring reopened'); } }); },
   delComp(){
     const c = D.comps[S.compId]; if (!c) return;
-    askConfirm('Delete competition?', `${c.name}, its entries, groups and cards will be removed, along with their league points. This can't be undone.`, 'Delete', async () => {
-      const ops = [].concat(entriesFor(c.id).map(e => ({path:`comps/${c.id}/entries/${e.golferId}`, del:true})), Object.values(D.groups).filter(g => g.compId === c.id).map(g => ({path:`comps/${c.id}/groups/${g.id}`, del:true})), Object.values(D.cards).filter(x => x.compId === c.id).map(x => ({path:`comps/${c.id}/cards/${x.id}`, del:true})), [{path:`comps/${c.id}`, del:true}]);
+    askConfirm('Delete competition?', `${c.name}, its entries and cards will be removed, along with their league points. This can't be undone.`, 'Delete', async () => {
+      const ops = [].concat(entriesFor(c.id).map(e => ({path:`comps/${c.id}/entries/${e.golferId}`, del:true})), Object.values(D.cards).filter(x => x.compId === c.id).map(x => ({path:`comps/${c.id}/cards/${x.id}`, del:true})), [{path:`comps/${c.id}`, del:true}]);
       for (let i = 0; i < ops.length; i += 400) { if (!(await batch(ops.slice(i, i + 400)))) return; }
       S.compId = null; render(); toast('Competition deleted');
     }, true);
   },
-  newGroup(el){ const c = D.comps[S.compId]; if (!c) return; openSheet({type:'group', cid:c.id, round:Number(el.dataset.round) || currentRound(c), with: el.dataset.with || null}); },
-  editGroup(el){ const c = D.comps[S.compId]; if (!c) return; if (!D.groups[c.id + '/' + el.dataset.id]) return; openSheet({type:'group', cid:c.id, id:el.dataset.id}); },
-  delGroup(){ const sh = S.sheet; const grp = D.groups[sh.cid + '/' + sh.id]; if (!grp) return;
-    askConfirm('Break up this group?', 'Cards already marked inside this group will stop counting until the golfers are grouped again.', 'Break up', async () => { if (await drop(`comps/${sh.cid}/groups/${grp.id}`)) toast('Group removed'); }, true); },
   newGolfer(){ openSheet({type:'golfer'}); },
   editGolfer(el){ openSheet({type:'golfer', id:el.dataset.id}); },
   delGolfer(el){ const p = D.golfers[el.dataset.id]; if (!p) return; const email = golferEmails()[p.id];
@@ -1208,7 +1185,7 @@ const ACT = {
   closeSheet(){ closeSheet(); },
   confirmOk(){ const f = CONFIRM_FN; closeSheet(); if (f) f(); },
   scan(el){ const c = D.comps[S.compId]; if (!c) return; const round = Number(el.dataset.round) || currentRound(c);
-    if (!S.isAdmin && !myGroup(c.id, round)) { toast('Set up your group first.'); return; }
+    if (!S.isAdmin && !entryOf(c.id, S.myGid)) { toast('Enter this month first.'); return; }
     pickScanPhoto({cid:c.id, round}); },
   newScan(){ const ctx = S.sheet && S.sheet.ctx; if (!ctx) return; closeSheetQuiet(); pickScanPhoto(ctx); render(); },
   stopScan(){ if (SCAN_CTL) SCAN_CTL.aborted = true; closeSheet(); },
@@ -1267,17 +1244,8 @@ const FORMS = {
     if (await batch(ops)) { closeSheet(); toast(prev.name ? 'Golfer updated' : `${name} added`); }
   },
   async shots(f){ const {cid, round, gid} = S.card; const prev = cardOf(cid, round, gid); const v = parseInt(new FormData(f).get('shots'), 10); const g = D.golfers[gid];
-    const data = Object.assign({compId:cid, golferId:gid, round, groupId: (groupOf(cid, round, gid) || {}).id || null, markerId:null, scores:{}, hi: snapHcp(g)}, prev || {}, {shots: isFinite(v) ? v : null, updatedAt:Date.now(), updatedBy:S.user.uid}); delete data.id;
+    const data = Object.assign({compId:cid, golferId:gid, round, markerId:null, scores:{}, hi: snapHcp(g)}, prev || {}, {shots: isFinite(v) ? v : null, updatedAt:Date.now(), updatedBy:S.user.uid}); delete data.id;
     if (await put(`comps/${cid}/cards/${round}_${gid}`, data)) { closeSheet(); toast('Shots updated'); } },
-  async group(f){
-    const sh = S.sheet; const c = D.comps[sh.cid]; if (!c) return; const grp = sh.id ? D.groups[c.id + '/' + sh.id] : null; const round = grp ? grp.round : sh.round;
-    let members = new FormData(f).getAll('gid'); if (!S.isAdmin) members = [S.myGid].concat(members.filter(x => x !== S.myGid));
-    members = [...new Set(members)];
-    if (members.length < 2 || members.length > 4) { toast('A group is 2 to 4 golfers.'); return; }
-    if (members.some(x => { const o = groupOf(c.id, round, x); return o && (!grp || o.id !== grp.id); })) { toast('Someone ticked is already in another group this round.'); return; }
-    const id = grp ? grp.id : newId();
-    if (await put(`comps/${c.id}/groups/${id}`, {compId:c.id, round, members, createdBy: grp ? grp.createdBy : (S.isAdmin ? 'organiser' : S.myGid), createdAt: grp ? grp.createdAt : Date.now()})) { closeSheet(); toast(grp ? 'Group updated' : 'Group created. You can mark each other\'s cards now.'); }
-  },
   async addAdmin(f){ const e = normEmail(new FormData(f).get('email')); if (!e) return; const list = [...new Set(((D.admins && D.admins.emails) || []).concat(e))]; if (await put('config/admins', Object.assign({}, D.admins, {emails:list}))) toast(`${e} is now an organiser`); }
 };
 let settingsTimer = null;
@@ -1310,13 +1278,12 @@ function sampleData(){
       const playing = gs.filter(() => rnd() > 0.15);
       for (let i = 0; i + 1 < playing.length; i += 2) {
         const pair = playing.slice(i, i + (playing.length - i === 3 ? 3 : 2)); if (pair.length === 3) i++;
-        const gid = 'grp' + cid + r.n + i; st[`comps/${cid}/groups/${gid}`] = {compId:cid, round:r.n, members:pair.map(p => p.id), createdBy:pair[0].id};
         pair.forEach((p, j) => {
           const par = p.gender === 'L' ? COURSE.parL : COURSE.parM; const scores = {};
           const upto = state === 'open' && j === 0 && i === 0 ? 11 : 18;
           range(1, upto).forEach(h => { let d = Math.round(gauss() * 0.95 + p.hi / 18 - 0.2); if (d <= -2 && rnd() > 0.25) d = -1; d = Math.min(d, 4); scores[h] = (fmt === 'stableford' && d >= 4 && rnd() < 0.4) ? 'P' : Math.max(1, par[h-1] + d); });
           const marker = state === 'open' && i === 2 && j === 1 ? null : pair[(j + 1) % pair.length].id;
-          st[`comps/${cid}/cards/${r.n}_${p.id}`] = {compId:cid, golferId:p.id, round:r.n, groupId:gid, markerId:marker, scores, hi:p.hi, shots:null};
+          st[`comps/${cid}/cards/${r.n}_${p.id}`] = {compId:cid, golferId:p.id, round:r.n, markerId: pair[(j + 1) % pair.length].id, approved: !!marker, approvedBy: marker, approvedAt: marker ? Date.now() : null, scores, hi:p.hi, shots:null};
         });
       }
     });
@@ -1336,9 +1303,10 @@ document.addEventListener('change', ev => {
   if (t.id === 'leagueMonth') { S.leagueMonth = t.value; t.blur(); render(); return; }
   if (t.id === 'scanFile') { startScan(t.files); return; }
   if (t.id === 'pinRemember') { S.pinRemember = t.checked; if (!t.checked) { try { localStorage.removeItem('rgc-admin'); } catch (_) {} } return; }
-  if (t.id === 'markerSel' && S.card) { const {cid, round, gid} = S.card; const prev = cardOf(cid, round, gid); const grp = groupOf(cid, round, gid); const g = D.golfers[gid];
-    const data = Object.assign({compId:cid, golferId:gid, round, scores:{}, hi: snapHcp(g), shots:null}, prev || {}, {groupId: grp ? grp.id : null, markerId: t.value || null, updatedAt:Date.now(), updatedBy:S.user.uid}); delete data.id;
-    localSet(`comps/${cid}/cards/${round}_${gid}`, data); put(`comps/${cid}/cards/${round}_${gid}`, data).then(ok => ok && toast(t.value ? `Marked by ${gName(t.value)}` : 'Marker removed')); return; }
+  if (t.id === 'markerSel' && S.card) { const {cid, round, gid} = S.card; const prev = cardOf(cid, round, gid); const g = D.golfers[gid];
+    if (!t.value && !S.isAdmin) return;
+    const data = Object.assign({compId:cid, golferId:gid, round, scores:{}, hi: snapHcp(g), shots:null}, prev || {}, {markerId: t.value || null, approved:false, approvedBy:null, approvedAt:null, updatedAt:Date.now(), updatedBy:S.user.uid}); delete data.id; delete data.groupId;
+    localSet(`comps/${cid}/cards/${round}_${gid}`, data); render(); put(`comps/${cid}/cards/${round}_${gid}`, data).then(ok => ok && toast(t.value ? `${gName(t.value)} is the marker. They approve the card once it's complete.` : 'Marker removed')); return; }
   if (t.closest('#setupForm')) { saveSettings(); return; }
   if (t.name === 'holes' && t.closest('form[data-form=comp]')) { $('#holepick').hidden = t.value !== 'custom'; return; }
   if (t.id === 'f-rcount') { const n = Number(t.value); const box = $('#f-rounds'); const show = !!($('#f-perround') || {}).checked;

@@ -36,21 +36,20 @@ export async function init(cfg){
     if (s[0] === 'comps' && s.length === 4) {
       const comp = store['comps/' + s[1]]; if (!comp || comp.status !== 'open') throw deny('This competition is closed.');
       if (s[2] === 'entries') { if (data && s[3] === g && data.golferId === g && data.paid === false && !store[path]) return; throw deny(); }
-      if (s[2] === 'groups') {
-        const cur = store[path]; const m = data ? data.members || [] : [];
-        if (!data) { if (cur && cur.members.includes(g) && roundOpen(comp, cur.round)) return; throw deny(); }
-        if (!m.includes(g) || m.length < 2 || m.length > 4) throw deny('A group needs you and 1 to 3 others.');
-        if (cur && (!cur.members.includes(g) || cur.round !== data.round)) throw deny();
-        if (!roundOpen(comp, data.round)) throw deny('This round is not open.');
-        if (!m.every(x => store[`comps/${s[1]}/entries/${x}`])) throw deny('Everyone in a group must be entered.');
-        return;
-      }
       if (s[2] === 'cards') {
         if (!data) throw deny();
-        const grp = store[`comps/${s[1]}/groups/${data.groupId}`];
-        if (data.golferId === g) throw deny("You can't mark your own card.");
-        if (data.markerId !== g) throw deny();
-        if (!grp || grp.round !== data.round || !grp.members.includes(g) || !grp.members.includes(data.golferId)) throw deny('Only someone from the group can mark this card.');
+        const cur = store[path]; const entered = x => !!store[`comps/${s[1]}/entries/${x}`];
+        // the marker approving: only the approval fields change
+        if (cur && cur.markerId === g && data.markerId === g && data.approved === true && data.approvedBy === g) {
+          const keys = new Set(Object.keys(cur).concat(Object.keys(data)));
+          for (const k of keys) if (!['approved','approvedBy','approvedAt'].includes(k) && JSON.stringify(cur[k]) !== JSON.stringify(data[k])) throw deny('A marker can only approve, not change the card.');
+          return;
+        }
+        // the player entering their own card
+        if (data.golferId !== g) throw deny("You can only enter your own card. Approve the cards where you're the marker.");
+        if (!data.markerId || data.markerId === g || !entered(data.markerId)) throw deny('Choose a marker who is entered this month.');
+        if (data.approved !== false) throw deny('A changed card needs the marker to approve it again.');
+        if (!entered(g)) throw deny('Enter this month first.');
         if (s[3] !== `${data.round}_${data.golferId}`) throw deny();
         if (!roundOpen(comp, data.round)) throw deny('This round is not open.');
         return;
