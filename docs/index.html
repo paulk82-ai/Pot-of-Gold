@@ -507,6 +507,25 @@ form.inline{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin
 .approvals{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:12px;background:var(--gold-bg)}
 .approvals .grp{background:var(--card)}
 .feature .notebox{margin:0}
+
+/* Payments, join requests, sharing */
+.paytag.claimed{background:var(--gold-bg);color:var(--gold)}
+.paygrid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.label+.paygrid{margin-top:6px}
+.claimbox{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:12px;background:var(--tint)}
+.claimbox .textbtn{align-self:flex-start}
+.paysum{margin-top:12px}
+.paysum.alert{border-color:var(--gold);background:var(--gold-bg)}
+.pl-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:14px 0 6px}
+.paylist li{grid-template-columns:32px minmax(0,1fr) auto}
+.pbtns{display:flex;gap:6px}
+.pbtns .btn{padding:0 10px}
+.todo{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:12px;background:var(--gold-bg);margin-bottom:16px}
+.todo .grp{background:var(--card)}
+.todo .grp li{grid-template-columns:minmax(0,1fr) auto}
+.joinreqs{margin-bottom:14px}
+.btnrow{display:flex;gap:8px;margin-top:12px}
+.btnrow .btn{flex:1;min-width:0}
 </style>
 </head>
 <body>

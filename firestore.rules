@@ -2,7 +2,9 @@ rules_version = '2';
 
 // Rathsallagh Monthly: who can read and change what.
 // - Organisers (emails in config/admins) can change everything.
-// - Golfers sign in with the email the organiser saved for them (members/{email}).
+// - Golfers sign in with the email the organiser saved for them (members/{email}),
+//   or ask to join (requests/{email}) and wait for an organiser to let them in.
+// - Entry fees are paid through Revolut. Golfers can say they've paid; organisers confirm it.
 // - Players enter their own card while the round is open (Fri-Sun) and choose a marker: another player entered that month.
 // - The card only counts once that marker approves it. Any change by the player resets the approval.
 // - New cards are played off the golfer's current competition handicap (golfers/{id}.hcp, kept up to date by the organiser's app).
@@ -43,6 +45,20 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Requests to join from people whose email isn't on the golfer list yet.
+    // They can send or cancel their own; organisers see them all and let people in.
+    match /requests/{email} {
+      allow get, delete: if verified() && email == myEmail();
+      allow create, update: if verified() && email == myEmail()
+        && request.resource.data.keys().hasOnly(['name', 'hi', 'gender', 'email', 'createdAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 60
+        && request.resource.data.email == myEmail()
+        && request.resource.data.gender in ['M', 'L']
+        && (request.resource.data.get('hi', null) == null || request.resource.data.hi is number);
+      allow read, write: if isAdmin();
+    }
+
     match /golfers/{gid} {
       allow read: if canRead();
       allow write: if isAdmin();
@@ -60,15 +76,20 @@ service cloud.firestore {
       allow read: if canRead();
       allow write: if isAdmin();
 
-      // One entry per golfer per month. Golfers can enter themselves (unpaid); organisers record payments.
+      // One entry per golfer per month. Golfers can enter themselves (unpaid) and say they've paid;
+      // only organisers mark an entry as paid.
       match /entries/{gid} {
         allow read: if canRead();
         allow write: if isAdmin();
         allow create: if isMember() && gid == myGid() && isOpen()
-          && request.resource.data.keys().hasOnly(['compId', 'golferId', 'paid', 'method', 'paidAt', 'createdAt'])
+          && request.resource.data.keys().hasOnly(['compId', 'golferId', 'paid', 'method', 'paidAt', 'createdAt', 'claimed', 'claimMethod', 'claimedAt'])
           && request.resource.data.compId == cid
           && request.resource.data.golferId == gid
           && request.resource.data.paid == false;
+        allow update: if isMember() && gid == myGid() && isOpen()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['claimed', 'claimMethod', 'claimedAt'])
+          && request.resource.data.claimed is bool
+          && request.resource.data.get('claimMethod', null) in [null, 'revolut', 'card'];
       }
 
       // Cards: one per golfer per round (id = "<round>_<golferId>").

@@ -22,12 +22,13 @@ const FORMATS = {
   gross:{name:'Stroke play (gross)', short:'Gross', better:'low'},
   parbogey:{name:'v Par', short:'v Par', better:'high'}
 };
-const DEFAULTS = { fee:10, revtag:'', points:[5,4,3,2], entryPoint:1, prize:[60,40], allowance:95, tee:'white', rounds:4, best:3, cutWinner:2, cutRunner:1, riseBy:0.5, riseAfter:2, hcpMax:54 };
-const METHODS = {revolut:'Revolut', card:'Card reader', cash:'Cash'};
+const DEFAULTS = { fee:10, revtag:'paul3d7qv', points:[5,4,3,2], entryPoint:1, prize:[60,40], allowance:95, tee:'white', rounds:4, best:3, cutWinner:2, cutRunner:1, riseBy:0.5, riseAfter:2, hcpMax:54 };
+// Entries are paid through Revolut only: in the Revolut app, or by debit card on the Revolut payment page.
+const METHODS = {revolut:'Revolut', card:'Card (Revolut)'};
 
 /* ---------- State ---------- */
 let be = null;
-const D = { golfers:{}, comps:{}, entries:{}, cards:{}, members:{}, settings:null, admins:undefined, adminCode:undefined, member:undefined };
+const D = { golfers:{}, comps:{}, entries:{}, cards:{}, members:{}, requests:{}, settings:null, admins:undefined, adminCode:undefined, member:undefined, myReq:undefined };
 const S = {
   phase:'boot', user:null, myGid:null, isAdmin:false, view:'comps', compId:null, compTab:'entries', boardSel:'month',
   card:null, activeHole:null, playerId:null, season:String(new Date().getFullYear()), sheet:null, loaded:{},
@@ -56,6 +57,7 @@ function num(v, d){ const n = parseFloat(v); return isFinite(n) ? n : d; }
 function toPar(n){ return n === 0 ? 'E' : n > 0 ? '+' + n : '−' + Math.abs(n); }
 function pbStr(n){ return n === 0 ? 'Level' : n > 0 ? '+' + n : '−' + Math.abs(n); }
 function toParDec(v){ const r = Math.round(v*100)/100; return r === 0 ? 'E' : (r > 0 ? '+' : '−') + Math.abs(r).toFixed(2); }
+function firstName(name){ return String(name || '').trim().split(/\s+/)[0] || ''; }
 function initials(name){ return String(name||'?').split(/\s+/).map(w => w.replace(/[^\p{L}]/gu, '')).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('') || '?'; }
 function normEmail(e){ return String(e || '').trim().toLowerCase(); }
 function newId(){ return be ? be.newId() : Math.random().toString(36).slice(2, 12); }
@@ -63,6 +65,7 @@ function cfg(){
   const s = D.settings || {}; const c = s.course || {};
   const okArr = (a, d) => Array.isArray(a) && a.length === 18 && a.every(x => isFinite(x)) ? a.map(Number) : d;
   return Object.assign({}, DEFAULTS, s, {
+    revtag: s.revtag || DEFAULTS.revtag,
     points: Array.isArray(s.points) && s.points.length ? s.points.map(Number) : DEFAULTS.points,
     prize: Array.isArray(s.prize) && s.prize.length ? s.prize.map(Number) : DEFAULTS.prize,
     entryPoint: isFinite(s.entryPoint) ? Number(s.entryPoint) : DEFAULTS.entryPoint,
@@ -100,6 +103,12 @@ function shortRange(r){ const a = dParts(r.from), b = dParts(r.to); return a.mon
 function entriesFor(cid){ return Object.values(D.entries).filter(e => e.compId === cid && D.golfers[e.golferId]); }
 function entryOf(cid, gid){ return D.entries[cid + '/' + gid] || null; }
 function cardOf(cid, round, gid){ return D.cards[`${cid}/${round}_${gid}`] || null; }
+function compFee(c){ return Number(c && c.fee != null ? c.fee : cfg().fee) || 0; }
+function revUrl(){ return 'https://revolut.me/' + encodeURIComponent(cfg().revtag); }
+function payRef(c, g){ return `${dParts(c.date).mon} comp - ${g ? g.name : ''}`; }
+function shortDay(ms){ const d = new Date(ms); return isFinite(d) ? `${DOW3[d.getDay()]} ${d.getDate()} ${MON3[d.getMonth()]}` : ''; }
+function payState(e){ return !e ? 'none' : e.paid ? 'paid' : e.claimed ? 'claimed' : 'unpaid'; }
+function claimText(e){ return `Says paid${e.claimMethod && METHODS[e.claimMethod] ? ' by ' + METHODS[e.claimMethod] : ''}${e.claimedAt ? ' · ' + shortDay(e.claimedAt) : ''}`; }
 
 /* ---------- Handicaps & scoring ---------- */
 function parsFor(g){ const c = cfg().course; const L = g && g.gender === 'L'; return {par: L ? c.parL : c.parM, si: L ? c.siL : c.siM}; }
@@ -342,6 +351,7 @@ function localSet(path, data){
   if (s[0] === 'golfers') D.golfers[s[1]] = Object.assign({}, data, {id:s[1]});
   else if (s[0] === 'comps' && s.length === 2) D.comps[s[1]] = Object.assign({}, data, {id:s[1]});
   else if (s[0] === 'comps' && s[2] === 'cards') D.cards[`${s[1]}/${s[3]}`] = Object.assign({}, data, {id:s[3]});
+  else if (s[0] === 'comps' && s[2] === 'entries') D.entries[`${s[1]}/${s[3]}`] = Object.assign({}, data, {id:s[3], compId:s[1]});
   MEMO = {};
 }
 
@@ -361,7 +371,7 @@ async function boot(){
 function stopData(){ unsubs.forEach(f => { try { f(); } catch (_) {} }); unsubs = []; }
 function onUser(u){
   stopData();
-  Object.assign(D, { golfers:{}, comps:{}, entries:{}, cards:{}, members:{}, settings:null, admins:undefined, adminCode:undefined, member:undefined });
+  Object.assign(D, { golfers:{}, comps:{}, entries:{}, cards:{}, members:{}, requests:{}, settings:null, admins:undefined, adminCode:undefined, member:undefined, myReq:undefined });
   S.loaded = {}; S.user = u; S.myGid = null; S.isAdmin = false; MEMO = {};
   if (!u) { S.phase = 'signin'; render(); return; }
   if (!u.emailVerified) { S.phase = 'verify'; render(); return; }
@@ -369,6 +379,8 @@ function onUser(u){
   const err = e => { console.warn(e); if (S.phase === 'checking') { S.phase = 'nomember'; render(); } };
   unsubs.push(be.watch('config/admins', d => { D.admins = d ? d.data : null; resolveRole(); }, err));
   unsubs.push(be.watch('members/' + u.email, d => { D.member = d ? d.data : null; resolveRole(); }, () => { D.member = null; resolveRole(); }));
+  // A request to join, if this email isn't on the golfer list yet.
+  unsubs.push(be.watch('requests/' + u.email, d => { D.myReq = d ? d.data : null; if (S.phase === 'nomember') render(); }, () => { D.myReq = null; }));
 }
 function resolveRole(){
   if (D.admins === undefined || D.member === undefined) return;
@@ -394,6 +406,7 @@ function startData(){
   if (S.isAdmin) {
     dataUnsubs.push(be.watch('config/admin', d => { D.adminCode = d ? d.data : null; restoreAdmin(); S.loaded.adminCode = true; render(); }, () => { D.adminCode = null; S.loaded.adminCode = true; render(); }));
     dataUnsubs.push(be.watch('members', docs => { D.members = {}; docs.forEach(d => D.members[d.id] = d.data); render(); }, () => {}));
+    dataUnsubs.push(be.watch('requests', docs => { D.requests = {}; docs.forEach(d => D.requests[d.id] = d.data); render(); }, () => {}));
   }
 }
 
@@ -407,7 +420,8 @@ const ICONS = {
   admin:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
   back:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>',
   camera:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 8h3.5l2-3h6l2 3h3.5v11h-17z"/><circle cx="12" cy="13" r="3.5"/></svg>',
-  group:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 19c.8-3.3 3.2-5 6-5s5.2 1.7 6 5"/><path d="M15.5 14.2c2.2.1 4 1.6 4.5 4.3"/></svg>'
+  group:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 19c.8-3.3 3.2-5 6-5s5.2 1.7 6 5"/><path d="M15.5 14.2c2.2.1 4 1.6 4.5 4.3"/></svg>',
+  share:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3L10 14"/><path d="M21 3l-7 18-4-7-7-4z"/></svg>'
 };
 function doRender(){
   const ae = document.activeElement; const main = $('#main');
@@ -417,8 +431,9 @@ function doRender(){
   $('#role').textContent = SAMPLE ? 'Sample' : S.isAdmin ? 'Organiser' : S.myGid ? 'Golfer' : '';
   $('#role').hidden = !(S.phase === 'app' || SAMPLE);
   const banner = $('#banner');
-  banner.hidden = !SAMPLE;
-  if (SAMPLE) banner.innerHTML = `<div class="wrap"><span>Sample data, kept on this phone only.</span>${CONFIGURED ? '<a href="./">Open the real league</a>' : ''}</div>`;
+  banner.hidden = !SAMPLE && !S.updateReady;
+  if (S.updateReady) banner.innerHTML = `<div class="wrap"><span>A new version of the app is ready.</span><button data-act="reload">Update now</button></div>`;
+  else if (SAMPLE) banner.innerHTML = `<div class="wrap"><span>Sample data, kept on this phone only.</span>${CONFIGURED ? '<a href="./">Open the real league</a>' : ''}</div>`;
   const inApp = S.phase === 'app';
   const tabs = [['comps','Comps'],['league','League'],['golfers','Golfers']]; if (S.isAdmin) tabs.push(['admin','Admin']);
   if (S.view === 'admin' && !S.isAdmin) S.view = 'comps';
@@ -456,7 +471,7 @@ function viewSetupNeeded(){
 }
 function viewSignin(){
   if (SAMPLE) {
-    const ids = [['organiser@example.com','Organiser (admin)']].concat(sampleGolfers().map(g => [g[3], g[0]]));
+    const ids = [['organiser@example.com','Organiser (admin)']].concat(sampleGolfers().map(g => [g[3], g[0]]), [['newgolfer@example.com','Someone new (not on the list yet)']]);
     return `<section class="signin"><span class="eyebrow">Sample league</span><h1>Sign in as…</h1><p class="hint">Pick someone to see the app from their side. In the real app everyone signs in with their own Google account or email.</p>
       <ul class="list">${ids.map(([e,n]) => `<li><button class="row" data-act="sampleSignin" data-email="${esc(e)}"><span class="avatar">${esc(initials(n))}</span><span class="row-main"><span class="row-title">${esc(n)}</span><span class="row-sub">${esc(e)}</span></span><span></span></button></li>`).join('')}</ul></section>`;
   }
@@ -479,8 +494,19 @@ function viewVerify(){
     <button class="btn primary block" data-act="verified">I've confirmed my email</button><button class="btn block" data-act="resendVerify">Send the link again</button><button class="textbtn" data-act="signout">Use a different account</button></section>`;
 }
 function viewNoMember(){
-  return `<section class="signin"><span class="eyebrow">Not on the list yet</span><h1>Ask the organiser to add you</h1><p class="hint">You're signed in as <b>${esc(S.user.email)}</b>, but that email isn't on the golfer list. Ask the organiser to add it to your golfer profile, then reopen the app.</p>
-    <button class="btn block" data-act="recheck">Check again</button><button class="textbtn" data-act="signout">Sign out</button></section>`;
+  const r = D.myReq;
+  if (r) return `<section class="signin"><span class="eyebrow">Request sent</span><h1>Waiting for the organiser</h1><p class="hint">You asked to join as <b>${esc(r.name)}</b>${r.hi != null ? `, handicap ${esc(fmtHi(r.hi))}` : ''}. The app opens by itself as soon as the organiser lets you in, so you can leave this screen and come back.</p>
+    <p class="hint">Signed in as <b>${esc(S.user.email)}</b>.</p>
+    <button class="btn block" data-act="recheck">Check again</button><button class="textbtn" data-act="cancelReq">Cancel my request</button><button class="textbtn" data-act="signout">Sign out</button></section>`;
+  return `<section class="signin"><span class="eyebrow">Not on the list yet</span><h1>Ask to join</h1><p class="hint">You're signed in as <b>${esc(S.user.email)}</b>, which isn't on the golfer list yet. Send your details and the organiser will let you in.</p>
+    <form data-form="joinReq" class="stack">
+      <label class="field"><span>Your name</span><input type="text" id="jr-name" name="name" autocomplete="name" maxlength="60" value="${esc(S.user.name || '')}" required></label>
+      <label class="field"><span>Handicap index</span><input type="text" id="jr-hi" name="hi" inputmode="decimal" placeholder="e.g. 14.2"></label>
+      <div class="field"><span>Card</span><div class="radios">${radio('jgender','M',"Men's", true)}${radio('jgender','L',"Ladies' (red)", false)}</div></div>
+      <button class="btn primary block" type="submit">Ask to join</button>
+    </form>
+    <p class="hint">Already on the list under a different email? Say so to the organiser and they'll link this one to you.</p>
+    <button class="textbtn" data-act="signout">Use a different account</button></section>`;
 }
 function viewBootstrap(){
   return `<section class="signin"><span class="eyebrow">First-time setup</span><h1>Set yourself up as organiser</h1><p class="hint">Nobody runs this league yet. If you're the organiser, tap below. You'll be able to add golfers, competitions and other organisers.</p>
@@ -490,9 +516,9 @@ function viewBootstrap(){
 /* ----- Competitions ----- */
 function viewComps(){
   const comps = Object.values(D.comps).sort((a,b) => String(b.date||'').localeCompare(String(a.date||'')));
-  if (!comps.length) return emptyComps();
+  if (!comps.length) return todoHtml([]) + emptyComps();
   const open = comps.filter(c => c.status !== 'final').sort((a,b) => String(a.date||'').localeCompare(String(b.date||'')));
-  let h = '';
+  let h = todoHtml(open);
   if (open[0]) h += featured(open[0]);
   h += `<div class="sec-head"><h2>All competitions</h2>${S.isAdmin ? '<button class="btn small" data-act="newComp">+ New competition</button>' : ''}</div>`;
   h += '<ul class="list">' + comps.map(c => {
@@ -519,15 +545,25 @@ function featured(c){
       <dl class="figs"><div><dt>Entries</dt><dd>${st.entries}</dd></div><div><dt>Paid</dt><dd>${st.paid}</dd></div><div><dt>Pot</dt><dd>${euro(st.pot)}</dd></div></dl>
       ${leader ? `<p class="hint">Leading: <b>${esc(leader.golfer.name)}</b>, ${esc(monthText(leader, c))} ${monthUnit(c)}</p>` : ''}
       ${toApprove(c.id).length ? `<p class="notebox"><b>${toApprove(c.id).length} card${toApprove(c.id).length === 1 ? '' : 's'} waiting for your approval.</b> Open the competition to review.</p>` : ''}
+      ${S.myGid && payState(entryOf(c.id, S.myGid)) === 'unpaid' ? `<p class="notebox">Your ${euro(st.fee)} entry isn't paid yet. Open the competition to pay with Revolut.</p>` : ''}
       <button class="btn primary" data-act="openComp" data-id="${esc(c.id)}">Open competition</button>
     </div>
   </section>`;
+}
+// Organiser's list of things waiting on them: join requests and payments golfers say they've made.
+function todoHtml(open){
+  if (!S.isAdmin) return '';
+  const items = []; const reqs = Object.keys(D.requests || {}).length;
+  if (reqs) items.push(`<li><span class="grp-main"><b>${reqs} ${reqs === 1 ? 'person is' : 'people are'} asking to join</b><small>Add them to the golfer list so they can sign in</small></span><button class="btn small primary" data-act="joinList">Review</button></li>`);
+  open.forEach(c => { const chk = entriesFor(c.id).filter(e => payState(e) === 'claimed').length;
+    if (chk) items.push(`<li><span class="grp-main"><b>${chk} payment${chk === 1 ? '' : 's'} to check</b><small>${esc(c.name)} · check your Revolut, then confirm</small></span><button class="btn small primary" data-act="payments" data-id="${esc(c.id)}">Check</button></li>`); });
+  return items.length ? `<section class="todo"><span class="eyebrow">To do</span><ul class="grp">${items.join('')}</ul></section>` : '';
 }
 function emptyComps(){
   if (!S.isAdmin) return `<section class="empty"><span class="eyebrow">Nothing posted yet</span><h2>No competitions yet</h2><p class="hint">The organiser will post this month's competition here.</p></section>`;
   return `<section class="empty"><span class="eyebrow">Getting started</span><h2>Set up your first month</h2>
     <ol class="steps">
-      <li><div><span><b>Add your golfers</b> with their handicap index and email, so they can sign in.</span><button class="btn small" data-act="newGolfer">Add a golfer</button></div></li>
+      <li><div><span><b>Add your golfers</b> with their handicap index and email, or share the app link and approve them as they ask to join.</span><span style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn small" data-act="newGolfer">Add a golfer</button><button class="btn small" data-act="invite">Invite</button></span></div></li>
       <li><div><span><b>Create the month.</b> Four weekend rounds, open Friday to Sunday; the best 3 count.</span><button class="btn small primary" data-act="newComp">New competition</button></div></li>
       <li><div><span><b>Check the settings</b> in Admin: entry fee, Revolut link, prizes and points.</span><button class="btn small" data-act="tab" data-v="admin">Open Admin</button></div></li>
     </ol></section>`;
@@ -546,6 +582,8 @@ function viewComp(){
   if (rs.length > 1) h += roundsStrip(c);
   h += `<dl class="figs four money"><div><dt>Entries</dt><dd>${st.entries}</dd></div><div><dt>Paid</dt><dd>${st.paid}</dd></div><div><dt>Fee</dt><dd>${euro(st.fee)}</dd></div><div><dt>Pot</dt><dd>${euro(st.pot)}</dd></div></dl>
     <div class="prizes">${st.prizes.map((p,i) => `<span class="prize">${i === 0 ? 'Winner' : i === 1 ? 'Runner-up' : ord(i+1)} <b>${euro(p)}</b></span>`).join('')}${kitty > 0.004 ? `<span class="prize kitty">Kitty <b>${euro(kitty)}</b></span>` : ''}</div>`;
+  if (A && st.entries) { const es = entriesFor(c.id); const chk = es.filter(e => payState(e) === 'claimed').length, un = es.filter(e => payState(e) === 'unpaid').length;
+    h += `<button class="btn block paysum ${chk ? 'alert' : ''}" data-act="payments" data-id="${esc(c.id)}">Payments${chk ? ` · ${chk} to check` : ''}${un ? ` · ${un} unpaid` : ''}${!chk && !un ? ' · all paid' : ''}</button>`; }
   if (!fin && S.myGid) h += myPanel(c);
   h += `<div class="seg" role="group" aria-label="View"><button data-act="compTab" data-v="entries" aria-pressed="${S.compTab === 'entries'}">Entries (${st.entries})</button><button data-act="compTab" data-v="board" aria-pressed="${S.compTab === 'board'}">Leaderboard</button></div>`;
   h += S.compTab === 'board' ? boardHtml(c, lb) : entriesHtml(c, lb);
@@ -557,14 +595,15 @@ function viewComp(){
 }
 function pointsKeyText(){ const k = cfg(); return k.points.map((p,i) => `${ord(i+1)} ${p}`).join(', ') + `, everyone else ${k.entryPoint}`; }
 function payNote(c){
-  const k = cfg(); const fee = c.fee != null ? c.fee : k.fee;
-  return k.revtag ? `<div class="paynote"><span>Pay your ${euro(fee)} entry by Revolut to <b>revolut.me/${esc(k.revtag)}</b>, or by card at the club.</span><a class="btn small" href="https://revolut.me/${encodeURIComponent(k.revtag)}" target="_blank" rel="noopener">Revolut</a></div>` : '';
+  return `<p class="hint">Entry is ${euro(compFee(c))} for the month, paid through Revolut: in the Revolut app, or by debit card, Apple Pay or Google Pay if you don't have Revolut.</p>`;
 }
 function myPanel(c){
   const e = entryOf(c.id, S.myGid);
   if (!e) return `<section class="mypanel"><span class="eyebrow">You</span><h3>Enter this month</h3><p class="hint">One entry covers all ${compRounds(c).length} rounds. Your best ${compBest(c)} cards count.</p><button class="btn primary block" data-act="selfEnter">Enter ${esc(c.name)}</button>${payNote(c)}</section>`;
   const rs = compRounds(c); const open = rs.find(r => roundState(r) === 'open'); const next = rs.find(r => roundState(r) === 'upcoming');
-  let h = `<section class="mypanel"><div class="mp-head"><span class="eyebrow">You're entered</span>${e.paid ? `<span class="pill final">Paid · ${esc(METHODS[e.method] || 'Paid')}</span>` : '<button class="paytag unpaid" data-act="pay" data-id="' + esc(c.id + '/' + S.myGid) + '">Unpaid</button>'}</div>`;
+  const ps = payState(e); const pid = esc(c.id + '/' + S.myGid);
+  let h = `<section class="mypanel"><div class="mp-head"><span class="eyebrow">You're entered</span>${ps === 'paid' ? `<span class="pill final">Paid · ${esc(METHODS[e.method] || 'Paid')}</span>` : `<button class="paytag ${ps}" data-act="pay" data-id="${pid}">${ps === 'claimed' ? 'Checking' : 'Unpaid'}</button>`}</div>`;
+  if (ps === 'unpaid') h += `<div class="paynote"><span>Your ${euro(compFee(c))} entry isn't paid yet.</span><button class="btn small primary" data-act="pay" data-id="${pid}">Pay now</button></div>`;
   const pend = toApprove(c.id);
   const approvals = pend.length ? `<div class="approvals"><span class="eyebrow">Cards to approve (${pend.length})</span><ul class="grp">${pend.map(x => { const sc = scoreCard(c, x.round, x.golferId);
     return `<li><span class="avatar sm">${esc(initials(gName(x.golferId)))}</span><span class="grp-main"><b>${esc(gName(x.golferId))}</b><small>Round ${x.round} · ${sc.complete ? esc(cardValueText(sc)) + ' ' + unitFor(sc.rc.format) : 'Thru ' + sc.filled}</small></span><button class="btn small primary" data-act="openCard" data-cid="${esc(c.id)}" data-round="${x.round}" data-gid="${esc(x.golferId)}">Review</button></li>`; }).join('')}</ul></div>` : '';
@@ -573,7 +612,8 @@ function myPanel(c){
   const myStatus = !mine.filled ? 'No scores yet' : !mine.complete ? `Thru ${mine.filled} · ${esc(approvalText(mine.card))}` : esc(approvalText(mine.card));
   h += `<h3>Round ${open.n} · ${esc(roundLabel(open))}</h3>`;
   h += `<ul class="grp"><li><span class="avatar sm">${esc(initials(gName(S.myGid)))}</span><span class="grp-main"><b>Your card</b><small>${myStatus}</small></span><button class="btn small primary" data-act="openCard" data-cid="${esc(c.id)}" data-round="${open.n}" data-gid="${esc(S.myGid)}">${mine.filled ? 'Open' : 'Enter'}</button></li></ul>`;
-  h += `<div class="mp-tools one"><button class="btn" data-act="scan" data-round="${open.n}">${ICONS.camera}Scan my card</button></div>`;
+  const waiting = mine.complete && !mine.marked && mine.card && mine.card.markerId;
+  h += `<div class="mp-tools ${waiting ? '' : 'one'}"><button class="btn" data-act="scan" data-round="${open.n}">${ICONS.camera}Scan my card</button>${waiting ? `<button class="btn" data-act="askMarker" data-cid="${esc(c.id)}" data-round="${open.n}" data-gid="${esc(S.myGid)}">${ICONS.share}Remind ${esc(firstName(gName(mine.card.markerId)))}</button>` : ''}</div>`;
   h += approvals + `<p class="hint">Enter your scores and choose your marker. Your card counts once your marker taps Approve on their phone.</p></section>`;
   return h;
 }
@@ -591,7 +631,9 @@ function entriesHtml(c, lb){
   if (!all.length) return h + `<div class="empty" style="margin-top:12px"><p class="hint">No entries yet.</p></div>`;
   h += `<p class="hint entry-hint">Tap a golfer to see their cards. A * means the card is waiting for the marker's approval, so it doesn't count yet. Brackets show a dropped round.</p>`;
   h += '<ul class="list">' + all.map(r => {
-    const e = r.entry; const pay = A ? (e.paid ? `<button class="paytag paid" data-act="pay" data-id="${esc(c.id + '/' + r.gid)}">${esc(METHODS[e.method] || 'Paid')}</button>` : `<button class="paytag unpaid" data-act="pay" data-id="${esc(c.id + '/' + r.gid)}">Unpaid</button>`) : (e.paid ? '<span class="paytag paid">Paid</span>' : '<span class="paytag unpaid">Unpaid</span>');
+    const e = r.entry; const ps = payState(e); const own = r.gid === S.myGid;
+    const label = ps === 'paid' ? (A ? METHODS[e.method] || 'Paid' : 'Paid') : ps === 'claimed' ? (A ? 'Check' : 'Checking') : 'Unpaid';
+    const pay = A || own ? `<button class="paytag ${ps}" data-act="pay" data-id="${esc(c.id + '/' + r.gid)}">${esc(label)}</button>` : `<span class="paytag ${ps}">${esc(label)}</span>`;
     return `<li class="entry"><button class="entry-main" data-act="openCard" data-cid="${esc(c.id)}" data-round="${cur}" data-gid="${esc(r.gid)}"><span class="entry-name">${esc(r.golfer.name)}<span class="rcells">${roundCells(c, r)}</span></span><span class="entry-score ${r.count ? '' : 'dim'}">${r.count ? esc(monthText(r, c)) + (monthUnit(c) ? `<small>${monthUnit(c)}</small>` : '') : 'No total'}</span></button>${pay}</li>`;
   }).join('') + '</ul>';
   return h;
@@ -600,7 +642,7 @@ function boardHtml(c, lb){
   const rs = compRounds(c); const sel = S.boardSel;
   let h = rs.length > 1 ? `<div class="bsel"><button data-act="boardSel" data-v="month" aria-pressed="${sel === 'month'}">Month</button>${rs.map(r => `<button data-act="boardSel" data-v="${r.n}" aria-pressed="${String(sel) === String(r.n)}">R${r.n}</button>`).join('')}</div>` : '';
   if (sel !== 'month' && rs.length > 1) return h + roundBoardHtml(c, Number(sel));
-  return h + monthListHtml(c, lb);
+  return h + monthListHtml(c, lb) + (lb.ranked.length ? `<button class="btn block" style="margin-top:12px" data-act="shareTable" data-id="${esc(c.id)}">${ICONS.share}Share the table</button>` : '');
 }
 function monthListHtml(c, lb){
   const rs = compRounds(c);
@@ -651,8 +693,9 @@ function viewCard(){
     const label = S.isAdmin && sc.card.markerId !== S.myGid ? 'Approve as organiser' : `Approve ${esc(g.name)}'s card`;
     mk += sc.complete ? `<button class="btn primary block" style="margin-top:10px" data-act="approve">${label}</button>` : `<p class="hint" style="margin-top:8px">The card can be approved once all ${rc.holes.length} holes are entered.</p>`;
   }
+  if (gid === S.myGid && mId && sc.complete && !sc.marked && !fin) mk += `<button class="btn block" style="margin-top:10px" data-act="askMarker" data-cid="${esc(cid)}" data-round="${round}" data-gid="${esc(gid)}">${ICONS.share}Remind ${esc(firstName(gName(mId)))} to approve</button>`;
   h += mk + '</div>';
-  if (mine && canEnter(cid, round, gid) && !mId) h += `<p class="hint" style="margin:-4px 0 12px">Choose your marker first, then enter your scores.</p>`;
+  if (mine && canEnter(cid, round, gid) && !mId) h += `<p class="hint" style="margin:-4px 0 12px">Choose your marker first, then enter your scores. Only players entered this month are listed; if yours isn't, they need to enter first.</p>`;
   else if (mine && sc.marked) h += `<p class="hint" style="margin:-4px 0 12px">Approved. If you change a score, your marker has to approve it again.</p>`;
   else if (!S.isAdmin && sc.card && sc.card.markerId === S.myGid && !sc.marked) h += `<p class="hint" style="margin:-4px 0 12px">You're ${esc(g.name)}'s marker. Check the scores against their card, then approve.</p>`;
   else if (!W && !fin && !S.isAdmin && mine) h += `<p class="hint" style="margin:-4px 0 12px">${roundOpenNow(c, round) ? 'Enter this month to add your card.' : 'This round is closed. Cards can be entered Friday to Sunday.'}</p>`;
@@ -713,7 +756,7 @@ function monthTableHtml(){
   let h = `<div class="mt-head"><label class="field" style="margin:0"><span>Month</span><select id="leagueMonth">${comps.map(x => `<option value="${esc(x.id)}" ${x.id === c.id ? 'selected' : ''}>${esc(x.name)}${x.status === 'final' ? '' : ' (open)'}</option>`).join('')}</select></label>
     <div class="mt-meta"><span class="pill ${fin ? 'final' : 'open'}">${fin ? 'Final' : 'Provisional'}</span><span class="hint">${rs.length > 1 ? `${played} of ${rs.length} rounds started · best ${compBest(c)} count` : esc((FORMATS[rcfg(c, rs[0].n).format] || FORMATS.stableford).short)}${lb.mode.mixed ? ' · Stableford points' : ''} · pot ${euro(st.pot)}</span></div></div>`;
   h += monthListHtml(c, lb);
-  h += `<button class="btn block" style="margin-top:12px" data-act="openComp" data-id="${esc(c.id)}">Open ${esc(c.name)}</button>`;
+  h += `<div class="btnrow"><button class="btn" data-act="openComp" data-id="${esc(c.id)}">Open ${esc(c.name)}</button>${lb.ranked.length ? `<button class="btn" data-act="shareTable" data-id="${esc(c.id)}">${ICONS.share}Share</button>` : ''}</div>`;
   return h;
 }
 function yearTableHtml(){
@@ -735,8 +778,10 @@ function yearTableHtml(){
 }
 function viewGolfers(){
   const ps = sortedGolfers(); const A = S.isAdmin;
-  let h = `<div class="pagehead"><div><span class="eyebrow">${ps.length} golfer${ps.length === 1 ? '' : 's'}</span><h1>Golfers</h1></div>${A ? '<button class="btn small primary" data-act="newGolfer">+ Add golfer</button>' : ''}</div>`;
-  if (!ps.length) return h + `<section class="empty"><p class="hint">${A ? 'Add each golfer with their handicap and the email they sign in with.' : 'No golfers yet.'}</p></section>`;
+  let h = `<div class="pagehead"><div><span class="eyebrow">${ps.length} golfer${ps.length === 1 ? '' : 's'}</span><h1>Golfers</h1></div><span style="display:flex;gap:8px"><button class="btn small" data-act="invite">${ICONS.share}Invite</button>${A ? '<button class="btn small primary" data-act="newGolfer">+ Add</button>' : ''}</span></div>`;
+  const reqs = A ? Object.entries(D.requests || {}).sort((a, b) => (a[1].createdAt || 0) - (b[1].createdAt || 0)) : [];
+  if (reqs.length) h += `<section class="approvals joinreqs"><span class="eyebrow">Asking to join (${reqs.length})</span><ul class="grp">${reqs.map(([email, r]) => `<li><span class="avatar sm">${esc(initials(r.name))}</span><span class="grp-main"><b>${esc(r.name)}</b><small>${esc(email)}${r.hi != null ? ' · Hcp ' + esc(fmtHi(r.hi)) : ''}</small></span><button class="btn small primary" data-act="reviewJoin" data-email="${esc(email)}">Review</button></li>`).join('')}</ul></section>`;
+  if (!ps.length) return h + `<section class="empty"><p class="hint">${A ? 'Add each golfer with their handicap and the email they sign in with, or tap Invite to share the app link. People who sign in with an email that isn\'t on the list can ask to join, and you let them in here.' : 'No golfers yet.'}</p></section>`;
   h += `<div class="seg" role="group" aria-label="View" style="margin-top:0"><button data-act="golferTab" data-v="list" aria-pressed="${S.golferTab !== 'hcp'}">Golfers</button><button data-act="golferTab" data-v="hcp" aria-pressed="${S.golferTab === 'hcp'}">Handicaps</button></div>`;
   if (S.golferTab === 'hcp') return h + handicapsHtml(ps);
   const lg = league(S.season); const emails = golferEmails(); const L = hcpLedger();
@@ -833,7 +878,8 @@ function viewAdmin(){
   <form id="setupForm" class="setup" onsubmit="return false">
     <section><div class="sec-head" style="margin-top:0"><h2>Entry & payments</h2></div><div class="panel">
       <div class="grid2"><label class="field"><span>Entry fee (€)</span>${n('s-fee', k.fee, 'min="0" step="1"')}</label><label class="field"><span>Revolut username</span><input type="text" id="s-rev" value="${esc(k.revtag)}" placeholder="e.g. johnsmith" autocapitalize="off" autocorrect="off"></label></div>
-      <p class="hint">Golfers see a link to revolut.me/${esc(k.revtag || 'username')}. For card payments, take the money on the club's card reader and mark the entry as Card reader.</p></div></section>
+      <p class="hint">Entries are paid through Revolut only. Golfers get a button for revolut.me/${esc(k.revtag)}, where they can pay in the Revolut app, or by debit card, Apple Pay or Google Pay without a Revolut account. They tap "I've paid" and you confirm it under Payments.</p>
+      <p class="hint">For card payments from people without Revolut, turn on Revtag discoverability in your Revolut app's privacy settings. Revolut also limits how much you can receive by card through your link each week (the limit is shown in your Revolut app). Payments from other Revolut users have no limit.</p></div></section>
     <section><div class="sec-head"><h2>Prize money</h2></div><div class="panel"><div class="grid2"><label class="field"><span>Winner %</span>${n('s-p1', k.prize[0] != null ? k.prize[0] : 60)}</label><label class="field"><span>Runner-up %</span>${n('s-p2', k.prize[1] != null ? k.prize[1] : 40)}</label></div>
       <p class="hint">${kittyPct > 0 ? `The other ${kittyPct}% of each pot stays in the kitty.` : kittyPct < 0 ? 'These add up to more than 100%.' : 'The whole pot goes to the top two.'}</p></div></section>
     <section><div class="sec-head"><h2>League points</h2></div><div class="panel"><div class="grid5"><label class="field"><span>1st</span>${n('s-pt1', k.points[0])}</label><label class="field"><span>2nd</span>${n('s-pt2', k.points[1])}</label><label class="field"><span>3rd</span>${n('s-pt3', k.points[2])}</label><label class="field"><span>4th</span>${n('s-pt4', k.points[3])}</label><label class="field"><span>Others</span>${n('s-pte', k.entryPoint)}</label></div><p class="hint">"Others" is the point for entering.</p></div></section>
@@ -868,6 +914,8 @@ function renderSheet(){
     case 'comp': h = sheetComp(); break;
     case 'addEntry': h = sheetAddEntry(); break;
     case 'pay': h = sheetPay(); break;
+    case 'payments': h = sheetPayments(); break;
+    case 'joinReq': h = sheetJoinReq(); break;
     case 'golfer': h = sheetGolfer(); break;
     case 'shots': h = sheetShots(); break;
     case 'scan': h = sheetScan(); break;
@@ -923,16 +971,40 @@ function sheetAddEntry(){
   const avail = sortedGolfers().filter(g => !entryOf(c.id, g.id));
   return `<form data-form="addEntries"><h3>Add entries</h3><p class="sub">${esc(c.name)} · one entry covers the month.</p>
     ${avail.length ? `<div class="checklist">${avail.map(g => `<label class="check"><input type="checkbox" id="ae-${esc(g.id)}" name="gid" value="${esc(g.id)}"><span>${esc(g.name)}</span><small>Hcp ${fmtHi(curHcp(g.id))}</small></label>`).join('')}</div>` : '<p class="hint" style="margin-bottom:14px">Everyone on the golfer list is entered. Add new golfers on the Golfers tab.</p>'}
-    <label class="field"><span>Payment</span><select id="ae-pay" name="pay"><option value="">Not paid yet</option><option value="revolut">Paid by Revolut</option><option value="card">Paid on card reader</option><option value="cash">Paid in cash</option></select></label>
+    <label class="field"><span>Payment</span><select id="ae-pay" name="pay"><option value="">Not paid yet</option><option value="revolut">Paid in the Revolut app</option><option value="card">Paid by card through Revolut</option></select></label>
     ${avail.length ? '<button class="btn primary block" type="submit">Add ticked golfers</button>' : ''}</form>`;
 }
 function sheetPay(){
   const e = D.entries[S.sheet.id]; if (!e) return null; const c = D.comps[e.compId]; const g = D.golfers[e.golferId]; const k = cfg(); if (!c || !g) return null;
-  const fee = c.fee != null ? c.fee : k.fee; const ref = `${dParts(c.date).mon} comp - ${g.name}`;
-  let h = `<h3>Entry ${euro(fee)}</h3><p class="sub">${esc(g.name)} · ${esc(c.name)} · <b>${e.paid ? 'Paid · ' + esc(METHODS[e.method] || 'Paid') : 'Not paid yet'}</b></p>`;
-  if (S.isAdmin) h += `<div class="paygrid">${[['revolut','Revolut'],['card','Card reader'],['cash','Cash'],['','Not paid']].map(([m,l]) => `<button class="paybtn ${(m ? (e.paid && e.method === m) : !e.paid) ? 'on' : ''}" data-act="setPay" data-m="${m}">${l}</button>`).join('')}</div>`;
-  if (k.revtag) h += `<div class="revbox"><span class="label">Pay by Revolut</span><a class="btn primary block" href="https://revolut.me/${encodeURIComponent(k.revtag)}" target="_blank" rel="noopener">Open revolut.me/${esc(k.revtag)}</a><div class="refrow"><code id="refcode">${esc(ref)}</code><button class="btn small" data-act="copy" data-text="${esc(ref)}">Copy</button></div><p class="hint">Send ${euro(fee)} with this reference so the organiser can match it.</p></div>`;
-  h += `<p class="hint"><b>Card:</b> pay ${euro(fee)} on the club's card reader and the organiser marks it here.</p>`;
+  const fee = compFee(c); const ref = payRef(c, g); const ps = payState(e); const me = e.golferId === S.myGid;
+  const status = ps === 'paid' ? 'Paid · ' + (METHODS[e.method] || 'Paid') : ps === 'claimed' ? claimText(e) : 'Not paid yet';
+  let h = `<h3>Entry ${euro(fee)}</h3><p class="sub">${esc(g.name)} · ${esc(c.name)} · <b>${esc(status)}</b></p>`;
+  if (S.isAdmin) {
+    if (ps === 'claimed') h += `<p class="notebox">${esc(firstName(g.name))} says they paid${e.claimMethod && METHODS[e.claimMethod] ? ' by ' + esc(METHODS[e.claimMethod]) : ''}. Look for <b>${esc(ref)}</b> or their name in your Revolut, then mark it below.</p>`;
+    h += `<span class="label">Mark as</span><div class="paygrid three">${[['revolut','Revolut app'],['card','Card (Revolut)'],['','Not paid']].map(([m,l]) => `<button class="paybtn ${(m ? (e.paid && e.method === m) : !e.paid) ? 'on' : ''}" data-act="setPay" data-m="${m}">${l}</button>`).join('')}</div>`;
+    if (!me) return h;
+  }
+  if (ps === 'paid') return h + `<p class="hint">Thanks, you're all paid for ${esc(c.name)}.</p>`;
+  h += `<div class="revbox"><span class="label">Pay with Revolut</span><a class="btn primary block" href="${esc(revUrl())}" target="_blank" rel="noopener">Pay ${euro(fee)} · revolut.me/${esc(k.revtag)}</a>
+    <p class="hint">Opens Revolut. No Revolut account? The same page takes a debit card, Apple Pay or Google Pay.</p>
+    <span class="label">Reference</span><div class="refrow"><code id="refcode">${esc(ref)}</code><button class="btn small" data-act="copy" data-text="${esc(ref)}">Copy</button></div><p class="hint">Add this as the note so the organiser can match your payment.</p></div>`;
+  if (me && !S.isAdmin) h += ps === 'claimed'
+    ? `<div class="claimbox"><b>Thanks. The organiser will confirm it.</b><span class="hint">${esc(claimText(e))}. Your entry shows as paid once they've checked Revolut.</span><button class="textbtn" data-act="claim" data-m="">I haven't paid yet</button></div>`
+    : `<span class="label">Once you've paid, tell the organiser</span><div class="paygrid"><button class="paybtn" data-act="claim" data-m="revolut">I paid in the Revolut app</button><button class="paybtn" data-act="claim" data-m="card">I paid by card</button></div>`;
+  return h;
+}
+function sheetPayments(){
+  const c = D.comps[S.sheet.id]; if (!c) return null; const fee = compFee(c);
+  const es = entriesFor(c.id).map(e => ({e, g:D.golfers[e.golferId]})).sort((a,b) => byName(a.g, b.g));
+  const chk = es.filter(x => payState(x.e) === 'claimed'), un = es.filter(x => payState(x.e) === 'unpaid'), paid = es.filter(x => payState(x.e) === 'paid');
+  const b = (x, m, label, primary) => `<button class="btn small ${primary ? 'primary' : ''}" data-act="payMark" data-gid="${esc(x.e.golferId)}" data-m="${m}">${label}</button>`;
+  const row = (x, sub, btns) => `<li><span class="avatar sm">${esc(initials(x.g.name))}</span><span class="grp-main"><b>${esc(x.g.name)}</b><small>${sub}</small></span><span class="pbtns">${btns}</span></li>`;
+  let h = `<h3>Payments</h3><p class="sub">${esc(c.name)} · ${paid.length} of ${es.length} paid · ${euro(paid.length * fee)} in</p>`;
+  if (!es.length) return h + '<p class="hint">No entries yet.</p>';
+  if (chk.length) h += `<div class="pl-head"><span class="label">Say they've paid · check Revolut (${chk.length})</span></div><ul class="grp paylist">${chk.map(x => row(x, esc(claimText(x.e)) + ' · ref “' + esc(payRef(c, x.g)) + '”', b(x, x.e.claimMethod && METHODS[x.e.claimMethod] ? x.e.claimMethod : 'revolut', 'Got it', true) + b(x, '', 'Not yet'))).join('')}</ul>`;
+  if (un.length) h += `<div class="pl-head"><span class="label">Not paid (${un.length})</span><button class="btn small" data-act="remindUnpaid">${ICONS.share}Remind</button></div><ul class="grp paylist">${un.map(x => row(x, 'Not paid', b(x, 'revolut', 'Revolut') + b(x, 'card', 'Card'))).join('')}</ul>`;
+  if (paid.length) h += `<div class="pl-head"><span class="label">Paid (${paid.length})</span></div><ul class="grp paylist">${paid.map(x => row(x, esc(METHODS[x.e.method] || 'Paid') + (x.e.paidAt ? ' · ' + esc(shortDay(Date.parse(x.e.paidAt) || x.e.paidAt)) : ''), b(x, '', 'Undo'))).join('')}</ul>`;
+  h += `<p class="hint" style="margin-top:12px">“Got it” marks the entry paid. “Not yet” clears their note so they can pay and tell you again. Remind sends the unpaid list to WhatsApp or your phone's share menu.</p>`;
   return h;
 }
 function sheetGolfer(){
@@ -946,6 +1018,23 @@ function sheetGolfer(){
     <p class="hint" style="margin-bottom:16px">Use + for a plus handicap, e.g. +1.2. Only golfers on this list can sign in, enter or be read from a scanned card.</p>
     <button class="btn primary block" type="submit">${p ? 'Save' : 'Add golfer'}</button>
     ${p ? `<button type="button" class="btn danger block" style="margin-top:8px" data-act="delGolfer" data-id="${esc(p.id)}">Delete golfer</button>` : ''}</form>`;
+}
+function sheetJoinReq(){
+  const email = S.sheet.email; const r = (D.requests || {})[email]; if (!r) return null;
+  const emails = golferEmails(); const gs = sortedGolfers(); const free = gs.filter(g => !emails[g.id]), taken = gs.filter(g => emails[g.id]);
+  const same = gs.find(g => normName(g.name) === normName(r.name));
+  const opt = g => `<option value="${esc(g.id)}" ${same && same.id === g.id ? 'selected' : ''}>${esc(g.name)}${emails[g.id] ? ` (replaces ${esc(emails[g.id])})` : ''}</option>`;
+  return `<form data-form="approveJoin"><h3>Asking to join</h3><p class="sub">${esc(email)}${r.createdAt ? ' · asked ' + esc(shortDay(r.createdAt)) : ''}</p>
+    <label class="field"><span>Add as</span><select id="jq-link" name="link"><option value="">A new golfer</option>${free.length ? `<optgroup label="Already on the list">${free.map(opt).join('')}</optgroup>` : ''}${taken.length ? `<optgroup label="Already on the list with another email">${taken.map(opt).join('')}</optgroup>` : ''}</select></label>
+    ${same ? `<p class="notebox">${esc(same.name)} is already on the golfer list, so they're picked above. Their handicap and history stay as they are.</p>` : ''}
+    <div id="jq-new" ${same ? 'hidden' : ''}>
+      <label class="field"><span>Name</span><input type="text" id="jq-name" name="name" value="${esc(r.name)}"></label>
+      <label class="field"><span>Starting handicap</span><input type="text" id="jq-hi" name="hi" inputmode="decimal" value="${r.hi != null ? esc(fmtHi(r.hi)) : ''}" placeholder="e.g. 14.2"></label>
+      <div class="field"><span>Card</span><div class="radios">${radio('gender','M',"Men's", r.gender !== 'L')}${radio('gender','L',"Ladies' (red)", r.gender === 'L')}</div></div>
+      <p class="hint" style="margin-bottom:14px">Check the handicap against their club handicap before letting them in.</p>
+    </div>
+    <button class="btn primary block" type="submit">Let them in</button>
+    <button type="button" class="btn danger block" style="margin-top:8px" data-act="declineJoin" data-email="${esc(email)}">Decline</button></form>`;
 }
 function sheetShots(){
   const {cid, round, gid} = S.card || {}; const c = D.comps[cid]; const g = D.golfers[gid]; if (!c || !g) return null;
@@ -1106,6 +1195,19 @@ function saveCard(cid, round, gid, scores){
   localSet(path, data); render();
   clearTimeout(cardTimers[path]); cardTimers[path] = setTimeout(() => put(path, data), 600);
 }
+async function markPaid(cid, gid, m){
+  const e = entryOf(cid, gid); if (!e) return;
+  const data = {compId:cid, golferId:gid, paid:!!m, method:m || null, paidAt: m ? new Date().toISOString() : null, createdAt: e.createdAt || Date.now()};
+  const path = `comps/${cid}/entries/${gid}`;
+  if (await put(path, data)) { localSet(path, data); renderSheet(); render(); toast(m ? `${gName(gid)}: paid (${METHODS[m]})` : `${gName(gid)}: not paid`); }
+}
+// The app's own address, for messages shared to WhatsApp.
+function appUrl(){ return location.origin + location.pathname.replace(/index\.html$/, ''); }
+// Opens the phone's share menu (WhatsApp, Messages...). Computers without one go straight to WhatsApp.
+function shareText(text){
+  if (navigator.share) { navigator.share({text}).catch(() => {}); return; }
+  window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank', 'noopener');
+}
 const ACT = {
   tab(el){ const v = el.dataset.v; if (S.view === v) { if (v === 'comps') { S.compId = null; S.card = null; } if (v === 'golfers') S.playerId = null; } else if (v === 'comps') S.card = null; S.view = v; top(); render(); },
   account(){ openSheet({type:'account'}); },
@@ -1149,11 +1251,36 @@ const ACT = {
   },
   async resetShots(){ const {cid, round, gid} = S.card; const prev = cardOf(cid, round, gid); if (prev) await put(`comps/${cid}/cards/${round}_${gid}`, Object.assign({}, prev, {shots:null, id:undefined})); closeSheet(); toast('Using calculated shots'); },
   addEntry(){ openSheet({type:'addEntry'}); },
-  async selfEnter(){ const c = D.comps[S.compId]; if (!c) return; if (await put(`comps/${c.id}/entries/${S.myGid}`, {compId:c.id, golferId:S.myGid, paid:false, method:null, paidAt:null, createdAt:Date.now()})) toast("You're entered. Pay your entry to the organiser."); },
+  async selfEnter(){ const c = D.comps[S.compId]; if (!c) return; const path = `comps/${c.id}/entries/${S.myGid}`; const data = {compId:c.id, golferId:S.myGid, paid:false, method:null, paidAt:null, createdAt:Date.now()};
+    if (await put(path, data)) { localSet(path, data); openSheet({type:'pay', id:c.id + '/' + S.myGid}); render(); toast("You're entered. Now pay your entry."); } },
   pay(el){ openSheet({type:'pay', id:el.dataset.id}); },
-  async setPay(el){ const e = D.entries[S.sheet && S.sheet.id]; if (!e) return; const m = el.dataset.m;
-    const data = {compId:e.compId, golferId:e.golferId, paid:!!m, method:m || null, paidAt: m ? new Date().toISOString() : null, createdAt: e.createdAt || Date.now()};
-    if (await put(`comps/${e.compId}/entries/${e.golferId}`, data)) { D.entries[S.sheet.id] = Object.assign({}, data, {id:e.golferId}); MEMO = {}; renderSheet(); toast(m ? 'Marked as paid by ' + METHODS[m] : 'Marked as not paid'); } },
+  setPay(el){ const e = D.entries[S.sheet && S.sheet.id]; if (e) markPaid(e.compId, e.golferId, el.dataset.m); },
+  payments(el){ openSheet({type:'payments', id: el.dataset.id || S.compId}); },
+  payMark(el){ const cid = S.sheet && S.sheet.id; if (cid) markPaid(cid, el.dataset.gid, el.dataset.m); },
+  async claim(el){ const id = S.sheet && S.sheet.id; const e = D.entries[id]; if (!e || e.golferId !== S.myGid) return; const m = el.dataset.m;
+    const data = Object.assign({}, e, {claimed: !!m, claimMethod: m || null, claimedAt: m ? Date.now() : null}); delete data.id;
+    const path = `comps/${e.compId}/entries/${e.golferId}`;
+    if (await put(path, data)) { localSet(path, data); renderSheet(); render(); toast(m ? 'Thanks. The organiser will check Revolut and confirm it.' : 'No problem. Pay when you can.'); } },
+  remindUnpaid(){ const c = D.comps[S.sheet && S.sheet.id]; if (!c) return; const un = entriesFor(c.id).filter(e => payState(e) === 'unpaid').map(e => gName(e.golferId)).sort();
+    if (!un.length) { toast('Everyone has paid or says they have.'); return; }
+    shareText([`Rathsallagh Monthly · ${c.name}`, `Entry is ${euro(compFee(c))} for the month. Still to pay: ${un.join(', ')}.`, `Pay with Revolut: ${revUrl()} (Revolut app, or debit card, Apple Pay or Google Pay).`, `Then tap "I've paid" in the app: ${appUrl()}`].join('\n')); },
+  askMarker(el){ const cid = el.dataset.cid, round = Number(el.dataset.round), gid = el.dataset.gid; const c = D.comps[cid]; const card = cardOf(cid, round, gid); if (!c || !card || !card.markerId) return;
+    const sc = scoreCard(c, round, gid); const u = unitFor(sc.rc.format); const v = sc.complete ? ` (${cardValueText(sc)}${u ? ' ' + u : ''})` : '';
+    shareText(`Hi ${firstName(gName(card.markerId))}, I've put in my card for round ${round} of ${c.name}${v}. You're down as my marker. Can you check it and tap Approve in the app? ${appUrl()}`); },
+  shareTable(el){ const c = D.comps[el.dataset.id || S.compId]; if (!c) return; const lb = leaderboard(c); const fin = c.status === 'final'; const u = monthUnit(c); const best = compBest(c);
+    const lines = [`Rathsallagh Monthly · ${c.name}`, fin ? 'Final results' : `Table so far · best ${best} of ${compRounds(c).length} rounds count`, ''];
+    lb.ranked.slice(0, 12).forEach(r => lines.push(`${r.tied ? 'T' : ''}${r.pos}. ${r.golfer.name} ${monthText(r, c)}${u ? ' ' + u : ''}${r.count < best ? ` (${r.count} card${r.count === 1 ? '' : 's'})` : ''}`));
+    if (lb.ranked.length > 12) lines.push(`…and ${lb.ranked.length - 12} more`);
+    if (!lb.ranked.length) lines.push('No approved cards yet.');
+    const st = lb.stats; lines.push('', `Pot ${euro(st.pot)} · winner ${euro(st.prizes[0] || 0)} · runner-up ${euro(st.prizes[1] || 0)}`, appUrl());
+    shareText(lines.join('\n')); },
+  invite(){ const k = cfg(); shareText(`Join the Rathsallagh monthly competition: ${euro(k.fee)} a month, ${k.rounds} weekend rounds, your best ${k.best} count. Open ${appUrl()} on your phone, sign in with Google or your email, and tap "Ask to join". Then add it to your home screen.`); },
+  joinList(){ S.view = 'golfers'; S.playerId = null; S.golferTab = 'list'; top(); render(); },
+  reviewJoin(el){ openSheet({type:'joinReq', email: el.dataset.email}); },
+  declineJoin(el){ const email = el.dataset.email; const r = (D.requests || {})[email];
+    askConfirm('Decline this request?', `${r ? r.name : email} won't be added. They can ask again later.`, 'Decline', async () => { if (await drop('requests/' + email)) { delete D.requests[email]; render(); toast('Request declined'); } }, true); },
+  async cancelReq(){ if (await drop('requests/' + S.user.email)) { D.myReq = null; render(); toast('Request cancelled'); } },
+  reload(){ location.reload(); },
   copy(el){ const text = el.dataset.text; const fb = () => { const code = $('#refcode'); if (code) { const r = document.createRange(); r.selectNodeContents(code); const s = getSelection(); s.removeAllRanges(); s.addRange(r); } toast('Reference selected. Copy it from here.'); }; try { navigator.clipboard.writeText(text).then(() => toast('Reference copied'), fb); } catch (_) { fb(); } },
   finalise(){
     const c = D.comps[S.compId]; if (!c) return; const lb = leaderboard(c); const unpaid = entriesFor(c.id).filter(e => !e.paid).length;
@@ -1246,6 +1373,22 @@ const FORMS = {
   async shots(f){ const {cid, round, gid} = S.card; const prev = cardOf(cid, round, gid); const v = parseInt(new FormData(f).get('shots'), 10); const g = D.golfers[gid];
     const data = Object.assign({compId:cid, golferId:gid, round, markerId:null, scores:{}, hi: snapHcp(g)}, prev || {}, {shots: isFinite(v) ? v : null, updatedAt:Date.now(), updatedBy:S.user.uid}); delete data.id;
     if (await put(`comps/${cid}/cards/${round}_${gid}`, data)) { closeSheet(); toast('Shots updated'); } },
+  async joinReq(f){ const fd = new FormData(f); const name = String(fd.get('name') || '').trim().replace(/\s+/g, ' ').slice(0, 60); if (!name) { toast('Add your name'); return; }
+    const raw = String(fd.get('hi') || '').trim(); const hi = parseHi(raw); if (raw && (hi === null || hi < -10 || hi > 54)) { toast('That handicap doesn\'t look right'); return; }
+    const data = {name, hi, gender: fd.get('jgender') === 'L' ? 'L' : 'M', email: S.user.email, createdAt: Date.now()};
+    if (await put('requests/' + S.user.email, data)) { D.myReq = data; render(); toast('Request sent to the organiser'); } },
+  async approveJoin(f){ const fd = new FormData(f); const email = S.sheet && S.sheet.email; if (!email) return;
+    const link = String(fd.get('link') || ''); const ops = [{path:'requests/' + email, del:true}];
+    if (D.members[email]) { if (await batch(ops)) { closeSheet(); toast('That email is already on the list'); } return; }
+    if (link && D.golfers[link]) {
+      const old = golferEmails()[link]; if (old) ops.push({path:'members/' + old, del:true});
+      ops.push({path:'members/' + email, data:{golferId:link, name:gName(link)}});
+      if (await batch(ops)) { delete D.requests[email]; closeSheet(); toast(`${gName(link)} can now sign in with ${email}`); } return;
+    }
+    const name = String(fd.get('name') || '').trim(); if (!name) { toast('Add a name'); return; }
+    const hi = parseHi(fd.get('hi')); const id = newId();
+    ops.push({path:'golfers/' + id, data:{name, hi, hcp:hi, gender: fd.get('gender') === 'L' ? 'L' : 'M', createdAt:Date.now()}}, {path:'members/' + email, data:{golferId:id, name}});
+    if (await batch(ops)) { delete D.requests[email]; closeSheet(); toast(`${name} added. They're in now.`); } },
   async addAdmin(f){ const e = normEmail(new FormData(f).get('email')); if (!e) return; const list = [...new Set(((D.admins && D.admins.emails) || []).concat(e))]; if (await put('config/admins', Object.assign({}, D.admins, {emails:list}))) toast(`${e} is now an organiser`); }
 };
 let settingsTimer = null;
@@ -1272,7 +1415,8 @@ function sampleData(){
   const mk = (cid, name, y, m, status, fmt) => {
     const first = iso(firstFriday(y, m)); const rounds = weekendRounds(first, 4).map(r => Object.assign(r, {opens: parseDate(r.from).getTime(), closes: parseDate(addDays(r.from, 3)).getTime()}));
     st['comps/' + cid] = {name, date:first, rounds, best:3, format:fmt, holes:range(1,18), tee:'white', fee:10, allowance:95, status};
-    gs.forEach((g, i) => { st[`comps/${cid}/entries/${g.id}`] = {compId:cid, golferId:g.id, paid: !(status === 'open' && i === 5), method:['revolut','card','cash'][i % 3]}; });
+    gs.forEach((g, i) => { const unpaid = status === 'open' && (i === 5 || i === 3); const claimed = status === 'open' && i === 3;
+      st[`comps/${cid}/entries/${g.id}`] = {compId:cid, golferId:g.id, paid: !unpaid, method: unpaid ? null : ['revolut','card'][i % 2], paidAt: unpaid ? null : new Date().toISOString(), createdAt: Date.now(), claimed, claimMethod: claimed ? 'revolut' : null, claimedAt: claimed ? Date.now() - 3600e3 : null}; });
     rounds.forEach(r => {
       const state = roundState(r); if (state === 'upcoming') return;
       const playing = gs.filter(() => rnd() > 0.15);
@@ -1313,6 +1457,7 @@ document.addEventListener('change', ev => {
     const have = [...box.querySelectorAll('.rrow')].map((row, i) => { const v = id => (document.getElementById(id + (i + 1)) || {}).value || ''; const hv = v('f-rh-'); return {from:v('f-r-'), format:v('f-rf-') || null, tee:v('f-rt-') || null, holes: hv === '18' ? range(1,18) : hv === '14' ? range(1,14) : null}; });
     const first = (have[0] && have[0].from) || defaultFirstFri();
     box.innerHTML = range(1, n).map(i => roundRow(i, have[i-1] && have[i-1].from ? have[i-1] : {from: addDays(first, 7*(i-1))}, show)).join(''); const b = $('#f-best'); if (b && Number(b.value) > n) b.value = String(n); return; }
+  if (t.id === 'jq-link') { const box = $('#jq-new'); if (box) box.hidden = !!t.value; return; }
   if (t.id === 'f-perround') { document.querySelectorAll('#f-rounds .rrow-opts').forEach(x => { x.hidden = !t.checked; }); return; }
   if (t.id === 'f-r-1') { const ins = [...document.querySelectorAll('#f-rounds input[type=date]')]; ins.slice(1).forEach((inp, i) => { inp.value = addDays(t.value, 7*(i+1)); }); }
 });
@@ -1321,6 +1466,17 @@ document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && S.sheet)
 document.addEventListener('focusout', () => { if (deferred) { deferred = false; setTimeout(render, 0); } });
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); S.installEvt = e; });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').catch(() => {});
+// Spot a newer version on GitHub (the version name lives in sw.js) and offer to load it,
+// so phones that keep the app open in the background still pick up changes.
+let APP_VER = null, verAt = 0;
+async function checkVersion(){
+  verAt = Date.now();
+  try { const r = await fetch('./sw.js', {cache:'no-store'}); if (!r.ok) return; const v = (/VERSION = '([^']+)'/.exec(await r.text()) || [])[1]; if (!v) return;
+    if (!APP_VER) APP_VER = v; else if (v !== APP_VER && !S.updateReady) { S.updateReady = true; render(); } } catch (_) {}
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - verAt > 5 * 60e3) checkVersion(); });
+setInterval(() => { if (document.visibilityState === 'visible') checkVersion(); }, 30 * 60e3);
+checkVersion();
 const hv = (location.hash || '').slice(1); if (['comps','league','golfers','admin'].includes(hv)) S.view = hv;
-window.__rgc = {S, D, scoreCard, leaderboard, roundBoard, league, allocShots};
+window.__rgc = {S, D, scoreCard, leaderboard, roundBoard, league, allocShots, checkVersion};
 boot();

@@ -1,6 +1,6 @@
 # Rathsallagh Monthly — setup guide
 
-An installable phone app for the Rathsallagh monthly competition. Golfers sign in, enter for the month, enter their own cards (or scan them with the camera) and approve the cards they marked. The organiser manages golfers, payments and results. Everything runs on Google's Firebase free tier.
+An installable phone app for the Rathsallagh monthly competition. Golfers sign in, enter for the month, pay through Revolut, enter their own cards (or scan them with the camera) and approve the cards they marked. The organiser manages golfers, payments and results. Everything runs on Google's Firebase free tier.
 
 **What's in the box**
 
@@ -13,6 +13,7 @@ An installable phone app for the Rathsallagh monthly competition. Golfers sign i
 - Each month has 4 weekend rounds, open Friday to Sunday. The organiser can change the number of rounds and the dates per month.
 - Each round can have its own format (Stableford, Medal, Gross or v Par), tees and holes (18 or 14). Each round's own table uses its format. When a month mixes formats or hole counts, the monthly table adds up Stableford points from each golfer's best 3 cards.
 - The €10 entry covers the month. Each golfer gets one card per round, and their best 3 cards count.
+- Entries are paid through Revolut only (no cash): in the Revolut app, or by debit card, Apple Pay or Google Pay on the Revolut page for anyone without Revolut. The golfer taps **I've paid**, and the organiser confirms it under **Payments**. Only confirmed payments go into the pot.
 - Golfers with fewer than 3 counting cards are ranked on what they have, below anyone with 3.
 - Each player enters (or scans) their own card and chooses their marker, another player entered that month. The card only counts once the marker taps **Approve** on their phone. If the player changes a score, the marker has to approve it again.
 - Scanned cards are only accepted for golfers whose names match the golfer list and who are entered that month. Unrecognised names are turned away.
@@ -70,8 +71,8 @@ Without this step the app still works fully; golfers just type scores in instead
 
 1. Open the app address on your phone and sign in with Google using your own email.
 2. The app offers **"I'm the organiser"**. Tap it. You are now the organiser; only the first person can do this.
-3. Open **Admin**, set your 4 to 8 digit admin code, and check the entry fee, Revolut username, prize split and points.
-4. On **Golfers**, add each golfer with their name, handicap index, and the email they will sign in with. Golfers can only get in if their email is on this list.
+3. Open **Admin**, set your 4 to 8 digit admin code, and check the entry fee, Revolut username (`paul3d7qv` is filled in), prize split and points.
+4. On **Golfers**, add each golfer with their name, handicap index, and the email they will sign in with. Or tap **Invite** to share the app link on WhatsApp: anyone who signs in with an email that isn't on the list can **Ask to join**, and you let them in from the **To do** box (or decline).
 5. On **Comps**, tap **New competition**. The four Fridays are filled in for the next month; adjust them if needed.
 6. Share the app address with the golfers.
 
@@ -86,19 +87,31 @@ It then opens full-screen like any other app, and it keeps working with a weak s
 
 ## How golfers use it
 
-1. Sign in with Google, or create an email and password account using the email the organiser has.
-2. On the month's competition, tap **Enter**, then pay €10 by Revolut or on the club's card reader. The organiser marks it paid.
+1. Sign in with Google, or create an email and password account. If the organiser doesn't have that email yet, fill in **Ask to join** and wait to be let in.
+2. On the month's competition, tap **Enter**, then **Pay €10** to open Revolut (the app, or a debit card, Apple Pay or Google Pay). Add the reference shown, then tap **I've paid**. The organiser confirms it.
 3. When a round is open (Friday to Sunday), open **Your card**, choose your marker and enter your scores hole by hole. Or tap **Scan my card** and photograph it, then check the numbers.
-4. Your marker sees your card under **Cards to approve** and taps **Approve**. Your card counts from then.
+4. Your marker sees your card under **Cards to approve** and taps **Approve**. Your card counts from then. **Remind** sends them a WhatsApp nudge.
 5. When you mark someone else's card, review it under Cards to approve and approve it.
 
 ## What the organiser can do
 
-- Add and edit golfers and their emails, and add other organisers.
-- Create months, change round dates, and record payments (Revolut, card reader or cash).
+- Add and edit golfers and their emails, let in people who ask to join, and add other organisers.
+- Create months and change round dates.
+- Confirm payments under **Payments**: people who say they've paid are listed first, with the reference to look for in Revolut. **Remind** sends the unpaid list to WhatsApp.
+- Share the table to the WhatsApp group from the leaderboard.
 - Enter or correct any card, change the marker, approve a card as organiser if needed, and override shots.
 - Scan any card. Only golfers on your list are accepted, and you choose each card's marker.
 - Finalise the month, which locks scores and adds league points. Months can be reopened.
+
+## Payments through Revolut
+
+- Golfers pay at `revolut.me/paul3d7qv`. Change the username in **Admin → Entry & payments** if needed.
+- So people without Revolut can pay by card, turn on **Revtag discoverability** in your Revolut app's privacy settings.
+- Revolut limits how much you can receive by card through your link each week; the limit is shown in your Revolut app. Payments from other Revolut users have no limit. If a lot of people pay by card in the same week, some may need to wait or pay Revolut to Revolut.
+
+## Updates
+
+When a new version is put online, phones that have the app open show **A new version of the app is ready → Update now**. Otherwise they pick it up the next time the app is opened.
 
 ## Costs
 

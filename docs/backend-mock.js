@@ -32,10 +32,29 @@ export async function init(cfg){
     const s = segs(path);
     if (isAdmin()) return;
     if (path === 'config/admins' && !store[path] && data && JSON.stringify(data.emails) === JSON.stringify([email()]) && user.emailVerified) return;
+    // Asking to join: anyone with a confirmed email can send (or cancel) their own request.
+    if (s[0] === 'requests' && s.length === 2) {
+      if (!user.emailVerified || s[1] !== email()) throw deny();
+      if (data === null) return;
+      const keysOk = Object.keys(data).every(k => ['name', 'hi', 'gender', 'email', 'createdAt'].includes(k));
+      if (keysOk && typeof data.name === 'string' && data.name.length > 0 && data.name.length <= 60 && data.email === email() && ['M', 'L'].includes(data.gender) && (data.hi === null || typeof data.hi === 'number')) return;
+      throw deny();
+    }
     const g = myGid(); if (!g) throw deny();
     if (s[0] === 'comps' && s.length === 4) {
       const comp = store['comps/' + s[1]]; if (!comp || comp.status !== 'open') throw deny('This competition is closed.');
-      if (s[2] === 'entries') { if (data && s[3] === g && data.golferId === g && data.paid === false && !store[path]) return; throw deny(); }
+      if (s[2] === 'entries') {
+        const cur = store[path];
+        if (data && !cur && s[3] === g && data.golferId === g && data.paid === false) return;
+        // A golfer can say they've paid; only the organiser marks an entry as paid.
+        if (data && cur && s[3] === g && typeof data.claimed === 'boolean') {
+          const keys = new Set(Object.keys(cur).concat(Object.keys(data)));
+          for (const k of keys) if (!['claimed', 'claimedAt', 'claimMethod'].includes(k) && JSON.stringify(cur[k]) !== JSON.stringify(data[k])) throw deny('Only the organiser can mark an entry as paid.');
+          if (![null, undefined, 'revolut', 'card'].includes(data.claimMethod)) throw deny();
+          return;
+        }
+        throw deny();
+      }
       if (s[2] === 'cards') {
         if (!data) throw deny();
         const cur = store[path]; const entered = x => !!store[`comps/${s[1]}/entries/${x}`];
