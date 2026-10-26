@@ -1,7 +1,7 @@
 {
-  "name": "Rathsallagh Monthly Competition",
-  "short_name": "Rathsallagh",
-  "description": "Monthly competition, league table and stats for Rathsallagh Golf Club.",
+  "name": "Pot of Gold",
+  "short_name": "Pot of Gold",
+  "description": "The Pot of Gold: a monthly golf competition with a league table and stats.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

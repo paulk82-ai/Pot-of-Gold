@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Rathsallagh Monthly</title>
-<meta name="description" content="Monthly competition, league table and stats for Rathsallagh Golf Club.">
+<title>Pot of Gold</title>
+<meta name="description" content="The Pot of Gold: a monthly golf competition with a league table and stats.">
 <meta name="theme-color" content="#123A25">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Rathsallagh">
+<meta name="apple-mobile-web-app-title" content="Pot of Gold">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" href="icons/favicon.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -25,7 +25,7 @@ img{max-width:100%}
 /* Layout: clubhouse scoreboard band, one app column, bottom tab bar. Scorecard conventions (circle = birdie, square = bogey, red = under par) carry the data. One family, three widths: condensed for numbers and titles, regular for text, expanded for labels. */
 :root{
   --paper:#F1F5F0; --card:#FFFFFF; --ink:#12231A; --muted:#566A5D; --line:#D3DCD2; --tint:#E3ECE4;
-  --fairway:#1C5A39; --on-fairway:#FFFFFF; --band:#123A25; --band-ink:#F1F5F0; --band-muted:#A3BFAD; --band-line:#2A5340;
+  --fairway:#1C5A39; --on-fairway:#FFFFFF; --band:#123A25; --band-ink:#F1F5F0; --band-muted:#A3BFAD; --band-line:#2A5340; --band-gold:#E8B84A;
   --birdie:#BF3328; --gold:#A87708; --gold-bg:#F5EBCD; --warn:#965200; --warn-bg:#FAEAD2;
   --bogey:#A5B3A9; --double:#45574B; --scrim:rgba(8,22,14,.48);
   --display:"Archivo","Arial Narrow","Roboto Condensed",system-ui,sans-serif;
@@ -65,6 +65,7 @@ a{color:var(--fairway)}
 .band .wrap{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;padding-block:calc(18px + env(safe-area-inset-top,0px)) 16px}
 .club{font-size:11px;font-weight:600;font-stretch:120%;letter-spacing:.15em;text-transform:uppercase;color:var(--band-muted);display:flex;align-items:center;gap:8px}
 .club svg{width:14px;height:14px;stroke:var(--band-muted);fill:none;stroke-width:1.8}
+.apptitle .gold{color:var(--band-gold)}
 .apptitle{font-family:var(--display);font-stretch:64%;font-weight:800;font-size:34px;line-height:.92;text-transform:uppercase;margin:6px 0 0;letter-spacing:.005em}
 .role{font-size:10px;font-weight:700;font-stretch:118%;letter-spacing:.12em;text-transform:uppercase;border:1px solid var(--band-line);background:var(--band-line);color:var(--band-ink);padding:5px 9px;border-radius:999px;white-space:nowrap;margin-bottom:3px}
 .banner{background:var(--warn-bg);color:var(--warn)}
@@ -541,8 +542,8 @@ form.inline{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin
 <header class="band">
   <div class="wrap">
     <div>
-      <div class="club"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 21V3"/><path d="M7 4h10l-2.5 3.5L17 11H7"/></svg>Rathsallagh Golf Club</div>
-      <h1 class="apptitle">Monthly Competition</h1>
+      <div class="club"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 21V3"/><path d="M7 4h10l-2.5 3.5L17 11H7"/></svg>Monthly golf competition</div>
+      <h1 class="apptitle">Pot of <span class="gold">Gold</span></h1>
     </div>
     <div class="band-right"><span class="role" id="role" hidden></span><span id="acct"></span></div>
   </div>

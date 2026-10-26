@@ -1,6 +1,6 @@
-# Rathsallagh Monthly — setup guide
+# Pot of Gold — setup guide
 
-An installable phone app for the Rathsallagh monthly competition. Golfers sign in, enter for the month, pay through Revolut, enter their own cards (or scan them with the camera) and approve the cards they marked. The organiser manages golfers, payments and results. Everything runs on Google's Firebase free tier.
+An installable phone app for the Pot of Gold, a monthly golf competition played at Rathsallagh. Golfers sign in, enter for the month, pay through Revolut, enter their own cards (or scan them with the camera) and approve the cards they marked. The organiser manages golfers, payments and results. Everything runs on Google's Firebase free tier.
 
 **What's in the box**
 

@@ -1,4 +1,4 @@
-// Rathsallagh Monthly — installable competition app.
+// Pot of Gold — installable monthly golf competition app (played at Rathsallagh).
 // Data lives in Firebase (or in this browser in sample mode). See README.md for setup.
 'use strict';
 
@@ -1276,18 +1276,18 @@ const ACT = {
     if (await put(path, data)) { localSet(path, data); renderSheet(); render(); toast(m ? 'Thanks. The organiser will check Revolut and confirm it.' : 'No problem. Pay when you can.'); } },
   remindUnpaid(){ const c = D.comps[S.sheet && S.sheet.id]; if (!c) return; const un = entriesFor(c.id).filter(e => payState(e) === 'unpaid').map(e => gName(e.golferId)).sort();
     if (!un.length) { toast('Everyone has paid or says they have.'); return; }
-    shareText([`Rathsallagh Monthly · ${c.name}`, `Entry is ${euro(compFee(c))} for the month. Still to pay: ${un.join(', ')}.`, `Pay with Revolut: ${revUrl()} (Revolut app, or debit card, Apple Pay or Google Pay).`, `Then tap "I've paid" in the app: ${appUrl()}`].join('\n')); },
+    shareText([`Pot of Gold · ${c.name}`, `Entry is ${euro(compFee(c))} for the month. Still to pay: ${un.join(', ')}.`, `Pay with Revolut: ${revUrl()} (Revolut app, or debit card, Apple Pay or Google Pay).`, `Then tap "I've paid" in the app: ${appUrl()}`].join('\n')); },
   askMarker(el){ const cid = el.dataset.cid, round = Number(el.dataset.round), gid = el.dataset.gid; const c = D.comps[cid]; const card = cardOf(cid, round, gid); if (!c || !card || !card.markerId) return;
     const sc = scoreCard(c, round, gid); const u = unitFor(sc.rc.format); const v = sc.complete ? ` (${cardValueText(sc)}${u ? ' ' + u : ''})` : '';
     shareText(`Hi ${firstName(gName(card.markerId))}, I've put in my card for round ${round} of ${c.name}${v}. You're down as my marker. Can you check it and tap Approve in the app? ${appUrl()}`); },
   shareTable(el){ const c = D.comps[el.dataset.id || S.compId]; if (!c) return; const lb = leaderboard(c); const fin = c.status === 'final'; const u = monthUnit(c); const best = compBest(c);
-    const lines = [`Rathsallagh Monthly · ${c.name}`, fin ? 'Final results' : `Table so far · best ${best} of ${compRounds(c).length} rounds count`, ''];
+    const lines = [`Pot of Gold · ${c.name}`, fin ? 'Final results' : `Table so far · best ${best} of ${compRounds(c).length} rounds count`, ''];
     lb.ranked.slice(0, 12).forEach(r => lines.push(`${r.tied ? 'T' : ''}${r.pos}. ${r.golfer.name} ${monthText(r, c)}${u ? ' ' + u : ''}${r.count < best ? ` (${r.count} card${r.count === 1 ? '' : 's'})` : ''}`));
     if (lb.ranked.length > 12) lines.push(`…and ${lb.ranked.length - 12} more`);
     if (!lb.ranked.length) lines.push('No approved cards yet.');
     const st = lb.stats; lines.push('', `Pot ${euro(st.pot)} · winner ${euro(st.prizes[0] || 0)} · runner-up ${euro(st.prizes[1] || 0)}`, appUrl());
     shareText(lines.join('\n')); },
-  invite(){ const k = cfg(); shareText(`Join the Rathsallagh monthly competition: ${euro(k.fee)} a month, ${k.rounds} weekend rounds, your best ${k.best} count. Open ${appUrl()} on your phone, sign in with Google or your email, and tap "Ask to join". Then add it to your home screen.`); },
+  invite(){ const k = cfg(); shareText(`Join the Pot of Gold, our monthly golf competition: ${euro(k.fee)} a month, ${k.rounds} weekend rounds, your best ${k.best} count. Open ${appUrl()} on your phone, sign in with Google or your email, and tap "Ask to join". Then add it to your home screen.`); },
   joinList(){ S.view = 'golfers'; S.playerId = null; S.golferTab = 'list'; top(); render(); },
   reviewJoin(el){ openSheet({type:'joinReq', email: el.dataset.email}); },
   declineJoin(el){ const email = el.dataset.email; const r = (D.requests || {})[email];
