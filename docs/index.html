@@ -526,6 +526,15 @@ form.inline{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin
 .joinreqs{margin-bottom:14px}
 .btnrow{display:flex;gap:8px;margin-top:12px}
 .btnrow .btn{flex:1;min-width:0}
+
+/* Handicap cut bands */
+.bandtbl{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums;margin-bottom:10px}
+.bandtbl th{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:0 0 6px}
+.bandtbl td{padding:7px 0;border-top:1px solid var(--line)}
+.bandtbl th+th,.bandtbl td+td{text-align:right}
+.bandedit{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr);gap:8px;align-items:center}
+.bandlbl{display:flex;align-items:center;gap:6px;font-size:14px;font-weight:600;flex-wrap:wrap;min-width:0}
+.bandlbl input{width:68px;flex:none}
 </style>
 </head>
 <body>

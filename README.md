@@ -24,10 +24,13 @@ An installable phone app for the Rathsallagh monthly competition. Golfers sign i
 
 These are worked out automatically each time a month is finalised:
 
-- The winner is cut by 2 and the runner-up by 1.
+- Cuts depend on the golfer's competition handicap going into the month, so lower handicaps are cut less:
+  - under 10: winner cut 1, runner-up cut 0.5;
+  - 10 to 19.9: winner cut 2, runner-up cut 1;
+  - 20 and over: winner cut 3, runner-up cut 1.5.
 - A golfer who plays 2 months in a row without a cut (winning or runner-up) goes up 0.5, and the count starts again. Months a golfer doesn't enter don't count.
 - Everyone can see each golfer's current handicap, starting handicap, history of changes, and when they're next due to rise, under **Golfers → Handicaps** and on each golfer's page.
-- Reopening a month undoes its changes. You can change the amounts, the number of months, and a top limit in **Admin → Handicap changes**.
+- Reopening a month undoes its changes. You can change the bands, the cuts, the rise, the number of months and a top limit in **Admin → Handicap changes**.
 - Each card is played off the handicap the golfer had on the day it was marked.
 
 You can try every screen first with made-up golfers: open the app's address with `?sample=1` on the end.

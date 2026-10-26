@@ -22,7 +22,7 @@ const FORMATS = {
   gross:{name:'Stroke play (gross)', short:'Gross', better:'low'},
   parbogey:{name:'v Par', short:'v Par', better:'high'}
 };
-const DEFAULTS = { fee:10, revtag:'paul3d7qv', points:[5,4,3,2], entryPoint:1, prize:[60,40], allowance:95, tee:'white', rounds:4, best:3, cutWinner:2, cutRunner:1, riseBy:0.5, riseAfter:2, hcpMax:54 };
+const DEFAULTS = { fee:10, revtag:'paul3d7qv', points:[5,4,3,2], entryPoint:1, prize:[60,40], allowance:95, tee:'white', rounds:4, best:3, bands:[10,20], cutWin:[1,2,3], cutRun:[0.5,1,1.5], riseBy:0.5, riseAfter:2, hcpMax:54 };
 // Entries are paid through Revolut only: in the Revolut app, or by debit card on the Revolut payment page.
 const METHODS = {revolut:'Revolut', card:'Card (Revolut)'};
 
@@ -66,6 +66,9 @@ function cfg(){
   const okArr = (a, d) => Array.isArray(a) && a.length === 18 && a.every(x => isFinite(x)) ? a.map(Number) : d;
   return Object.assign({}, DEFAULTS, s, {
     revtag: s.revtag || DEFAULTS.revtag,
+    bands: Array.isArray(s.bands) && s.bands.length === 2 && s.bands.every(x => isFinite(x)) && Number(s.bands[0]) < Number(s.bands[1]) ? s.bands.map(Number) : DEFAULTS.bands,
+    cutWin: Array.isArray(s.cutWin) && s.cutWin.length === 3 && s.cutWin.every(x => isFinite(x)) ? s.cutWin.map(Number) : DEFAULTS.cutWin,
+    cutRun: Array.isArray(s.cutRun) && s.cutRun.length === 3 && s.cutRun.every(x => isFinite(x)) ? s.cutRun.map(Number) : DEFAULTS.cutRun,
     points: Array.isArray(s.points) && s.points.length ? s.points.map(Number) : DEFAULTS.points,
     prize: Array.isArray(s.prize) && s.prize.length ? s.prize.map(Number) : DEFAULTS.prize,
     entryPoint: isFinite(s.entryPoint) ? Number(s.entryPoint) : DEFAULTS.entryPoint,
@@ -282,7 +285,10 @@ function playerStats(gid, season){
 
 /* ---------- Competition handicaps: winner cut, runner-up cut, rise after months without a cut ---------- */
 const r1 = x => Math.round(x * 10) / 10;
-function hcpRules(){ const k = cfg(); return {win: num(k.cutWinner, 2), second: num(k.cutRunner, 1), rise: num(k.riseBy, 0.5), after: Math.max(1, Math.round(num(k.riseAfter, 2))), max: num(k.hcpMax, 54)}; }
+// Cuts depend on the golfer's handicap at the time: lower handicaps are cut less.
+function hcpRules(){ const k = cfg(); return {bands: k.bands, win: k.cutWin, second: k.cutRun, rise: num(k.riseBy, 0.5), after: Math.max(1, Math.round(num(k.riseAfter, 2))), max: num(k.hcpMax, 54)}; }
+function bandOf(R, hcp){ return hcp < R.bands[0] ? 0 : hcp < R.bands[1] ? 1 : 2; }
+function bandLabels(R){ const f = x => String(x).replace(/\.0$/, ''); return [`Under ${f(R.bands[0])}`, `${f(R.bands[0])} to ${f(r1(R.bands[1] - 0.1))}`, `${f(R.bands[1])} and over`]; }
 function fmtChange(x){ return (x > 0 ? '+' : '−') + Math.abs(x).toFixed(1).replace(/\.0$/, ''); }
 // Worked out fresh from every finalised month, oldest first, so reopening or editing a month corrects itself.
 function hcpLedger(){
@@ -293,8 +299,9 @@ function hcpLedger(){
     leaderboard(c).all.forEach(r => {
       const l = L[r.gid]; if (!l || l.base === null) return;
       l.played++; let change = 0, reason = '';
-      if (r.pos === 1) { change = -R.win; reason = `Won ${c.name}`; l.streak = 0; }
-      else if (r.pos === 2) { change = -R.second; reason = `Runner-up in ${c.name}`; l.streak = 0; }
+      const band = bandOf(R, l.current);
+      if (r.pos === 1) { change = -R.win[band]; reason = `Won ${c.name}`; l.streak = 0; }
+      else if (r.pos === 2) { change = -R.second[band]; reason = `Runner-up in ${c.name}`; l.streak = 0; }
       else { l.streak++; if (l.streak >= R.after) { change = R.rise; reason = `No cut in ${R.after} months (to ${c.name})`; l.streak = 0; } }
       if (change) { const before = l.current; l.current = r1(Math.min(R.max, before + change)); const real = r1(l.current - before); if (real) l.events.push({compId:c.id, date:c.date, name:c.name, change:real, reason, before, after:l.current}); }
     });
@@ -792,7 +799,9 @@ function viewGolfers(){
 }
 function handicapsHtml(ps){
   const R = hcpRules(); const L = hcpLedger();
-  let h = `<div class="panel hcprules"><p><b>Winner</b> cut ${R.win} · <b>Runner-up</b> cut ${R.second} · <b>+${R.rise}</b> after ${R.after} months played without a cut</p><p class="hint">Changes are made when the organiser finalises a month. Cards are played off the handicap on the day they're marked.</p></div>`;
+  const BL = bandLabels(R);
+  let h = `<div class="panel hcprules"><table class="bandtbl"><thead><tr><th>Handicap</th><th>Winner</th><th>Runner-up</th></tr></thead><tbody>${BL.map((l, i) => `<tr><td>${esc(l)}</td><td class="cut">cut ${R.win[i]}</td><td class="cut">cut ${R.second[i]}</td></tr>`).join('')}</tbody></table>
+    <p><b class="rise">+${R.rise}</b> after ${R.after} months played without a cut.</p><p class="hint">The band is the golfer's competition handicap going into the month. Changes are made when the organiser finalises a month. Cards are played off the handicap on the day they're marked.</p></div>`;
   h += `<ul class="list" style="margin-top:12px"><li class="hc-head"><span>Golfer</span><span>Hcp</span><span>Last change</span><span>Rises</span></li>` + ps.map(p => { const l = L[p.id]; if (!l) return '';
     const last = l.events[l.events.length - 1]; const due = l.base !== null && l.toRise === 1;
     return `<li><button class="hc-row" data-act="openPlayer" data-id="${esc(p.id)}"><span class="hc-name">${esc(p.name)}<small>Started ${fmtHi(l.base)}</small></span><span class="hc-now">${fmtHi(l.current)}</span><span class="hc-last">${last ? `<b class="${last.change < 0 ? 'cut' : 'rise'}">${fmtChange(last.change)}</b><small>${esc(dParts(last.date).mon)} ${dParts(last.date).year}</small>` : '<small>None yet</small>'}</span><span class="hc-due ${due ? 'soon' : ''}">${l.base === null ? '–' : esc(riseText(p.id, true))}</span></button></li>`; }).join('') + '</ul>';
@@ -884,8 +893,12 @@ function viewAdmin(){
       <p class="hint">${kittyPct > 0 ? `The other ${kittyPct}% of each pot stays in the kitty.` : kittyPct < 0 ? 'These add up to more than 100%.' : 'The whole pot goes to the top two.'}</p></div></section>
     <section><div class="sec-head"><h2>League points</h2></div><div class="panel"><div class="grid5"><label class="field"><span>1st</span>${n('s-pt1', k.points[0])}</label><label class="field"><span>2nd</span>${n('s-pt2', k.points[1])}</label><label class="field"><span>3rd</span>${n('s-pt3', k.points[2])}</label><label class="field"><span>4th</span>${n('s-pt4', k.points[3])}</label><label class="field"><span>Others</span>${n('s-pte', k.entryPoint)}</label></div><p class="hint">"Others" is the point for entering.</p></div></section>
     <section><div class="sec-head"><h2>New months</h2></div><div class="panel"><div class="grid2"><label class="field"><span>Weekend rounds</span>${n('s-rounds', k.rounds, 'min="1" max="5"')}</label><label class="field"><span>Best cards count</span>${n('s-best', k.best, 'min="1" max="5"')}</label></div><p class="hint">Each round is open Friday to Sunday. One card per golfer per round.</p></div></section>
-    <section><div class="sec-head"><h2>Handicap changes</h2></div><div class="panel"><div class="grid2"><label class="field"><span>Winner cut</span>${n('s-cw', k.cutWinner, 'min="0" step="0.1"')}</label><label class="field"><span>Runner-up cut</span>${n('s-cr', k.cutRunner, 'min="0" step="0.1"')}</label><label class="field"><span>Rise by</span>${n('s-rb', k.riseBy, 'min="0" step="0.1"')}</label><label class="field"><span>Rise after (months)</span>${n('s-ra', k.riseAfter, 'min="1" step="1"')}</label><label class="field"><span>Highest handicap</span>${n('s-hm', k.hcpMax, 'min="0" step="1"')}</label></div>
-      <p class="hint">Applied when a month is finalised. "Rise after" counts months a golfer played without a cut (winning or runner-up). Changing these recalculates everyone's handicap.</p></div></section>
+    <section><div class="sec-head"><h2>Handicap changes</h2></div><div class="panel"><div class="bandedit"><span class="label">Handicap</span><span class="label">Winner cut</span><span class="label">Runner-up cut</span>
+        <label class="bandlbl">Under ${n('s-b1', k.bands[0], 'min="0" step="0.1" aria-label="First band ends at"')}</label>${n('s-w1', k.cutWin[0], 'min="0" step="0.1" aria-label="Winner cut, lowest band"')}${n('s-r1', k.cutRun[0], 'min="0" step="0.1" aria-label="Runner-up cut, lowest band"')}
+        <label class="bandlbl">${esc(String(k.bands[0]))} to under ${n('s-b2', k.bands[1], 'min="0" step="0.1" aria-label="Second band ends at"')}</label>${n('s-w2', k.cutWin[1], 'min="0" step="0.1" aria-label="Winner cut, middle band"')}${n('s-r2', k.cutRun[1], 'min="0" step="0.1" aria-label="Runner-up cut, middle band"')}
+        <span class="bandlbl">${esc(String(k.bands[1]))} and over</span>${n('s-w3', k.cutWin[2], 'min="0" step="0.1" aria-label="Winner cut, highest band"')}${n('s-r3', k.cutRun[2], 'min="0" step="0.1" aria-label="Runner-up cut, highest band"')}</div>
+      <div class="grid2" style="margin-top:12px"><label class="field"><span>Rise by</span>${n('s-rb', k.riseBy, 'min="0" step="0.1"')}</label><label class="field"><span>Rise after (months)</span>${n('s-ra', k.riseAfter, 'min="1" step="1"')}</label><label class="field"><span>Highest handicap</span>${n('s-hm', k.hcpMax, 'min="0" step="1"')}</label></div>
+      <p class="hint">Applied when a month is finalised. The band is the golfer's competition handicap going into that month, so lower handicaps are cut less. "Rise after" counts months a golfer played without a cut (winning or runner-up). Changing these recalculates everyone's handicap.</p></div></section>
     <section><div class="sec-head"><h2>Handicaps</h2></div><div class="panel"><div class="grid2"><label class="field"><span>Allowance %</span>${n('s-allow', k.allowance, 'min="0" max="100"')}</label><label class="field"><span>Default men's tees</span><select id="s-tee">${Object.entries(TEES).map(([key,t]) => `<option value="${key}" ${k.tee === key ? 'selected' : ''}>${t.name} · ${t.cr} / ${t.slope}</option>`).join('')}</select></label></div>
       <p class="hint">Shots use index × slope ÷ 113 + (rating − par), times the allowance. Ladies use the red tees. Each card keeps the golfer's index from the day it was marked.</p></div></section>
     <section><div class="panel"><details class="course" id="courseDetails" ${S.courseOpen ? 'open' : ''}><summary>Course card: par and stroke index</summary>
@@ -1398,7 +1411,7 @@ function saveSettings(){
   const course = {parM:[], siM:[], parL:[], siL:[]};
   range(1,18).forEach(h => { course.parM.push(n('c-pm-'+h, k.course.parM[h-1])); course.siM.push(n('c-sm-'+h, k.course.siM[h-1])); course.parL.push(n('c-pl-'+h, k.course.parL[h-1])); course.siL.push(n('c-sl-'+h, k.course.siL[h-1])); });
   const rev = String((g('s-rev') || {}).value || '').trim().replace(/^https?:\/\/(www\.)?revolut\.me\//i, '').replace(/^@/, '').replace(/\/.*$/, '');
-  const data = { fee:n('s-fee', k.fee), revtag:rev, prize:[n('s-p1', k.prize[0]), n('s-p2', k.prize[1] != null ? k.prize[1] : 0)], points:[n('s-pt1', k.points[0]), n('s-pt2', k.points[1]), n('s-pt3', k.points[2]), n('s-pt4', k.points[3])], entryPoint:n('s-pte', k.entryPoint), rounds: Math.max(1, Math.min(5, n('s-rounds', k.rounds))), best: Math.max(1, Math.min(5, n('s-best', k.best))), allowance:n('s-allow', k.allowance), tee:(g('s-tee') || {}).value || k.tee, course, cutWinner:n('s-cw', k.cutWinner), cutRunner:n('s-cr', k.cutRunner), riseBy:n('s-rb', k.riseBy), riseAfter:Math.max(1, Math.round(n('s-ra', k.riseAfter))), hcpMax:n('s-hm', k.hcpMax) };
+  const data = { fee:n('s-fee', k.fee), revtag:rev, prize:[n('s-p1', k.prize[0]), n('s-p2', k.prize[1] != null ? k.prize[1] : 0)], points:[n('s-pt1', k.points[0]), n('s-pt2', k.points[1]), n('s-pt3', k.points[2]), n('s-pt4', k.points[3])], entryPoint:n('s-pte', k.entryPoint), rounds: Math.max(1, Math.min(5, n('s-rounds', k.rounds))), best: Math.max(1, Math.min(5, n('s-best', k.best))), allowance:n('s-allow', k.allowance), tee:(g('s-tee') || {}).value || k.tee, course, bands: (() => { const a = n('s-b1', k.bands[0]), b = n('s-b2', k.bands[1]); return a < b ? [a, b] : k.bands; })(), cutWin:[n('s-w1', k.cutWin[0]), n('s-w2', k.cutWin[1]), n('s-w3', k.cutWin[2])], cutRun:[n('s-r1', k.cutRun[0]), n('s-r2', k.cutRun[1]), n('s-r3', k.cutRun[2])], riseBy:n('s-rb', k.riseBy), riseAfter:Math.max(1, Math.round(n('s-ra', k.riseAfter))), hcpMax:n('s-hm', k.hcpMax) };
   D.settings = data; MEMO = {};
   clearTimeout(settingsTimer); settingsTimer = setTimeout(async () => { if (await put('config/settings', data)) syncHandicaps(); }, 400);
 }
