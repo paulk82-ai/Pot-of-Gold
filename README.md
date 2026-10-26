@@ -64,10 +64,10 @@ Without this step the app still works fully; golfers just type scores in instead
 
 ## 3. Put the app online (free, with GitHub Pages)
 
-1. Create a free account at **github.com**, then create a new repository called `potofgold`.
+1. Create a free account at **github.com**, then create a new repository called `Pot-of-Gold`.
 2. In Claude, connect GitHub (claude.ai → Settings → Connectors → GitHub) and ask Claude to push the app to your repository. You can also upload the files yourself on github.com.
 3. In the repository, go to **Settings → Pages**. Under *Build and deployment*, choose **Deploy from a branch**, then branch **main** and folder **/docs**, and save.
-4. After a minute your app is live at `https://YOUR-GITHUB-NAME.github.io/potofgold/`.
+4. After a minute your app is live at `https://YOUR-GITHUB-NAME.github.io/Pot-of-Gold/`.
 5. Back in Firebase, go to **Authentication → Settings → Authorized domains → Add domain** and add `YOUR-GITHUB-NAME.github.io`. Without this, sign-in won't work.
 
 ## 4. First sign-in and setup
