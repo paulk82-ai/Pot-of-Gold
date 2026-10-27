@@ -1,12 +1,12 @@
 rules_version = '2';
 
-// Rathsallagh Monthly: who can read and change what.
+// Pot of Gold: who can read and change what.
 // - Organisers (emails in config/admins) can change everything.
 // - Golfers sign in with the email the organiser saved for them (members/{email}),
 //   or ask to join (requests/{email}) and wait for an organiser to let them in.
 // - Entry fees are paid through Revolut. Golfers can say they've paid; organisers confirm it.
-// - Players enter their own card while the round is open (Fri-Sun) and choose a marker: another player entered that month.
-// - The card only counts once that marker approves it. Any change by the player resets the approval.
+// - Players enter their own card while the round is open (Fri-Sun), with their marker's name and a tick
+//   to say the marker has signed the paper card. Complete, signed cards count.
 // - New cards are played off the golfer's current competition handicap (golfers/{id}.hcp, kept up to date by the organiser's app).
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -93,33 +93,26 @@ service cloud.firestore {
       }
 
       // Cards: one per golfer per round (id = "<round>_<golferId>").
-      // The player enters their own card and names a marker; only that marker can approve it.
+      // The player enters their own card while the round is open, with their marker's name
+      // and a tick to say the marker has signed the paper card. Organisers can change any card.
       match /cards/{cardId} {
         function ownCard(c) {
           let me = myGid();
           let golfer = get(/databases/$(database)/documents/golfers/$(c.golferId)).data;
-          return c.keys().hasOnly(['compId', 'golferId', 'round', 'groupId', 'markerId', 'scores', 'hi', 'shots', 'approved', 'approvedBy', 'approvedAt', 'updatedAt', 'updatedBy', 'scanned'])
+          return c.keys().hasOnly(['compId', 'golferId', 'round', 'marker', 'signed', 'scores', 'hi', 'shots', 'updatedAt', 'updatedBy', 'scanned'])
             && c.compId == cid && c.round is int && c.scores is map
             && cardId == string(c.round) + '_' + c.golferId
-            && c.golferId == me && c.markerId is string && c.markerId != me
-            && entered(me) && entered(c.markerId)
-            && c.approved == false && c.get('approvedBy', null) == null
+            && c.golferId == me && entered(me)
+            && c.marker is string && c.marker.size() <= 60 && c.signed is bool
             && isOpen() && roundOpen(c.round)
             && (resource == null
                   ? (c.shots == null && c.hi == golfer.get('hcp', golfer.get('hi', null)))
                   : (resource.data.golferId == c.golferId && resource.data.round == c.round
                      && c.shots == resource.data.get('shots', null) && c.hi == resource.data.get('hi', null)));
         }
-        function approval(c) {
-          let me = myGid();
-          return resource != null && resource.data.markerId == me && resource.data.golferId != me
-            && c.diff(resource.data).affectedKeys().hasOnly(['approved', 'approvedBy', 'approvedAt'])
-            && c.approved == true && c.approvedBy == me && isOpen();
-        }
         allow read: if canRead();
         allow write: if isAdmin();
-        allow create: if isMember() && ownCard(request.resource.data);
-        allow update: if isMember() && (ownCard(request.resource.data) || approval(request.resource.data));
+        allow create, update: if isMember() && ownCard(request.resource.data);
       }
     }
 

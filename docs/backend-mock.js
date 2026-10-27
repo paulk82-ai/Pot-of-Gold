@@ -57,20 +57,15 @@ export async function init(cfg){
       }
       if (s[2] === 'cards') {
         if (!data) throw deny();
-        const cur = store[path]; const entered = x => !!store[`comps/${s[1]}/entries/${x}`];
-        // the marker approving: only the approval fields change
-        if (cur && cur.markerId === g && data.markerId === g && data.approved === true && data.approvedBy === g) {
-          const keys = new Set(Object.keys(cur).concat(Object.keys(data)));
-          for (const k of keys) if (!['approved','approvedBy','approvedAt'].includes(k) && JSON.stringify(cur[k]) !== JSON.stringify(data[k])) throw deny('A marker can only approve, not change the card.');
-          return;
-        }
-        // the player entering their own card
-        if (data.golferId !== g) throw deny("You can only enter your own card. Approve the cards where you're the marker.");
-        if (!data.markerId || data.markerId === g || !entered(data.markerId)) throw deny('Choose a marker who is entered this month.');
-        if (data.approved !== false) throw deny('A changed card needs the marker to approve it again.');
+        const entered = x => !!store[`comps/${s[1]}/entries/${x}`]; const cur = store[path];
+        // The player enters their own card while the round is open, with the marker's name and a signed tick.
+        if (data.golferId !== g) throw deny('You can only enter your own card.');
         if (!entered(g)) throw deny('Enter this month first.');
         if (s[3] !== `${data.round}_${data.golferId}`) throw deny();
         if (!roundOpen(comp, data.round)) throw deny('This round is not open.');
+        if (typeof data.marker !== 'string' || data.marker.length > 60 || typeof data.signed !== 'boolean') throw deny();
+        if (Object.keys(data).some(k => !['compId', 'golferId', 'round', 'marker', 'signed', 'scores', 'hi', 'shots', 'updatedAt', 'updatedBy', 'scanned'].includes(k))) throw deny();
+        if (cur && JSON.stringify(cur.shots == null ? null : cur.shots) !== JSON.stringify(data.shots == null ? null : data.shots)) throw deny();
         return;
       }
     }

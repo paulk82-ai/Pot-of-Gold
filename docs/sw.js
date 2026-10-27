@@ -1,6 +1,6 @@
 // Keeps the app's own files on the phone so it opens quickly and works with a weak signal.
 // League data is handled by Firebase's own offline cache, not by this file.
-const VERSION = 'rgc-v8';
+const VERSION = 'rgc-v9';
 const SHELL = ['./', './index.html', './app.js', './config.js', './backend-firebase.js', './backend-mock.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png', './icons/favicon.png'];
 
 self.addEventListener('install', e => {

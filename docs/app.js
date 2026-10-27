@@ -133,15 +133,23 @@ function allocShots(holes, si, total){
   (sign > 0 ? ranked : ranked.slice().reverse()).forEach((h,i) => { res[h] = sign * (base + (i < extra ? 1 : 0)); });
   return res;
 }
-// A card counts once the player's marker (another player entered that month) has approved it.
-function markedOK(card){
-  if (!card || !card.markerId || card.markerId === card.golferId || card.approved !== true) return false;
-  return !!entryOf(card.compId, card.markerId) && (card.approvedBy === card.markerId || card.approvedBy === 'organiser');
+// A card counts once it's complete and the paper card is signed by a marker (anyone).
+// The player adds the marker's name and ticks that it's signed. Older cards used markerId/approved.
+function markerName(card){ return card ? String(card.marker || (card.markerId ? gName(card.markerId) : '') || '').trim() : ''; }
+function isSigned(card){ return !!card && (card.signed === true || card.approved === true); }
+function markedOK(card){ return isSigned(card) && !!markerName(card); }
+function signText(card){
+  const m = markerName(card);
+  if (markedOK(card)) return `Signed by ${m}`;
+  if (m) return `Marker ${m} · not ticked as signed yet`;
+  return isSigned(card) ? "Add your marker's name" : 'Not signed by a marker yet';
 }
-function approvalText(card){
-  if (!card || !card.markerId) return 'No marker chosen';
-  if (markedOK(card)) return card.approvedBy === 'organiser' ? `Marker ${gName(card.markerId)} · approved by the organiser` : `Approved by ${gName(card.markerId)}`;
-  return `Waiting for ${gName(card.markerId)} to approve`;
+// The fields a card keeps when it's saved (older cards are converted to the new fields).
+function cardBase(cid, round, gid){
+  const prev = cardOf(cid, round, gid) || {}; const g = D.golfers[gid];
+  const out = {compId:cid, golferId:gid, round, marker: markerName(prev), signed: isSigned(prev), scores: Object.assign({}, prev.scores || {}), hi: prev.hi != null ? prev.hi : snapHcp(g), shots: prev.shots != null ? prev.shots : null};
+  if (prev.scanned) out.scanned = true;
+  return out;
 }
 function scoreCard(comp, round, gid){
   const g = D.golfers[gid]; const card = cardOf(comp.id, round, gid);
@@ -176,7 +184,7 @@ function metric(comp, rows){
 const higher = c => (FORMATS[c.format] || FORMATS.stableford).better === 'high';
 function cbSegments(n){ return [Math.ceil(n/2), Math.round(n/3), Math.round(n/6), 1].filter(k => k > 0); }
 function cbKeys(comp, sc){ return [metric(comp, sc.rows)].concat(cbSegments(sc.rows.length).map(n => metric(comp, sc.rows.slice(-n)))); }
-function cardStatus(sc){ if (!sc.card || !sc.filled) return 'No card'; if (!sc.complete) return 'Thru ' + sc.filled; if (sc.nr) return 'NR'; if (!sc.marked) return sc.card.markerId ? 'Waiting for approval' : 'No marker'; return ''; }
+function cardStatus(sc){ if (!sc.card || !sc.filled) return 'No card'; if (!sc.complete) return 'Thru ' + sc.filled; if (sc.nr) return 'NR'; if (!sc.marked) return 'Not signed'; return ''; }
 function cardValueText(sc){
   const c = sc.rc;
   if (c.format === 'medal') return String(sc.runNett);
@@ -332,20 +340,15 @@ function previewHcp(cid, status){
 }
 
 /* ---------- Who can do what (mirrors firestore.rules) ---------- */
-// Players enter their own card (Friday to Sunday) and choose a marker; the organiser can enter any card.
+// Players enter their own card (Friday to Sunday); the organiser can enter any card.
 function canEnter(cid, round, gid){
   const c = D.comps[cid]; if (!c) return false;
   if (S.isAdmin) return true;
   return !!(S.myGid && gid === S.myGid && c.status === 'open' && roundOpenNow(c, round) && entryOf(cid, S.myGid));
 }
-function canApprove(card){
-  const c = card && D.comps[card.compId]; if (!c || c.status !== 'open') return false;
-  return S.isAdmin || (!!S.myGid && card.markerId === S.myGid && card.golferId !== S.myGid);
-}
-function toApprove(cid){ return S.myGid ? Object.values(D.cards).filter(x => x.compId === cid && x.markerId === S.myGid && x.golferId !== S.myGid && !markedOK(x)) : []; }
 function errText(e){
   const code = e && e.code || '';
-  if (code === 'permission-denied' || /permission/i.test(e && e.message || '')) return (e && e.message && !/Missing or insufficient/i.test(e.message)) ? e.message : "That isn't allowed. You can enter your own card while the round is open, and approve cards where you're the marker.";
+  if (code === 'permission-denied' || /permission/i.test(e && e.message || '')) return (e && e.message && !/Missing or insufficient/i.test(e.message)) ? e.message : "That isn't allowed. You can enter your own card while the round is open (Friday to Sunday).";
   if (code === 'unavailable') return "You're offline. It will save when you're back online.";
   return 'Something went wrong. Check your connection and try again.';
 }
@@ -432,7 +435,7 @@ const ICONS = {
 };
 function doRender(){
   const ae = document.activeElement; const main = $('#main');
-  if (ae && ae.matches && ae.matches('input,select,textarea') && main.contains(ae)) { deferred = true; return; }
+  if (ae && ae.matches && ae.matches('input:not([type=checkbox]):not([type=radio]),select,textarea') && main.contains(ae)) { deferred = true; return; }
   MEMO = {};
   $('#acct').innerHTML = S.user && S.phase === 'app' ? `<button class="acct" data-act="account" aria-label="Account">${esc(initials(S.myGid ? gName(S.myGid) : (S.user.name || S.user.email)))}</button>` : '';
   $('#role').textContent = SAMPLE ? 'Sample' : S.isAdmin ? 'Organiser' : S.myGid ? 'Golfer' : '';
@@ -551,7 +554,6 @@ function featured(c){
       <div class="chips">${chipsFor(c)}</div>
       <dl class="figs"><div><dt>Entries</dt><dd>${st.entries}</dd></div><div><dt>Paid</dt><dd>${st.paid}</dd></div><div><dt>Pot</dt><dd>${euro(st.pot)}</dd></div></dl>
       ${leader ? `<p class="hint">Leading: <b>${esc(leader.golfer.name)}</b>, ${esc(monthText(leader, c))} ${monthUnit(c)}</p>` : ''}
-      ${toApprove(c.id).length ? `<p class="notebox"><b>${toApprove(c.id).length} card${toApprove(c.id).length === 1 ? '' : 's'} waiting for your approval.</b> Open the competition to review.</p>` : ''}
       ${S.myGid && payState(entryOf(c.id, S.myGid)) === 'unpaid' ? `<p class="notebox">Your ${euro(st.fee)} entry isn't paid yet. Open the competition to pay with Revolut.</p>` : ''}
       <button class="btn primary" data-act="openComp" data-id="${esc(c.id)}">Open competition</button>
     </div>
@@ -611,17 +613,13 @@ function myPanel(c){
   const ps = payState(e); const pid = esc(c.id + '/' + S.myGid);
   let h = `<section class="mypanel"><div class="mp-head"><span class="eyebrow">You're entered</span>${ps === 'paid' ? `<span class="pill final">Paid · ${esc(METHODS[e.method] || 'Paid')}</span>` : `<button class="paytag ${ps}" data-act="pay" data-id="${pid}">${ps === 'claimed' ? 'Checking' : 'Unpaid'}</button>`}</div>`;
   if (ps === 'unpaid') h += `<div class="paynote"><span>Your ${euro(compFee(c))} entry isn't paid yet.</span><button class="btn small primary" data-act="pay" data-id="${pid}">Pay now</button></div>`;
-  const pend = toApprove(c.id);
-  const approvals = pend.length ? `<div class="approvals"><span class="eyebrow">Cards to approve (${pend.length})</span><ul class="grp">${pend.map(x => { const sc = scoreCard(c, x.round, x.golferId);
-    return `<li><span class="avatar sm">${esc(initials(gName(x.golferId)))}</span><span class="grp-main"><b>${esc(gName(x.golferId))}</b><small>Round ${x.round} · ${sc.complete ? esc(cardValueText(sc)) + ' ' + unitFor(sc.rc.format) : 'Thru ' + sc.filled}</small></span><button class="btn small primary" data-act="openCard" data-cid="${esc(c.id)}" data-round="${x.round}" data-gid="${esc(x.golferId)}">Review</button></li>`; }).join('')}</ul></div>` : '';
-  if (!open) { h += approvals + `<p class="hint">${next ? `Round ${next.n} opens ${esc(roundLabel(next))}. Cards can be entered Friday to Sunday.` : 'All rounds for this month have been played.'}</p></section>`; return h; }
+  if (!open) { h += `<p class="hint">${next ? `Round ${next.n} opens ${esc(roundLabel(next))}. Cards can be entered Friday to Sunday.` : 'All rounds for this month have been played.'}</p></section>`; return h; }
   const mine = scoreCard(c, open.n, S.myGid);
-  const myStatus = !mine.filled ? 'No scores yet' : !mine.complete ? `Thru ${mine.filled} · ${esc(approvalText(mine.card))}` : esc(approvalText(mine.card));
+  const myStatus = !mine.filled ? 'No scores yet' : !mine.complete ? `Thru ${mine.filled} · ${esc(signText(mine.card))}` : esc(signText(mine.card));
   h += `<h3>Round ${open.n} · ${esc(roundLabel(open))}</h3>`;
   h += `<ul class="grp"><li><span class="avatar sm">${esc(initials(gName(S.myGid)))}</span><span class="grp-main"><b>Your card</b><small>${myStatus}</small></span><button class="btn small primary" data-act="openCard" data-cid="${esc(c.id)}" data-round="${open.n}" data-gid="${esc(S.myGid)}">${mine.filled ? 'Open' : 'Enter'}</button></li></ul>`;
-  const waiting = mine.complete && !mine.marked && mine.card && mine.card.markerId;
-  h += `<div class="mp-tools ${waiting ? '' : 'one'}"><button class="btn" data-act="scan" data-round="${open.n}">${ICONS.camera}Scan my card</button>${waiting ? `<button class="btn" data-act="askMarker" data-cid="${esc(c.id)}" data-round="${open.n}" data-gid="${esc(S.myGid)}">${ICONS.share}Remind ${esc(firstName(gName(mine.card.markerId)))}</button>` : ''}</div>`;
-  h += approvals + `<p class="hint">Enter your scores and choose your marker. Your card counts once your marker taps Approve on their phone.</p></section>`;
+  h += `<div class="mp-tools one"><button class="btn" data-act="scan" data-round="${open.n}">${ICONS.camera}Scan my card</button></div>`;
+  h += `<p class="hint">Get your card signed by your marker, then enter or scan it here. Add your marker's name and tick that it's signed, and it counts.</p></section>`;
   return h;
 }
 function roundCells(c, row){
@@ -636,7 +634,7 @@ function entriesHtml(c, lb){
   let h = '';
   if (A && !fin) h += `<div class="entry-tools"><button class="btn primary" data-act="scan" data-round="${cur}">${ICONS.camera}Scan a card</button><button class="btn" data-act="addEntry">+ Add entries</button></div>`;
   if (!all.length) return h + `<div class="empty" style="margin-top:12px"><p class="hint">No entries yet.</p></div>`;
-  h += `<p class="hint entry-hint">Tap a golfer to see their cards. A * means the card is waiting for the marker's approval, so it doesn't count yet. Brackets show a dropped round.</p>`;
+  h += `<p class="hint entry-hint">Tap a golfer to see their cards. A * means the card isn't ticked as signed by a marker yet, so it doesn't count. Brackets show a dropped round.</p>`;
   h += '<ul class="list">' + all.map(r => {
     const e = r.entry; const ps = payState(e); const own = r.gid === S.myGid;
     const label = ps === 'paid' ? (A ? METHODS[e.method] || 'Paid' : 'Paid') : ps === 'claimed' ? (A ? 'Check' : 'Checking') : 'Unpaid';
@@ -663,7 +661,7 @@ function monthListHtml(c, lb){
   }).join('');
   const rest = lb.rest.map(r => `<li class="lb-row lb-rest"><span class="lb-pos">–</span><button class="lb-name" data-act="openPlayer" data-id="${esc(r.gid)}">${esc(r.golfer.name)}<small>${esc(r.status)}</small></button><span class="lb-score"></span><span class="lb-pts"><b>${r.points} pt${r.points === 1 ? '' : 's'}</b></span></li>`).join('');
   const mixNote = lb.mode && lb.mode.mixed ? `<p class="hint" style="margin-top:10px">Rounds use different formats, so this table adds up Stableford points from each golfer's best ${compBest(c)} cards.</p>` : '';
-  const note = mixNote + (fin ? '' : `<p class="hint" style="margin-top:10px">Provisional. Only complete cards approved by the player's marker count. Golfers with fewer than ${compBest(c)} counting cards rank below those with ${compBest(c)}. League points are added when the organiser finalises the month.</p>`);
+  const note = mixNote + (fin ? '' : `<p class="hint" style="margin-top:10px">Provisional. Only complete cards signed by a marker count. Golfers with fewer than ${compBest(c)} counting cards rank below those with ${compBest(c)}. League points are added when the organiser finalises the month.</p>`);
   return `<ul class="list">${head}${rows}${rest}</ul>${note}`;
 }
 function roundBoardHtml(c, n){
@@ -671,7 +669,7 @@ function roundBoardHtml(c, n){
   const info = `<p class="hint" style="margin-bottom:10px">Round ${n}${r ? ' · ' + esc(roundLabel(r)) : ''} · ${esc((FORMATS[rc.format] || FORMATS.stableford).name)} · ${rc.holes.length} holes · ${esc((TEES[rc.tee] || TEES.white).name)} tees</p>`;
   const head = `<div class="lb-head"><span>Pos</span><span>Golfer</span><span>Score</span><span>Month</span></div>`;
   const rows = rb.ranked.map(sc => { const row = lb.all.find(r => r.gid === sc.gid); const counts = row && row.countedNs.has(n);
-    return `<li class="lb-row ${sc.pos === 1 ? 'first' : ''}"><span class="lb-pos">${sc.tied ? 'T' : ''}${sc.pos}</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>Marker ${esc(gName(sc.card.markerId))}${sc.onCb ? ' · on countback' : ''}</small></button><span class="lb-score">${esc(cardValueText(sc))}<small>${unitFor(rc.format)}</small></span><span class="lb-pts"><b>${counts ? 'Counts' : 'Dropped'}</b></span></li>`; }).join('');
+    return `<li class="lb-row ${sc.pos === 1 ? 'first' : ''}"><span class="lb-pos">${sc.tied ? 'T' : ''}${sc.pos}</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>Marker ${esc(markerName(sc.card))}${sc.onCb ? ' · on countback' : ''}</small></button><span class="lb-score">${esc(cardValueText(sc))}<small>${unitFor(rc.format)}</small></span><span class="lb-pts"><b>${counts ? 'Counts' : 'Dropped'}</b></span></li>`; }).join('');
   const rest = rb.rest.map(sc => `<li class="lb-row lb-rest"><span class="lb-pos">–</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>${esc(cardStatus(sc))}</small></button><span class="lb-score"></span><span class="lb-pts"></span></li>`).join('');
   return `${info}<ul class="list">${head}${rows}${rest}</ul>`;
 }
@@ -681,8 +679,8 @@ function viewCard(){
   const {cid, round, gid} = S.card; const c = D.comps[cid]; const g = D.golfers[gid];
   if (!c || !g) { S.card = null; return viewComp(); }
   const sc = scoreCard(c, round, gid); const fin = c.status === 'final';
-  const mId = sc.card && sc.card.markerId; const mine = gid === S.myGid && !S.isAdmin;
-  const W = !fin && canEnter(cid, round, gid) && (S.isAdmin || !!mId);
+  const mine = gid === S.myGid && !S.isAdmin;
+  const W = !fin && canEnter(cid, round, gid);
   const rc = sc.rc; const fmt = rc.format;
   if (!rc.holes.includes(S.activeHole)) S.activeHole = rc.holes.find(h => !(sc.card && sc.card.scores && sc.card.scores[h] !== undefined)) || rc.holes[0];
   const resHead = fmt === 'stableford' ? 'Pts' : fmt === 'medal' ? 'Nett' : fmt === 'parbogey' ? '±' : 'vs Par';
@@ -691,20 +689,12 @@ function viewCard(){
   if (rs.length > 1) h += `<div class="bsel rtabs">${rs.map(r => `<button data-act="cardRound" data-v="${r.n}" aria-pressed="${r.n === round}">R${r.n}<small>${esc(shortRange(r))}</small></button>`).join('')}</div>`;
   h += `<div class="card-head"><div><span class="eyebrow">${g.gender === 'L' ? "Ladies' card" : "Men's card"} · ${t.name} tees · Round ${round}</span><h1 class="card-name">${esc(g.name)}</h1><p class="hint">Hcp ${fmtHi(cardHi(sc.card, g))} · ${rc.holes.length} holes · ${esc((FORMATS[fmt]||FORMATS.stableford).name)}</p></div>
     ${S.isAdmin && !fin ? `<button class="shotsbtn" data-act="editShots"><b>${sc.total}</b><span>Shots ✎</span></button>` : `<div class="shotsbtn" style="cursor:default"><b>${sc.total}</b><span>Shots</span></div>`}</div>`;
-  // marker and approval
-  const pool = entriesFor(cid).map(e => e.golferId).filter(x => x !== gid).sort((a, b) => gName(a).localeCompare(gName(b)));
-  const canPick = !fin && (S.isAdmin || (mine && canEnter(cid, round, gid)));
-  let mk = `<div class="marker ${sc.marked ? 'ok' : sc.filled ? 'warn' : ''}"><span><b>${esc(approvalText(sc.card))}</b></span>`;
-  if (canPick) mk += `<label class="field" style="margin:8px 0 0"><span>${mine ? 'Who is marking your card?' : 'Marker'}</span><select id="markerSel"><option value="">Choose a player</option>${pool.map(x => `<option value="${esc(x)}" ${mId === x ? 'selected' : ''}>${esc(gName(x))}</option>`).join('')}</select></label>`;
-  if (sc.card && !sc.marked && canApprove(sc.card) && (S.isAdmin || sc.card.markerId === S.myGid)) {
-    const label = S.isAdmin && sc.card.markerId !== S.myGid ? 'Approve as organiser' : `Approve ${esc(g.name)}'s card`;
-    mk += sc.complete ? `<button class="btn primary block" style="margin-top:10px" data-act="approve">${label}</button>` : `<p class="hint" style="margin-top:8px">The card can be approved once all ${rc.holes.length} holes are entered.</p>`;
-  }
-  if (gid === S.myGid && mId && sc.complete && !sc.marked && !fin) mk += `<button class="btn block" style="margin-top:10px" data-act="askMarker" data-cid="${esc(cid)}" data-round="${round}" data-gid="${esc(gid)}">${ICONS.share}Remind ${esc(firstName(gName(mId)))} to approve</button>`;
+  // Marker: anyone who signed the paper card. The player adds their name and ticks that it's signed.
+  let mk = `<div class="marker ${sc.marked ? 'ok' : sc.filled ? 'warn' : ''}"><span><b>${esc(signText(sc.card))}</b></span>`;
+  if (W) mk += `<label class="field" style="margin:8px 0 0"><span>Marker's name</span><input type="text" id="markerName" maxlength="60" autocomplete="off" list="markerNames" value="${esc(markerName(sc.card))}" placeholder="Who marked the card?"></label><datalist id="markerNames">${sortedGolfers().filter(x => x.id !== gid).map(x => `<option value="${esc(x.name)}">`).join('')}</datalist>
+    <label class="signchk"><input type="checkbox" id="signedChk" ${isSigned(sc.card) ? 'checked' : ''}><span>${mine ? 'My marker has signed my card' : 'The marker has signed this card'}</span></label>`;
   h += mk + '</div>';
-  if (mine && canEnter(cid, round, gid) && !mId) h += `<p class="hint" style="margin:-4px 0 12px">Choose your marker first, then enter your scores. Only players entered this month are listed; if yours isn't, they need to enter first.</p>`;
-  else if (mine && sc.marked) h += `<p class="hint" style="margin:-4px 0 12px">Approved. If you change a score, your marker has to approve it again.</p>`;
-  else if (!S.isAdmin && sc.card && sc.card.markerId === S.myGid && !sc.marked) h += `<p class="hint" style="margin:-4px 0 12px">You're ${esc(g.name)}'s marker. Check the scores against their card, then approve.</p>`;
+  if (mine && W && !sc.marked) h += `<p class="hint" style="margin:-4px 0 12px">Your card counts once all ${rc.holes.length} holes are in and it's ticked as signed. Keep the signed card in case the organiser asks to see it.</p>`;
   else if (!W && !fin && !S.isAdmin && mine) h += `<p class="hint" style="margin:-4px 0 12px">${roundOpenNow(c, round) ? 'Enter this month to add your card.' : 'This round is closed. Cards can be entered Friday to Sunday.'}</p>`;
   const nettRel = sc.runNett - sc.runPar;
   const cells = [['Gross', sc.gross || '–', '']];
@@ -1084,9 +1074,10 @@ function scanPrompt(c, round){
     '- Use "P" for a pick-up (struck through, dash, line, X, P or NR). Leave out blank holes.',
     '- If a figure is hard to read, give your best reading and list the hole in "unclear".',
     '- "match" is the exact name from the club list when the name on the card clearly refers to that golfer, otherwise null. Never guess a match for an unclear name.',
-    '- "marker" is the name in the marker or attesting signature box for that golfer, if one is written, otherwise null.', '',
+    '- "marker" is the name in the marker or attesting signature box for that golfer, if one is written, otherwise null.',
+    '- "marker_signed" is true if there is a signature or initials in the marker or attesting box for that golfer, otherwise false.', '',
     'Reply with only JSON:',
-    '{"golfers":[{"name_on_card":"as written","match":"name from list or null","marker":"name or null","scores":{"1":5,"2":4,"3":"P"},"unclear":[7]}],"notes":""}',
+    '{"golfers":[{"name_on_card":"as written","match":"name from list or null","marker":"name or null","marker_signed":true,"scores":{"1":5,"2":4,"3":"P"},"unclear":[7]}],"notes":""}',
     'If it is not a scorecard, reply {"golfers":[],"notes":"the reason"}.'].join('\n');
 }
 async function imageToBase64(file){
@@ -1130,7 +1121,7 @@ function buildScanRows(res, c, ctx){
     holes.forEach(h => { const v = raw[h] !== undefined ? raw[h] : raw[String(h)]; if (v === undefined || v === null || v === '') return; if (/^\s*p\s*$/i.test(String(v))) { scores[h] = 'P'; return; } const n = Number(v); if (Number.isInteger(n) && n >= 1 && n <= 20) scores[h] = n; });
     const name = String((g && g.name_on_card) || '').slice(0, 60);
     const gid = recognise(g && typeof g.match === 'string' ? g.match : null, name);
-    const markerGid = g && g.marker ? recognise(null, String(g.marker)) : null;
+    const markerRead = g && typeof g.marker === 'string' ? g.marker.trim().slice(0, 60) : ''; const signedRead = !!(g && g.marker_signed === true);
     const unclear = Array.isArray(g && g.unclear) ? g.unclear.map(Number).filter(h => holes.includes(h)) : [];
     let status = 'ok', why = '';
     if (!gid) { status = 'reject'; why = "Name not recognised from the golfer list, so this card isn't accepted."; }
@@ -1138,13 +1129,12 @@ function buildScanRows(res, c, ctx){
     else if (!S.isAdmin && gid !== S.myGid) { status = 'reject'; why = 'Each player submits their own card, so this one is left for them.'; }
     else if (S.isAdmin && !entryOf(c.id, gid)) { why = "Not entered this month. Adding the card enters them (unpaid)."; }
     if (gid) seen.add(gid);
-    return {name, gid, markerGid, scores, unclear, status, why};
+    return {name, gid, markerRead, signedRead, scores, unclear, status, why};
   }).filter(r => Object.keys(r.scores).length || r.status === 'reject');
-  // Marker: the name in the card's marker box if they're a player in the competition, else the card's current marker, else another player on the card.
-  const ok = rows.filter(r => r.status === 'ok'); const onCard = ok.map(x => x.gid);
-  ok.forEach((r, k) => { const can = x => x && x !== r.gid && (entryOf(c.id, x) || (S.isAdmin && onCard.includes(x)));
-    const prev = cardOf(c.id, round, r.gid); const others = onCard.filter(x => x !== r.gid && (S.isAdmin || entryOf(c.id, x)));
-    r.marker = can(r.markerGid) ? r.markerGid : prev && can(prev.markerId) ? prev.markerId : (others.length ? others[k % others.length] : ''); });
+  // Marker: the name read from the card's marker box, else the name already on the card.
+  rows.filter(r => r.status === 'ok').forEach(r => { const prev = cardOf(c.id, round, r.gid);
+    const known = r.markerRead ? Object.values(D.golfers).find(x => normName(x.name) === normName(r.markerRead)) : null;
+    r.marker = known ? known.name : r.markerRead || markerName(prev); r.signed = r.signedRead || isSigned(prev); });
   return rows;
 }
 function sheetScan(){
@@ -1159,13 +1149,15 @@ function sheetScan(){
   const okRows = sh.rows.filter(r => r.status === 'ok');
   h += sh.rows.map((r, i) => {
     if (r.status === 'reject') return `<div class="scanrow rejected"><div class="oncard"><span class="label">On the card</span><b>${esc(r.name || 'Unnamed golfer')}</b></div><p class="errbox">${esc(r.why)}</p></div>`;
-    const pool = [...new Set(entriesFor(c.id).map(e => e.golferId).concat(S.isAdmin ? okRows.map(x => x.gid) : []))].filter(x => x !== r.gid).sort((a, b) => gName(a).localeCompare(gName(b)));
     return `<div class="scanrow"><div class="scanrow-head"><span class="oncard"><span class="label">On the card</span><b>${esc(r.name)}</b></span><span class="oncard"><span class="label">Golfer</span><b class="okname">${esc(gName(r.gid))}</b></span></div>
-      <label class="field" style="margin:0"><span>Marker (approves the card)</span><select id="sm-${i}"><option value="">Choose a player</option>${pool.map(x => `<option value="${esc(x)}" ${r.marker === x ? 'selected' : ''}>${esc(gName(x))}</option>`).join('')}</select></label>
+      <label class="field" style="margin:0"><span>Marker's name</span><input type="text" id="sm-${i}" maxlength="60" autocomplete="off" list="markerNames" value="${esc(r.marker || '')}" placeholder="Who marked the card?"></label>
+      <label class="signchk"><input type="checkbox" id="ss-${i}" ${r.signed ? 'checked' : ''}><span>The marker has signed this card</span></label>
+      ${r.signedRead ? '' : `<p class="hint">No marker signature was found on the photo. Only tick this if the card is signed.</p>`}
       ${r.why ? `<p class="hint">${esc(r.why)}</p>` : ''}
       <div class="sgrid">${holes.map(hh => `<label class="sg ${r.unclear.includes(hh) ? 'unclear' : ''}"><span>${hh}</span><input type="text" inputmode="numeric" maxlength="2" autocomplete="off" id="sv-${i}-${hh}" value="${r.scores[hh] !== undefined ? esc(String(r.scores[hh])) : ''}" aria-label="Hole ${hh}"></label>`).join('')}</div>
       <p class="hint">${Object.keys(r.scores).length} of ${holes.length} holes read${r.unclear.length ? ` · check hole${r.unclear.length > 1 ? 's' : ''} ${r.unclear.join(', ')}` : ''}</p></div>`;
   }).join('');
+  h += `<datalist id="markerNames">${sortedGolfers().map(x => `<option value="${esc(x.name)}">`).join('')}</datalist>`;
   h += okRows.length ? `<button class="btn primary block" data-act="applyScan">Add ${okRows.length} card${okRows.length === 1 ? '' : 's'}</button><p class="hint" style="margin-top:10px">Scanned holes replace what's on each card. Blank holes are left as they are.</p>` : `<div class="confirm-actions"><button class="btn" data-act="closeSheet">Close</button><button class="btn primary" data-act="newScan">New photo</button></div>`;
   return h;
 }
@@ -1176,14 +1168,16 @@ async function applyScan(){
   ok.forEach(({r, i}) => {
     const scores = {};
     holes.forEach(hh => { const inp = document.getElementById(`sv-${i}-${hh}`); const t = (inp ? inp.value : '').trim().toUpperCase(); if (!t) return; if (t === 'P') { scores[hh] = 'P'; return; } const n = parseInt(t, 10); if (/^\d{1,2}$/.test(t) && n >= 1 && n <= 20) scores[hh] = n; else { if (inp) inp.closest('.sg').classList.add('bad'); bad = bad || `Hole ${hh} for ${gName(r.gid)} should be a number or P.`; } });
-    const prev = cardOf(c.id, round, r.gid); const g = D.golfers[r.gid];
-    const sel = document.getElementById('sm-' + i); const markerId = sel && sel.value ? sel.value : null;
-    if (!S.isAdmin && !markerId) { bad = bad || 'Choose who marked your card.'; return; }
+    const marker = String((document.getElementById('sm-' + i) || {}).value || '').trim().slice(0, 60); const signed = !!(document.getElementById('ss-' + i) || {}).checked;
+    if (signed && !marker) { bad = bad || `Add the marker's name for ${gName(r.gid)}.`; return; }
     if (S.isAdmin && !entryOf(c.id, r.gid)) ops.push({path:`comps/${c.id}/entries/${r.gid}`, data:{compId:c.id, golferId:r.gid, paid:false, method:null, paidAt:null, createdAt:Date.now()}});
-    ops.push({path:`comps/${c.id}/cards/${round}_${r.gid}`, data:{compId:c.id, golferId:r.gid, round, markerId, scores:Object.assign({}, (prev && prev.scores) || {}, scores), hi: prev && prev.hi != null ? prev.hi : snapHcp(g), shots: prev && prev.shots != null ? prev.shots : null, approved:false, approvedBy:null, approvedAt:null, updatedAt:Date.now(), updatedBy:S.user.uid, scanned:true}});
+    const base = cardBase(c.id, round, r.gid);
+    ops.push({path:`comps/${c.id}/cards/${round}_${r.gid}`, data:Object.assign(base, {marker, signed, scores:Object.assign(base.scores, scores), updatedAt:Date.now(), updatedBy:S.user.uid, scanned:true})});
+    r.done = {signed, marker};
   });
   if (bad) { toast(bad); return; }
-  if (await batch(ops)) { closeSheet(); toast(`${ok.length} card${ok.length === 1 ? '' : 's'} added. ${ok.length === 1 ? 'The marker needs' : 'Each marker needs'} to approve before it counts.`); }
+  const unsigned = ok.filter(x => !(x.r.done && x.r.done.signed)).length;
+  if (await batch(ops)) { closeSheet(); toast(`${ok.length} card${ok.length === 1 ? '' : 's'} added.${unsigned ? ` ${unsigned === 1 ? "It doesn't" : `${unsigned} don't`} count until ticked as signed.` : ''}`); }
 }
 
 /* ---------- Actions ---------- */
@@ -1200,10 +1194,7 @@ function authErr(e){
   return 'Sign-in didn\'t work. Try again.';
 }
 function saveCard(cid, round, gid, scores){
-  const prev = cardOf(cid, round, gid); const g = D.golfers[gid];
-  const markerId = prev ? prev.markerId || null : null;
-  const keep = S.isAdmin && prev && prev.approved; // organiser corrections keep an approval
-  const data = {compId:cid, golferId:gid, round, markerId, scores, hi: prev && prev.hi != null ? prev.hi : snapHcp(g), shots: prev && prev.shots != null ? prev.shots : null, approved: !!keep, approvedBy: keep ? prev.approvedBy : null, approvedAt: keep ? prev.approvedAt : null, updatedAt:Date.now(), updatedBy:S.user.uid};
+  const data = Object.assign(cardBase(cid, round, gid), {scores, updatedAt:Date.now(), updatedBy:S.user.uid});
   const path = `comps/${cid}/cards/${round}_${gid}`;
   localSet(path, data); render();
   clearTimeout(cardTimers[path]); cardTimers[path] = setTimeout(() => put(path, data), 600);
@@ -1246,22 +1237,15 @@ const ACT = {
   hole(el){ S.activeHole = +el.dataset.h; render(); },
   key(el){
     const {cid, round, gid} = S.card || {}; const c = D.comps[cid]; if (!c || c.status === 'final' || !canEnter(cid, round, gid)) return;
-    if (!S.isAdmin && !(cardOf(cid, round, gid) || {}).markerId) { toast('Choose your marker first.'); return; }
     const holes = rcfg(c, round).holes; const h = S.activeHole; if (!holes.includes(h)) return;
     const prev = cardOf(cid, round, gid); const scores = Object.assign({}, (prev && prev.scores) || {});
     const v = el.dataset.v; if (v === 'X') delete scores[h]; else scores[h] = v === 'P' ? 'P' : +v;
     const idx = holes.indexOf(h); if (v !== 'X' && idx < holes.length - 1) S.activeHole = holes[idx+1];
     saveCard(cid, round, gid, scores);
     requestAnimationFrame(() => requestAnimationFrame(() => { const a = document.querySelector('.hole.active'); if (a) a.scrollIntoView({block:'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'}); }));
-    if (v !== 'X' && idx === holes.length - 1 && Object.keys(scores).length >= holes.length) toast(S.isAdmin ? 'Card complete' : `Card complete. ${gName((cardOf(cid, round, gid) || {}).markerId)} needs to approve it.`);
+    if (v !== 'X' && idx === holes.length - 1 && Object.keys(scores).length >= holes.length) toast(markedOK(cardOf(cid, round, gid)) ? 'Card complete' : "Card complete. Add the marker's name and tick that it's signed.");
   },
   editShots(){ openSheet({type:'shots'}); },
-  async approve(){
-    const {cid, round, gid} = S.card || {}; const prev = cardOf(cid, round, gid); if (!prev || !canApprove(prev)) return;
-    const by = prev.markerId === S.myGid ? S.myGid : 'organiser';
-    const data = Object.assign({}, prev, {approved:true, approvedBy:by, approvedAt:Date.now()}); delete data.id;
-    if (await put(`comps/${cid}/cards/${round}_${gid}`, data)) { localSet(`comps/${cid}/cards/${round}_${gid}`, data); render(); toast(`${gName(gid)}'s card approved. It counts now.`); }
-  },
   async resetShots(){ const {cid, round, gid} = S.card; const prev = cardOf(cid, round, gid); if (prev) await put(`comps/${cid}/cards/${round}_${gid}`, Object.assign({}, prev, {shots:null, id:undefined})); closeSheet(); toast('Using calculated shots'); },
   addEntry(){ openSheet({type:'addEntry'}); },
   async selfEnter(){ const c = D.comps[S.compId]; if (!c) return; const path = `comps/${c.id}/entries/${S.myGid}`; const data = {compId:c.id, golferId:S.myGid, paid:false, method:null, paidAt:null, createdAt:Date.now()};
@@ -1277,14 +1261,11 @@ const ACT = {
   remindUnpaid(){ const c = D.comps[S.sheet && S.sheet.id]; if (!c) return; const un = entriesFor(c.id).filter(e => payState(e) === 'unpaid').map(e => gName(e.golferId)).sort();
     if (!un.length) { toast('Everyone has paid or says they have.'); return; }
     shareText([`Pot of Gold · ${c.name}`, `Entry is ${euro(compFee(c))} for the month. Still to pay: ${un.join(', ')}.`, `Pay with Revolut: ${revUrl()} (Revolut app, or debit card, Apple Pay or Google Pay).`, `Then tap "I've paid" in the app: ${appUrl()}`].join('\n')); },
-  askMarker(el){ const cid = el.dataset.cid, round = Number(el.dataset.round), gid = el.dataset.gid; const c = D.comps[cid]; const card = cardOf(cid, round, gid); if (!c || !card || !card.markerId) return;
-    const sc = scoreCard(c, round, gid); const u = unitFor(sc.rc.format); const v = sc.complete ? ` (${cardValueText(sc)}${u ? ' ' + u : ''})` : '';
-    shareText(`Hi ${firstName(gName(card.markerId))}, I've put in my card for round ${round} of ${c.name}${v}. You're down as my marker. Can you check it and tap Approve in the app? ${appUrl()}`); },
   shareTable(el){ const c = D.comps[el.dataset.id || S.compId]; if (!c) return; const lb = leaderboard(c); const fin = c.status === 'final'; const u = monthUnit(c); const best = compBest(c);
     const lines = [`Pot of Gold · ${c.name}`, fin ? 'Final results' : `Table so far · best ${best} of ${compRounds(c).length} rounds count`, ''];
     lb.ranked.slice(0, 12).forEach(r => lines.push(`${r.tied ? 'T' : ''}${r.pos}. ${r.golfer.name} ${monthText(r, c)}${u ? ' ' + u : ''}${r.count < best ? ` (${r.count} card${r.count === 1 ? '' : 's'})` : ''}`));
     if (lb.ranked.length > 12) lines.push(`…and ${lb.ranked.length - 12} more`);
-    if (!lb.ranked.length) lines.push('No approved cards yet.');
+    if (!lb.ranked.length) lines.push('No signed cards yet.');
     const st = lb.stats; lines.push('', `Pot ${euro(st.pot)} · winner ${euro(st.prizes[0] || 0)} · runner-up ${euro(st.prizes[1] || 0)}`, appUrl());
     shareText(lines.join('\n')); },
   invite(){ const k = cfg(); shareText(`Join the Pot of Gold, our monthly golf competition: ${euro(k.fee)} a month, ${k.rounds} weekend rounds, your best ${k.best} count. Open ${appUrl()} on your phone, sign in with Google or your email, and tap "Ask to join". Then add it to your home screen.`); },
@@ -1299,7 +1280,7 @@ const ACT = {
     const c = D.comps[S.compId]; if (!c) return; const lb = leaderboard(c); const unpaid = entriesFor(c.id).filter(e => !e.paid).length;
     const unmarked = lb.all.reduce((a,r) => a + r.cards.filter(sc => sc.complete && !sc.marked).length, 0);
     const changes = previewHcp(c.id, 'final');
-    const bits = ['Scores lock and league points are added.']; if (changes.length) bits.push('Handicaps: ' + changes.map(x => `${gName(x.gid)} ${fmtHi(x.from)} → ${fmtHi(x.to)}`).join(', ') + '.'); if (unmarked) bits.push(`${unmarked} complete card${unmarked === 1 ? " isn't" : "s aren't"} approved by the marker and won't count.`); if (unpaid) bits.push(`${unpaid} entr${unpaid === 1 ? 'y is' : 'ies are'} unpaid.`); bits.push('You can reopen it later.');
+    const bits = ['Scores lock and league points are added.']; if (changes.length) bits.push('Handicaps: ' + changes.map(x => `${gName(x.gid)} ${fmtHi(x.from)} → ${fmtHi(x.to)}`).join(', ') + '.'); if (unmarked) bits.push(`${unmarked} complete card${unmarked === 1 ? " isn't" : "s aren't"} ticked as signed by a marker and won't count.`); if (unpaid) bits.push(`${unpaid} entr${unpaid === 1 ? 'y is' : 'ies are'} unpaid.`); bits.push('You can reopen it later.');
     askConfirm('Finalise the month?', bits.join(' '), 'Finalise', async () => { const data = Object.assign({}, c, {status:'final', finalisedAt:Date.now()}); delete data.id;
       if (await put(`comps/${c.id}`, data)) { localSet(`comps/${c.id}`, data); await syncHandicaps(); S.compTab = 'board'; S.boardSel = 'month'; toast(changes.length ? `Results finalised. ${changes.length} handicap${changes.length === 1 ? '' : 's'} updated.` : 'Results finalised'); } });
   },
@@ -1384,7 +1365,7 @@ const FORMS = {
     if (await batch(ops)) { closeSheet(); toast(prev.name ? 'Golfer updated' : `${name} added`); }
   },
   async shots(f){ const {cid, round, gid} = S.card; const prev = cardOf(cid, round, gid); const v = parseInt(new FormData(f).get('shots'), 10); const g = D.golfers[gid];
-    const data = Object.assign({compId:cid, golferId:gid, round, markerId:null, scores:{}, hi: snapHcp(g)}, prev || {}, {shots: isFinite(v) ? v : null, updatedAt:Date.now(), updatedBy:S.user.uid}); delete data.id;
+    const data = Object.assign(cardBase(cid, round, gid), {shots: isFinite(v) ? v : null, updatedAt:Date.now(), updatedBy:S.user.uid});
     if (await put(`comps/${cid}/cards/${round}_${gid}`, data)) { closeSheet(); toast('Shots updated'); } },
   async joinReq(f){ const fd = new FormData(f); const name = String(fd.get('name') || '').trim().replace(/\s+/g, ' ').slice(0, 60); if (!name) { toast('Add your name'); return; }
     const raw = String(fd.get('hi') || '').trim(); const hi = parseHi(raw); if (raw && (hi === null || hi < -10 || hi > 54)) { toast('That handicap doesn\'t look right'); return; }
@@ -1424,7 +1405,7 @@ function sampleData(){
   const st = {}; const now = new Date();
   st['config/admins'] = {emails:['organiser@example.com']};
   st['config/settings'] = {revtag:'yourname', fee:10};
-  const gs = sampleGolfers().map((g, i) => { const id = 'g' + i; st['golfers/' + id] = {name:g[0], hi:g[1], gender:g[2]}; st['members/' + g[3]] = {golferId:id, name:g[0]}; return {id, hi:g[1], gender:g[2]}; });
+  const gs = sampleGolfers().map((g, i) => { const id = 'g' + i; st['golfers/' + id] = {name:g[0], hi:g[1], gender:g[2]}; st['members/' + g[3]] = {golferId:id, name:g[0]}; return {id, name:g[0], hi:g[1], gender:g[2]}; });
   const mk = (cid, name, y, m, status, fmt) => {
     const first = iso(firstFriday(y, m)); const rounds = weekendRounds(first, 4).map(r => Object.assign(r, {opens: parseDate(r.from).getTime(), closes: parseDate(addDays(r.from, 3)).getTime()}));
     st['comps/' + cid] = {name, date:first, rounds, best:3, format:fmt, holes:range(1,18), tee:'white', fee:10, allowance:95, status};
@@ -1439,8 +1420,8 @@ function sampleData(){
           const par = p.gender === 'L' ? COURSE.parL : COURSE.parM; const scores = {};
           const upto = state === 'open' && j === 0 && i === 0 ? 11 : 18;
           range(1, upto).forEach(h => { let d = Math.round(gauss() * 0.95 + p.hi / 18 - 0.2); if (d <= -2 && rnd() > 0.25) d = -1; d = Math.min(d, 4); scores[h] = (fmt === 'stableford' && d >= 4 && rnd() < 0.4) ? 'P' : Math.max(1, par[h-1] + d); });
-          const marker = state === 'open' && i === 2 && j === 1 ? null : pair[(j + 1) % pair.length].id;
-          st[`comps/${cid}/cards/${r.n}_${p.id}`] = {compId:cid, golferId:p.id, round:r.n, markerId: pair[(j + 1) % pair.length].id, approved: !!marker, approvedBy: marker, approvedAt: marker ? Date.now() : null, scores, hi:p.hi, shots:null};
+          const signed = !(state === 'open' && i === 2 && j === 1);
+          st[`comps/${cid}/cards/${r.n}_${p.id}`] = {compId:cid, golferId:p.id, round:r.n, marker: pair[(j + 1) % pair.length].name, signed, scores, hi:p.hi, shots:null};
         });
       }
     });
@@ -1460,10 +1441,12 @@ document.addEventListener('change', ev => {
   if (t.id === 'leagueMonth') { S.leagueMonth = t.value; t.blur(); render(); return; }
   if (t.id === 'scanFile') { startScan(t.files); return; }
   if (t.id === 'pinRemember') { S.pinRemember = t.checked; if (!t.checked) { try { localStorage.removeItem('rgc-admin'); } catch (_) {} } return; }
-  if (t.id === 'markerSel' && S.card) { const {cid, round, gid} = S.card; const prev = cardOf(cid, round, gid); const g = D.golfers[gid];
-    if (!t.value && !S.isAdmin) return;
-    const data = Object.assign({compId:cid, golferId:gid, round, scores:{}, hi: snapHcp(g), shots:null}, prev || {}, {markerId: t.value || null, approved:false, approvedBy:null, approvedAt:null, updatedAt:Date.now(), updatedBy:S.user.uid}); delete data.id; delete data.groupId;
-    localSet(`comps/${cid}/cards/${round}_${gid}`, data); render(); put(`comps/${cid}/cards/${round}_${gid}`, data).then(ok => ok && toast(t.value ? `${gName(t.value)} is the marker. They approve the card once it's complete.` : 'Marker removed')); return; }
+  if ((t.id === 'markerName' || t.id === 'signedChk') && S.card) { const {cid, round, gid} = S.card;
+    const name = String(($('#markerName') || {}).value || '').trim().slice(0, 60); const chk = $('#signedChk'); let signed = !!(chk && chk.checked);
+    if (signed && !name) { if (chk) chk.checked = false; signed = false; toast("Add your marker's name first."); }
+    const base = cardBase(cid, round, gid); if (base.marker === name && base.signed === signed) return;
+    const data = Object.assign(base, {marker:name, signed, updatedAt:Date.now(), updatedBy:S.user.uid}); const path = `comps/${cid}/cards/${round}_${gid}`;
+    localSet(path, data); render(); put(path, data).then(ok => ok && t.id === 'signedChk' && toast(signed ? (markedOK(data) && scoreCard(D.comps[cid], round, gid).complete ? 'Signed. Your card counts now.' : 'Ticked as signed.') : 'Unticked. The card won\'t count until it\'s ticked as signed.')); return; }
   if (t.closest('#setupForm')) { saveSettings(); return; }
   if (t.name === 'holes' && t.closest('form[data-form=comp]')) { $('#holepick').hidden = t.value !== 'custom'; return; }
   if (t.id === 'f-rcount') { const n = Number(t.value); const box = $('#f-rounds'); const show = !!($('#f-perround') || {}).checked;

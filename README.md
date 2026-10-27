@@ -1,6 +1,6 @@
 # Pot of Gold — setup guide
 
-An installable phone app for the Pot of Gold, a monthly golf competition played at Rathsallagh. Golfers sign in, enter for the month, pay through Revolut, enter their own cards (or scan them with the camera) and approve the cards they marked. The organiser manages golfers, payments and results. Everything runs on Google's Firebase free tier.
+An installable phone app for the Pot of Gold, a monthly golf competition played at Rathsallagh. Golfers sign in, enter for the month, pay through Revolut, and enter their own signed cards (or scan them with the camera). The organiser manages golfers, payments and results. Everything runs on Google's Firebase free tier.
 
 **What's in the box**
 
@@ -15,7 +15,7 @@ An installable phone app for the Pot of Gold, a monthly golf competition played 
 - The €10 entry covers the month. Each golfer gets one card per round, and their best 3 cards count.
 - Entries are paid through Revolut only (no cash): in the Revolut app, or by debit card, Apple Pay or Google Pay on the Revolut page for anyone without Revolut. The golfer taps **I've paid**, and the organiser confirms it under **Payments**. Only confirmed payments go into the pot.
 - Golfers with fewer than 3 counting cards are ranked on what they have, below anyone with 3.
-- Each player enters (or scans) their own card and chooses their marker, another player entered that month. The card only counts once the marker taps **Approve** on their phone. If the player changes a score, the marker has to approve it again.
+- Each player gets their paper card signed by their marker (anyone, not just players in the competition), then enters or scans it in the app, adds the marker's name and ticks **My marker has signed my card**. Complete, signed cards count. Players should keep the signed card in case the organiser asks to see it.
 - Scanned cards are only accepted for golfers whose names match the golfer list and who are entered that month. Unrecognised names are turned away.
 - League points: 1st 5, 2nd 4, 3rd 3, 4th 2, everyone else 1. They are added when the organiser finalises the month. You can change them in Admin.
 - The **League** tab has a **Monthly table** (any month, with live provisional standings while it's open) and a **Year table** (the Order of Merit for the year, plus a points-by-month grid).
@@ -92,9 +92,9 @@ It then opens full-screen like any other app, and it keeps working with a weak s
 
 1. Sign in with Google, or create an email and password account. If the organiser doesn't have that email yet, fill in **Ask to join** and wait to be let in.
 2. On the month's competition, tap **Enter**, then **Pay €10** to open Revolut (the app, or a debit card, Apple Pay or Google Pay). Add the reference shown, then tap **I've paid**. The organiser confirms it.
-3. When a round is open (Friday to Sunday), open **Your card**, choose your marker and enter your scores hole by hole. Or tap **Scan my card** and photograph it, then check the numbers.
-4. Your marker sees your card under **Cards to approve** and taps **Approve**. Your card counts from then. **Remind** sends them a WhatsApp nudge.
-5. When you mark someone else's card, review it under Cards to approve and approve it.
+3. Play, and get your marker to sign your paper card.
+4. While the round is open (Friday to Sunday), open **Your card** and enter your scores hole by hole, or tap **Scan my card** and photograph it, then check the numbers.
+5. Add your marker's name and tick **My marker has signed my card**. Your card counts from then. Keep the signed card.
 
 ## What the organiser can do
 
@@ -102,8 +102,8 @@ It then opens full-screen like any other app, and it keeps working with a weak s
 - Create months and change round dates.
 - Confirm payments under **Payments**: people who say they've paid are listed first, with the reference to look for in Revolut. **Remind** sends the unpaid list to WhatsApp.
 - Share the table to the WhatsApp group from the leaderboard.
-- Enter or correct any card, change the marker, approve a card as organiser if needed, and override shots.
-- Scan any card. Only golfers on your list are accepted, and you choose each card's marker.
+- Enter or correct any card, including the marker's name and the signed tick (untick it if a card turns out not to be signed), and override shots.
+- Scan any card. Only golfers on your list are accepted. The marker's name and signature are read from the card for you to check.
 - Finalise the month, which locks scores and adds league points. Months can be reopened.
 
 ## Payments through Revolut
@@ -127,7 +127,7 @@ When a new version is put online, phones that have the app open show **A new ver
 | File | What it is |
 | --- | --- |
 | `docs/index.html` | Page layout and design |
-| `docs/app.js` | The app: competitions, scoring, markers and approvals, league, stats, admin |
+| `docs/app.js` | The app: competitions, scoring, signed cards, league, stats, admin |
 | `docs/backend-firebase.js` | Sign-in, database and Gemini scanning via Firebase |
 | `docs/backend-mock.js` | Sample mode (`?sample=1`), kept on the phone only |
 | `docs/config.js` | Your Firebase details |
