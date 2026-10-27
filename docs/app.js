@@ -144,11 +144,21 @@ function signText(card){
   if (m) return `Marker ${m} · not ticked as signed yet`;
   return isSigned(card) ? "Add your marker's name" : 'Not signed by a marker yet';
 }
+// Golfers tap "Start my round" before teeing off. The card must then be entered and ticked as signed
+// by midnight that day; after that it locks and can't be changed (the organiser can still fix or delete it).
+function msOf(t){ return typeof t === 'number' ? t : t && typeof t.toMillis === 'function' ? t.toMillis() : t && isFinite(t.seconds) ? t.seconds * 1000 : null; }
+function endOfDay(ms){ const d = new Date(ms); d.setHours(24, 0, 0, 0); return d.getTime(); }
+function roundCloses(c, n){ const r = compRounds(c).find(x => x.n === n); if (!r) return Infinity; const m = msOf(r.closes); return m != null ? m : parseDate(addDays(r.to, 1)).getTime(); }
+function cardStarted(card){ return !!(card && card.startedAt); }
+function cardLocked(card){ return !!(card && card.deadline && Date.now() >= card.deadline); }
+function whenText(ms){ const d = new Date(ms); return `${DOW3[d.getDay()]} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
+function deadlineText(card){ if (!card || !card.deadline) return ''; const d = new Date(card.deadline - 1); const today = iso(new Date()) === iso(d); return today ? 'midnight tonight' : `midnight ${DOW3[d.getDay()]}`; }
 // The fields a card keeps when it's saved (older cards are converted to the new fields).
 function cardBase(cid, round, gid){
   const prev = cardOf(cid, round, gid) || {}; const g = D.golfers[gid];
   const out = {compId:cid, golferId:gid, round, marker: markerName(prev), signed: isSigned(prev), scores: Object.assign({}, prev.scores || {}), hi: prev.hi != null ? prev.hi : snapHcp(g), shots: prev.shots != null ? prev.shots : null};
   if (prev.scanned) out.scanned = true;
+  if (prev.startedAt) { out.startedAt = prev.startedAt; out.deadline = prev.deadline; }
   return out;
 }
 function scoreCard(comp, round, gid){
@@ -184,7 +194,11 @@ function metric(comp, rows){
 const higher = c => (FORMATS[c.format] || FORMATS.stableford).better === 'high';
 function cbSegments(n){ return [Math.ceil(n/2), Math.round(n/3), Math.round(n/6), 1].filter(k => k > 0); }
 function cbKeys(comp, sc){ return [metric(comp, sc.rows)].concat(cbSegments(sc.rows.length).map(n => metric(comp, sc.rows.slice(-n)))); }
-function cardStatus(sc){ if (!sc.card || !sc.filled) return 'No card'; if (!sc.complete) return 'Thru ' + sc.filled; if (sc.nr) return 'NR'; if (!sc.marked) return 'Not signed'; return ''; }
+function cardStatus(sc){ const c = sc.card; const late = cardLocked(c);
+  if (!c || (!sc.filled && !cardStarted(c))) return 'No card';
+  if (!sc.filled) return late ? 'Missed: nothing entered by midnight' : `Started ${whenText(c.startedAt)}`;
+  if (!sc.complete) return (late ? 'Missed: ' : '') + 'Thru ' + sc.filled; if (sc.nr) return 'NR';
+  if (!sc.marked) return late ? 'Missed: not signed by midnight' : 'Not signed'; return ''; }
 function cardValueText(sc){
   const c = sc.rc;
   if (c.format === 'medal') return String(sc.runNett);
@@ -344,7 +358,12 @@ function previewHcp(cid, status){
 function canEnter(cid, round, gid){
   const c = D.comps[cid]; if (!c) return false;
   if (S.isAdmin) return true;
-  return !!(S.myGid && gid === S.myGid && c.status === 'open' && roundOpenNow(c, round) && entryOf(cid, S.myGid));
+  const card = cardOf(cid, round, gid);
+  return !!(S.myGid && gid === S.myGid && c.status === 'open' && roundOpenNow(c, round) && entryOf(cid, S.myGid) && cardStarted(card) && !cardLocked(card));
+}
+function canStart(cid, round){
+  const c = D.comps[cid]; const card = cardOf(cid, round, S.myGid);
+  return !!(c && S.myGid && c.status === 'open' && roundOpenNow(c, round) && entryOf(cid, S.myGid) && !cardStarted(card) && !(card && card.scores && Object.keys(card.scores).length));
 }
 function errText(e){
   const code = e && e.code || '';
@@ -592,12 +611,22 @@ function homeHero(c){
     h += `<p class="hero-text">Entry is ${euro(fee)} and covers all ${rs.length} round${rs.length === 1 ? '' : 's'}. Your best ${compBest(c)} card${compBest(c) === 1 ? '' : 's'} count.</p><button class="btn primary block big" data-act="selfEnter" data-cid="${cid}">Enter ${esc(c.name)}</button>${payNote(c)}`;
   } else if (me && e) {
     if (open) {
-      const sc = scoreCard(c, open.n, me); const done = sc.complete && sc.marked; const u = unitFor(sc.rc.format);
-      const val = `${cardValueText(sc)}${u ? ' ' + u : ''}`;
-      const status = !sc.filled ? 'No scores yet' : !sc.complete ? `Thru ${sc.filled} of ${sc.rows.length} holes` : sc.nr ? 'No return (picked up)' : done ? `${val} · signed by ${markerName(sc.card)}` : `${val} · not ticked as signed yet`;
-      h += `<div class="mycard ${done ? 'ok' : sc.complete ? 'warn' : ''}"><span class="label">Your round ${open.n} card</span><b>${esc(status)}</b>${done ? '<span class="okmark">Counts</span>' : ''}</div>`;
-      h += `<div class="hero-actions"><button class="btn primary big" data-act="openCard" data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}">${sc.filled ? 'Open my card' : 'Enter my card'}</button><button class="btn big" data-act="scan" data-cid="${cid}" data-round="${open.n}">${ICONS.camera}Scan my card</button></div>`;
-      if (!done) h += `<p class="hint">Get your card signed by your marker, then enter or scan it. Add the marker's name and tick that it's signed.</p>`;
+      const sc = scoreCard(c, open.n, me); const done = sc.complete && sc.marked; const u = unitFor(sc.rc.format); const card = sc.card;
+      const val = `${cardValueText(sc)}${u ? ' ' + u : ''}`; const late = cardLocked(card);
+      if (canStart(c.id, open.n)) {
+        h += `<div class="mycard"><span class="label">Your round ${open.n} card</span><b>Not started yet</b></div>`;
+        h += `<button class="btn primary block big" data-act="startRound" data-cid="${cid}" data-round="${open.n}">Start my round</button>`;
+        h += `<p class="hint">Tap this before you tee off. You get one round this weekend, and it has to be entered and ticked as signed by midnight that day, or it doesn't count.</p>`;
+      } else {
+        const status = done ? `${val} · signed by ${markerName(card)}` : late ? "Not finished by midnight, so it doesn't count" : !sc.filled ? 'No scores yet' : !sc.complete ? `Thru ${sc.filled} of ${sc.rows.length} holes` : sc.nr ? 'No return (picked up)' : `${val} · not ticked as signed yet`;
+        const timing = cardStarted(card) ? (late ? `Started ${whenText(card.startedAt)} · locked at midnight` : `Started ${whenText(card.startedAt)} · enter by ${deadlineText(card)}`) : '';
+        h += `<div class="mycard ${done ? 'ok' : late || sc.complete ? 'warn' : ''}"><span class="label">Your round ${open.n} card</span><b>${esc(status)}</b>${timing ? `<small>${esc(timing)}</small>` : ''}${done ? '<span class="okmark">Counts</span>' : ''}</div>`;
+        if (late) h += `<button class="btn block" data-act="openCard" data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}">View my card</button>`;
+        else {
+          h += `<div class="hero-actions"><button class="btn primary big" data-act="openCard" data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}">${sc.filled ? 'Open my card' : 'Enter my card'}</button><button class="btn big" data-act="scan" data-cid="${cid}" data-round="${open.n}">${ICONS.camera}Scan my card</button></div>`;
+          if (!done) h += `<p class="hint">Get your card signed by your marker, then enter or scan it by ${esc(deadlineText(card) || 'midnight')}. Add the marker's name and tick that it's signed.</p>`;
+        }
+      }
     }
     const ps = payState(e);
     if (ps === 'unpaid') h += `<div class="paynote"><span>Your ${euro(fee)} entry isn't paid yet.</span><button class="btn small primary" data-act="pay" data-id="${esc(c.id + '/' + me)}">Pay now</button></div>`;
@@ -726,7 +755,7 @@ function roundBoardHtml(c, n){
   const info = `<p class="hint" style="margin-bottom:10px">Round ${n}${r ? ' · ' + esc(roundLabel(r)) : ''} · ${esc((FORMATS[rc.format] || FORMATS.stableford).name)} · ${rc.holes.length} holes · ${esc((TEES[rc.tee] || TEES.white).name)} tees</p>`;
   const head = `<div class="lb-head"><span>Pos</span><span>Golfer</span><span>Score</span><span>Month</span></div>`;
   const rows = rb.ranked.map(sc => { const row = lb.all.find(r => r.gid === sc.gid); const counts = row && row.countedNs.has(n);
-    return `<li class="lb-row ${sc.pos === 1 ? 'first' : ''}"><span class="lb-pos">${sc.tied ? 'T' : ''}${sc.pos}</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>Marker ${esc(markerName(sc.card))}${sc.onCb ? ' · on countback' : ''}</small></button><span class="lb-score">${esc(cardValueText(sc))}<small>${unitFor(rc.format)}</small></span><span class="lb-pts"><b>${counts ? 'Counts' : 'Dropped'}</b></span></li>`; }).join('');
+    return `<li class="lb-row ${sc.pos === 1 ? 'first' : ''}"><span class="lb-pos">${sc.tied ? 'T' : ''}${sc.pos}</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>Marker ${esc(markerName(sc.card))}${cardStarted(sc.card) ? ' · started ' + esc(whenText(sc.card.startedAt)) : ''}${sc.onCb ? ' · on countback' : ''}</small></button><span class="lb-score">${esc(cardValueText(sc))}<small>${unitFor(rc.format)}</small></span><span class="lb-pts"><b>${counts ? 'Counts' : 'Dropped'}</b></span></li>`; }).join('');
   const rest = rb.rest.map(sc => `<li class="lb-row lb-rest"><span class="lb-pos">–</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>${esc(cardStatus(sc))}</small></button><span class="lb-score"></span><span class="lb-pts"></span></li>`).join('');
   return `${info}<ul class="list">${head}${rows}${rest}</ul>`;
 }
@@ -750,9 +779,12 @@ function viewCard(){
   let mk = `<div class="marker ${sc.marked ? 'ok' : sc.filled ? 'warn' : ''}"><span><b>${esc(signText(sc.card))}</b></span>`;
   if (W) mk += `<label class="field" style="margin:8px 0 0"><span>Marker's name</span><input type="text" id="markerName" maxlength="60" autocomplete="off" list="markerNames" value="${esc(markerName(sc.card))}" placeholder="Who marked the card?"></label><datalist id="markerNames">${sortedGolfers().filter(x => x.id !== gid).map(x => `<option value="${esc(x.name)}">`).join('')}</datalist>
     <label class="signchk"><input type="checkbox" id="signedChk" ${isSigned(sc.card) ? 'checked' : ''}><span>${mine ? 'My marker has signed my card' : 'The marker has signed this card'}</span></label>`;
+  if (cardStarted(sc.card)) mk += `<small class="timing">Started ${esc(whenText(sc.card.startedAt))} · ${cardLocked(sc.card) ? 'locked at midnight' : 'enter by ' + esc(deadlineText(sc.card))}</small>`;
   h += mk + '</div>';
-  if (mine && W && !sc.marked) h += `<p class="hint" style="margin:-4px 0 12px">Your card counts once all ${rc.holes.length} holes are in and it's ticked as signed. Keep the signed card in case the organiser asks to see it.</p>`;
-  else if (!W && !fin && !S.isAdmin && mine) h += `<p class="hint" style="margin:-4px 0 12px">${roundOpenNow(c, round) ? 'Enter this month to add your card.' : 'This round is closed. Cards can be entered Friday to Sunday.'}</p>`;
+  if (mine && !fin && canStart(cid, round)) h += `<div class="startbox"><p><b>Start your round before you tee off.</b> You get one round this weekend. Enter it and tick it as signed by midnight that day, or it doesn't count.</p><button class="btn primary block big" data-act="startRound" data-cid="${esc(cid)}" data-round="${round}">Start my round</button></div>`;
+  else if (mine && W && !sc.marked) h += `<p class="hint" style="margin:-4px 0 12px">Your card counts once all ${rc.holes.length} holes are in and it's ticked as signed, by ${esc(deadlineText(sc.card))}. Keep the signed card in case the organiser asks to see it.</p>`;
+  else if (!W && !fin && !S.isAdmin && mine) h += `<p class="hint" style="margin:-4px 0 12px">${cardLocked(sc.card) ? (sc.valid ? 'Locked at midnight. This card counts.' : "Locked at midnight. It wasn't entered and signed in time, so it doesn't count.") : !entryOf(cid, S.myGid) ? 'Enter this month to add your card.' : 'This round is closed. Cards can be entered Friday to Sunday.'}</p>`;
+  if (S.isAdmin && !fin && sc.card) h += `<button class="textbtn" style="margin:-6px 0 10px" data-act="delCard">Delete this card (lets ${esc(firstName(g.name))} start the round again)</button>`;
   const nettRel = sc.runNett - sc.runPar;
   const cells = [['Gross', sc.gross || '–', '']];
   if (fmt === 'stableford') cells.push(['Nett', sc.filled ? sc.runNett : '–', ''], ['Thru', sc.filled, ''], ['Points', sc.pts, '']);
@@ -909,11 +941,12 @@ function meMonthHtml(c){
   const row = leaderboard(c).all.find(r => r.gid === me);
   h += '<ul class="list">' + compRounds(c).map(r => {
     const sc = scoreCard(c, r.n, me); const st = roundState(r); const u = unitFor(sc.rc.format);
-    const sub = st === 'upcoming' ? `Opens ${roundLabel(r)}` : !sc.filled ? (st === 'open' ? 'Open now · no scores yet' : `${shortRange(r)} · not played`)
+    const late = cardLocked(sc.card) && !sc.valid;
+    const sub = st === 'upcoming' ? `Opens ${roundLabel(r)}` : late ? "Not entered and signed by midnight · doesn't count" : !sc.filled ? (st === 'open' ? (cardStarted(sc.card) ? `Started ${whenText(sc.card.startedAt)} · no scores yet` : 'Open now · tap Start my round before you tee off') : `${shortRange(r)} · not played`)
       : `${sc.complete ? (sc.nr ? 'NR' : cardValueText(sc) + (u ? ' ' + u : '')) : 'Thru ' + sc.filled} · ${sc.marked ? 'signed by ' + markerName(sc.card) : 'not ticked as signed'}`;
-    const counted = row && row.countedNs.has(r.n); const tag = counted ? '<span class="pill open">Counts</span>' : sc.complete && sc.marked && !sc.nr ? '<span class="pill final">Dropped</span>' : st === 'open' ? '<span class="pill open">Open</span>' : '';
+    const counted = row && row.countedNs.has(r.n); const tag = counted ? '<span class="pill open">Counts</span>' : sc.complete && sc.marked && !sc.nr ? '<span class="pill final">Dropped</span>' : late ? '<span class="pill final">Missed</span>' : st === 'open' ? '<span class="pill open">Open</span>' : '';
     const inner = `<span class="row-date"><b>R${r.n}</b>${esc(dParts(r.from).mon)}</span><span class="row-main"><span class="row-title">Round ${r.n}</span><span class="row-sub">${esc(sub)}</span></span>${tag}`;
-    return `<li>${sc.filled || st === 'open' ? `<button class="row" data-act="openCard" data-cid="${cid}" data-round="${r.n}" data-gid="${esc(me)}">${inner}</button>` : `<div class="row">${inner}</div>`}</li>`;
+    return `<li>${sc.filled || cardStarted(sc.card) || st === 'open' ? `<button class="row" data-act="openCard" data-cid="${cid}" data-round="${r.n}" data-gid="${esc(me)}">${inner}</button>` : `<div class="row">${inner}</div>`}</li>`;
   }).join('') + '</ul>';
   return h;
 }
@@ -1344,6 +1377,14 @@ const ACT = {
     if (v !== 'X' && idx === holes.length - 1 && Object.keys(scores).length >= holes.length) toast(markedOK(cardOf(cid, round, gid)) ? 'Card complete' : "Card complete. Add the marker's name and tick that it's signed.");
   },
   editShots(){ openSheet({type:'shots'}); },
+  startRound(el){ const cid = el.dataset.cid, round = Number(el.dataset.round); const c = D.comps[cid]; if (!c || !canStart(cid, round)) return;
+    askConfirm('Start your round?', `This is your round ${round} card for ${c.name}. You only get one this weekend. Enter your scores and tick it as signed by midnight tonight, or the round won't count.`, 'Start my round', async () => {
+      const now = Date.now(); const path = `comps/${cid}/cards/${round}_${S.myGid}`;
+      const data = Object.assign(cardBase(cid, round, S.myGid), {startedAt: now, deadline: Math.min(endOfDay(now), roundCloses(c, round)), updatedAt: now, updatedBy: S.user.uid});
+      if (await put(path, data)) { localSet(path, data); S.card = {cid, round, gid: S.myGid}; S.activeHole = null; top(); render(); toast('Round started. Good luck!'); } }); },
+  delCard(){ const {cid, round, gid} = S.card || {}; if (!S.isAdmin || !cardOf(cid, round, gid)) return;
+    askConfirm('Delete this card?', `${gName(gid)}'s round ${round} card and its scores are removed, and they can start the round again while it's open.`, 'Delete', async () => {
+      if (await drop(`comps/${cid}/cards/${round}_${gid}`)) { delete D.cards[`${cid}/${round}_${gid}`]; MEMO = {}; S.card = null; render(); toast('Card deleted'); } }, true); },
   async resetShots(){ const {cid, round, gid} = S.card; const prev = cardOf(cid, round, gid); if (prev) await put(`comps/${cid}/cards/${round}_${gid}`, Object.assign({}, prev, {shots:null, id:undefined})); closeSheet(); toast('Using calculated shots'); },
   addEntry(){ openSheet({type:'addEntry'}); },
   async selfEnter(el){ const c = D.comps[(el && el.dataset.cid) || S.compId]; if (!c) return; const path = `comps/${c.id}/entries/${S.myGid}`; const data = {compId:c.id, golferId:S.myGid, paid:false, method:null, paidAt:null, createdAt:Date.now()};
@@ -1406,6 +1447,7 @@ const ACT = {
   confirmOk(){ const f = CONFIRM_FN; closeSheet(); if (f) f(); },
   scan(el){ const c = D.comps[el.dataset.cid || S.compId]; if (!c) return; const round = Number(el.dataset.round) || currentRound(c);
     if (!S.isAdmin && !entryOf(c.id, S.myGid)) { toast('Enter this month first.'); return; }
+    if (!S.isAdmin) { const card = cardOf(c.id, round, S.myGid); if (!cardStarted(card)) { toast('Tap Start my round first. Do it before you tee off.'); return; } if (cardLocked(card)) { toast('This card locked at midnight.'); return; } }
     pickScanPhoto({cid:c.id, round}); },
   newScan(){ const ctx = S.sheet && S.sheet.ctx; if (!ctx) return; closeSheetQuiet(); pickScanPhoto(ctx); render(); },
   stopScan(){ if (SCAN_CTL) SCAN_CTL.aborted = true; closeSheet(); },
@@ -1525,7 +1567,8 @@ function sampleData(){
           const upto = state === 'open' && j === 0 && i === 0 ? 11 : 18;
           range(1, upto).forEach(h => { let d = Math.round(gauss() * 0.95 + p.hi / 18 - 0.2); if (d <= -2 && rnd() > 0.25) d = -1; d = Math.min(d, 4); scores[h] = (fmt === 'stableford' && d >= 4 && rnd() < 0.4) ? 'P' : Math.max(1, par[h-1] + d); });
           const signed = !(state === 'open' && i === 2 && j === 1);
-          st[`comps/${cid}/cards/${r.n}_${p.id}`] = {compId:cid, golferId:p.id, round:r.n, marker: pair[(j + 1) % pair.length].name, signed, scores, hi:p.hi, shots:null};
+          const startedAt = parseDate(r.from).getTime() + (9 + i) * 3600e3;
+          st[`comps/${cid}/cards/${r.n}_${p.id}`] = {compId:cid, golferId:p.id, round:r.n, marker: pair[(j + 1) % pair.length].name, signed, scores, hi:p.hi, shots:null, startedAt, deadline: endOfDay(startedAt)};
         });
       }
     });

@@ -15,7 +15,9 @@ An installable phone app for the Pot of Gold, a monthly golf competition played 
 - The €10 entry covers the month. Each golfer gets one card per round, and their best 3 cards count.
 - Entries are paid through Revolut only (no cash): in the Revolut app, or by debit card, Apple Pay or Google Pay on the Revolut page for anyone without Revolut. The golfer taps **I've paid**, and the organiser confirms it under **Payments**. Only confirmed payments go into the pot.
 - Golfers with fewer than 3 counting cards are ranked on what they have, below anyone with 3.
-- Each player gets their paper card signed by their marker (anyone, not just players in the competition), then enters or scans it in the app, adds the marker's name and ticks **My marker has signed my card**. Complete, signed cards count. Players should keep the signed card in case the organiser asks to see it.
+- Before teeing off, each player taps **Start my round** in the app. That's their one round for the weekend, and the start time is recorded.
+- After the round they get the paper card signed by their marker (anyone, not just players in the competition), then enter or scan it, add the marker's name and tick **My marker has signed my card**, all by **midnight that day**. Complete, signed cards count.
+- At midnight the card locks. If it isn't complete and ticked as signed by then, that round doesn't count and can't be re-entered. Players should keep the signed card in case the organiser asks to see it.
 - Scanned cards are only accepted for golfers whose names match the golfer list and who are entered that month. Unrecognised names are turned away.
 - League points: 1st 5, 2nd 4, 3rd 3, 4th 2, everyone else 1. They are added when the organiser finalises the month. You can change them in Admin.
 - The **Table** tab has **This month** (any month, with live provisional standings while it's open, and each round's results) and **Year** (the Order of Merit for the year, plus a points-by-month grid).
@@ -95,9 +97,10 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 
 1. Sign in with Google, or create an email and password account. If the organiser doesn't have that email yet, fill in **Ask to join** and wait to be let in.
 2. On **Home**, tap **Enter**, then **Pay €10** to open Revolut (the app, or a debit card, Apple Pay or Google Pay). Add the reference shown, then tap **I've paid**. The organiser confirms it.
-3. Play, and get your marker to sign your paper card.
-4. While the round is open (Friday to Sunday), tap **Enter my card** on **Home** and enter your scores hole by hole, or tap **Scan my card** and photograph it, then check the numbers.
-5. Add your marker's name and tick **My marker has signed my card**. Your card counts from then. Keep the signed card.
+3. Before you tee off (Friday to Sunday), tap **Start my round** on **Home**. You get one round per weekend.
+4. Play, and get your marker to sign your paper card.
+5. By midnight that day, tap **Enter my card** and enter your scores hole by hole, or tap **Scan my card** and photograph it, then check the numbers.
+6. Add your marker's name and tick **My marker has signed my card**. Your card counts from then. Keep the signed card.
 
 ## What the organiser can do
 
@@ -106,7 +109,8 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 - Create months and change round dates.
 - Confirm payments under **Payments**: people who say they've paid are listed first, with the reference to look for in Revolut. **Remind** sends the unpaid list to WhatsApp.
 - Share the table to the WhatsApp group from the leaderboard.
-- Enter or correct any card, including the marker's name and the signed tick (untick it if a card turns out not to be signed), and override shots.
+- Enter or correct any card, at any time, including the marker's name and the signed tick (untick it if a card turns out not to be signed), and override shots. Each card shows when the golfer started it.
+- Delete a card if a golfer started a round by mistake; they can then start it again while the round is open.
 - Scan any card. Only golfers on your list are accepted. The marker's name and signature are read from the card for you to check.
 - Finalise the month, which locks scores and adds league points. Months can be reopened.
 

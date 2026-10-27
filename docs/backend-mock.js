@@ -64,8 +64,17 @@ export async function init(cfg){
         if (s[3] !== `${data.round}_${data.golferId}`) throw deny();
         if (!roundOpen(comp, data.round)) throw deny('This round is not open.');
         if (typeof data.marker !== 'string' || data.marker.length > 60 || typeof data.signed !== 'boolean') throw deny();
-        if (Object.keys(data).some(k => !['compId', 'golferId', 'round', 'marker', 'signed', 'scores', 'hi', 'shots', 'updatedAt', 'updatedBy', 'scanned'].includes(k))) throw deny();
+        if (Object.keys(data).some(k => !['compId', 'golferId', 'round', 'marker', 'signed', 'scores', 'hi', 'shots', 'updatedAt', 'updatedBy', 'scanned', 'startedAt', 'deadline'].includes(k))) throw deny();
         if (cur && JSON.stringify(cur.shots == null ? null : cur.shots) !== JSON.stringify(data.shots == null ? null : data.shots)) throw deny();
+        // Started before teeing off, and locked at the deadline (midnight that day).
+        const now = Date.now();
+        if (!cur) {
+          if (typeof data.startedAt !== 'number' || Math.abs(data.startedAt - now) > 600000) throw deny('Tap Start my round first.');
+          if (typeof data.deadline !== 'number' || data.deadline <= now || data.deadline > now + 864e5) throw deny();
+        } else {
+          if (cur.startedAt !== data.startedAt || cur.deadline !== data.deadline) throw deny();
+          if (!(now < cur.deadline)) throw deny('This card locked at midnight.');
+        }
         return;
       }
     }

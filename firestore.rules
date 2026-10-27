@@ -5,8 +5,8 @@ rules_version = '2';
 // - Golfers sign in with the email the organiser saved for them (members/{email}),
 //   or ask to join (requests/{email}) and wait for an organiser to let them in.
 // - Entry fees are paid through Revolut. Golfers can say they've paid; organisers confirm it.
-// - Players enter their own card while the round is open (Fri-Sun), with their marker's name and a tick
-//   to say the marker has signed the paper card. Complete, signed cards count.
+// - Players tap Start my round before teeing off (Fri-Sun), then enter their card by midnight that day,
+//   with their marker's name and a tick to say the paper card is signed. Complete, signed cards count.
 // - New cards are played off the golfer's current competition handicap (golfers/{id}.hcp, kept up to date by the organiser's app).
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -93,22 +93,29 @@ service cloud.firestore {
       }
 
       // Cards: one per golfer per round (id = "<round>_<golferId>").
-      // The player enters their own card while the round is open, with their marker's name
-      // and a tick to say the marker has signed the paper card. Organisers can change any card.
+      // The player starts their card before teeing off (startedAt), and has until the deadline
+      // (midnight that day) to enter it, add their marker's name and tick that the paper card is signed.
+      // After the deadline the card is locked. Organisers can change or delete any card.
       match /cards/{cardId} {
         function ownCard(c) {
           let me = myGid();
           let golfer = get(/databases/$(database)/documents/golfers/$(c.golferId)).data;
-          return c.keys().hasOnly(['compId', 'golferId', 'round', 'marker', 'signed', 'scores', 'hi', 'shots', 'updatedAt', 'updatedBy', 'scanned'])
+          let now = request.time.toMillis();
+          return c.keys().hasOnly(['compId', 'golferId', 'round', 'marker', 'signed', 'scores', 'hi', 'shots', 'updatedAt', 'updatedBy', 'scanned', 'startedAt', 'deadline'])
             && c.compId == cid && c.round is int && c.scores is map
             && cardId == string(c.round) + '_' + c.golferId
             && c.golferId == me && entered(me)
             && c.marker is string && c.marker.size() <= 60 && c.signed is bool
+            && c.startedAt is int && c.deadline is int
             && isOpen() && roundOpen(c.round)
             && (resource == null
-                  ? (c.shots == null && c.hi == golfer.get('hcp', golfer.get('hi', null)))
+                  ? (c.shots == null && c.hi == golfer.get('hcp', golfer.get('hi', null))
+                     && math.abs(c.startedAt - now) < 600000
+                     && c.deadline > now && c.deadline <= now + 86400000)
                   : (resource.data.golferId == c.golferId && resource.data.round == c.round
-                     && c.shots == resource.data.get('shots', null) && c.hi == resource.data.get('hi', null)));
+                     && c.shots == resource.data.get('shots', null) && c.hi == resource.data.get('hi', null)
+                     && c.startedAt == resource.data.get('startedAt', null) && c.deadline == resource.data.get('deadline', null)
+                     && now < resource.data.deadline));
         }
         allow read: if canRead();
         allow write: if isAdmin();
