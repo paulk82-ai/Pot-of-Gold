@@ -18,7 +18,7 @@ An installable phone app for the Pot of Gold, a monthly golf competition played 
 - Each player gets their paper card signed by their marker (anyone, not just players in the competition), then enters or scans it in the app, adds the marker's name and ticks **My marker has signed my card**. Complete, signed cards count. Players should keep the signed card in case the organiser asks to see it.
 - Scanned cards are only accepted for golfers whose names match the golfer list and who are entered that month. Unrecognised names are turned away.
 - League points: 1st 5, 2nd 4, 3rd 3, 4th 2, everyone else 1. They are added when the organiser finalises the month. You can change them in Admin.
-- The **League** tab has a **Monthly table** (any month, with live provisional standings while it's open) and a **Year table** (the Order of Merit for the year, plus a points-by-month grid).
+- The **Table** tab has **This month** (any month, with live provisional standings while it's open, and each round's results) and **Year** (the Order of Merit for the year, plus a points-by-month grid).
 
 **Competition handicaps**
 
@@ -90,10 +90,13 @@ It then opens full-screen like any other app, and it keeps working with a weak s
 
 ## How golfers use it
 
+The app has four tabs for golfers: **Home** (this weekend's round, your card, your position and payment), **Table** (this month and the year), **Me** (your cards, handicap, stats and account) and **Golfers**. Organisers also get **Comps** (running months, entries and payments) and **Admin**.
+
+
 1. Sign in with Google, or create an email and password account. If the organiser doesn't have that email yet, fill in **Ask to join** and wait to be let in.
-2. On the month's competition, tap **Enter**, then **Pay €10** to open Revolut (the app, or a debit card, Apple Pay or Google Pay). Add the reference shown, then tap **I've paid**. The organiser confirms it.
+2. On **Home**, tap **Enter**, then **Pay €10** to open Revolut (the app, or a debit card, Apple Pay or Google Pay). Add the reference shown, then tap **I've paid**. The organiser confirms it.
 3. Play, and get your marker to sign your paper card.
-4. While the round is open (Friday to Sunday), open **Your card** and enter your scores hole by hole, or tap **Scan my card** and photograph it, then check the numbers.
+4. While the round is open (Friday to Sunday), tap **Enter my card** on **Home** and enter your scores hole by hole, or tap **Scan my card** and photograph it, then check the numbers.
 5. Add your marker's name and tick **My marker has signed my card**. Your card counts from then. Keep the signed card.
 
 ## What the organiser can do

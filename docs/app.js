@@ -30,7 +30,7 @@ const METHODS = {revolut:'Revolut', card:'Card (Revolut)'};
 let be = null;
 const D = { golfers:{}, comps:{}, entries:{}, cards:{}, members:{}, requests:{}, settings:null, admins:undefined, adminCode:undefined, member:undefined, myReq:undefined };
 const S = {
-  phase:'boot', user:null, myGid:null, isAdmin:false, view:'comps', compId:null, compTab:'entries', boardSel:'month',
+  phase:'boot', user:null, myGid:null, isAdmin:false, view:'home', compId:null, compTab:'entries', boardSel:'month',
   card:null, activeHole:null, playerId:null, season:String(new Date().getFullYear()), sheet:null, loaded:{},
   adminHash:null, pin:null, changing:false, golferTab:'list', hcpSynced:false, leagueTab:'month', leagueMonth:null, pinRemember:true, courseOpen:false, installEvt:null, signinMode:'signin', busy:false
 };
@@ -325,7 +325,7 @@ function riseText(gid, short){
   const n = l.toRise; const open = Object.values(D.comps).filter(c => c.status !== 'final').sort((a,b) => String(a.date||'').localeCompare(String(b.date||'')));
   if (short) return n === 1 ? `+${R.rise} next month` : `+${R.rise} in ${n} months`;
   const next = open[0] ? open[0].name : 'the next month';
-  return n === 1 ? `Goes up ${R.rise} after ${next} unless they win or finish runner-up.` : `Goes up ${R.rise} after ${n} more months without a cut.`;
+  return n === 1 ? `Goes up ${R.rise} after ${next} unless ${gid === S.myGid ? 'you win' : 'they win'} or finish runner-up.` : `Goes up ${R.rise} after ${n} more months without a cut.`;
 }
 function hcpOps(){
   const L = hcpLedger(); const ops = [];
@@ -425,8 +425,11 @@ let rq = false, deferred = false;
 function render(){ if (rq) return; rq = true; requestAnimationFrame(() => { rq = false; doRender(); }); }
 const ICONS = {
   comps:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 21V3"/><path d="M7 4h10l-2.5 3.5L17 11H7"/><path d="M4 21h9"/></svg>',
+  table:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18"/><path d="M5 20v-6h4v6"/><path d="M10 20V8h4v12"/><path d="M15 20v-4h4v4"/></svg>',
   league:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18"/><path d="M5 20v-6h4v6"/><path d="M10 20V8h4v12"/><path d="M15 20v-4h4v4"/></svg>',
-  golfers:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c1-4 4-6 7-6s6 2 7 6"/></svg>',
+  home:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-7 8 7"/><path d="M6 9.5V20h12V9.5"/><path d="M10 20v-5h4v5"/></svg>',
+  me:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c1-4 4-6 7-6s6 2 7 6"/></svg>',
+  golfers:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 19c.8-3.3 3.2-5 6-5s5.2 1.7 6 5"/><path d="M15.5 14.2c2.2.1 4 1.6 4.5 4.3"/></svg>',
   admin:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
   back:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>',
   camera:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 8h3.5l2-3h6l2 3h3.5v11h-17z"/><circle cx="12" cy="13" r="3.5"/></svg>',
@@ -445,8 +448,12 @@ function doRender(){
   if (S.updateReady) banner.innerHTML = `<div class="wrap"><span>A new version of the app is ready.</span><button data-act="reload">Update now</button></div>`;
   else if (SAMPLE) banner.innerHTML = `<div class="wrap"><span>Sample data, kept on this phone only.</span>${CONFIGURED ? '<a href="./">Open the real league</a>' : ''}</div>`;
   const inApp = S.phase === 'app';
-  const tabs = [['comps','Comps'],['league','League'],['golfers','Golfers']]; if (S.isAdmin) tabs.push(['admin','Admin']);
-  if (S.view === 'admin' && !S.isAdmin) S.view = 'comps';
+  // Golfers: Home, Table, Me, Golfers. Organisers: Home, Table, Comps (running months and payments), Golfers, Admin.
+  const tabs = S.isAdmin ? [['home','Home'],['table','Table'],['comps','Comps'],['golfers','Golfers'],['admin','Admin']]
+    : [['home','Home'],['table','Table']].concat(S.myGid ? [['me','Me']] : [], [['golfers','Golfers']]);
+  if (S.view === 'league') S.view = 'table';
+  if ((S.view === 'admin' || S.view === 'comps') && !S.isAdmin) S.view = 'home';
+  if (S.view === 'me' && !S.myGid) S.view = 'home';
   $('#tabsIn').innerHTML = inApp ? tabs.map(([k,l]) => `<button class="tab" data-act="tab" data-v="${k}" ${S.view === k ? 'aria-current="page"' : ''}>${ICONS[k]}<span>${l}</span></button>`).join('') : '';
   let html;
   if (S.phase === 'boot' || S.phase === 'checking') html = '<p class="loading">Loading…</p>';
@@ -457,14 +464,19 @@ function doRender(){
   else if (S.phase === 'nomember') html = viewNoMember();
   else if (S.phase === 'bootstrap') html = viewBootstrap();
   else if (!(S.loaded.golfers && S.loaded.comps && S.loaded.entries && S.loaded.cards)) html = '<p class="loading">Loading the league…</p>';
-  else if (S.view === 'league') html = viewLeague();
-  else if (S.view === 'golfers') html = S.playerId ? viewPlayer() : viewGolfers();
-  else if (S.view === 'admin') html = viewAdmin();
-  else html = S.card ? viewCard() : S.compId ? viewComp() : viewComps();
+  else html = S.card ? viewCard() : mainHtml();
   main.innerHTML = html;
   const kp = !!main.querySelector('.keypad');
   document.body.classList.toggle('with-keypad', kp);
   $('#tabs').hidden = kp || !inApp;
+}
+function mainHtml(){
+  if (S.view === 'table') return viewTable();
+  if (S.view === 'me') return viewMe();
+  if (S.view === 'golfers') return S.playerId ? viewPlayer() : viewGolfers();
+  if (S.view === 'admin') return viewAdmin();
+  if (S.view === 'comps') return S.compId ? viewComp() : viewComps();
+  return viewHome();
 }
 function backBtn(label, act){ return `<button class="back" data-act="${act}">${ICONS.back}${esc(label)}</button>`; }
 function chipsFor(c){
@@ -529,8 +541,7 @@ function viewComps(){
   if (!comps.length) return todoHtml([]) + emptyComps();
   const open = comps.filter(c => c.status !== 'final').sort((a,b) => String(a.date||'').localeCompare(String(b.date||'')));
   let h = todoHtml(open);
-  if (open[0]) h += featured(open[0]);
-  h += `<div class="sec-head"><h2>All competitions</h2>${S.isAdmin ? '<button class="btn small" data-act="newComp">+ New competition</button>' : ''}</div>`;
+  h += `<div class="sec-head" style="margin-top:${h ? 28 : 0}px"><h2>All competitions</h2>${S.isAdmin ? '<button class="btn small" data-act="newComp">+ New competition</button>' : ''}</div>`;
   h += '<ul class="list">' + comps.map(c => {
     const p = dParts(c.date); const fin = c.status === 'final';
     const lb = fin ? leaderboard(c) : null;
@@ -540,24 +551,78 @@ function viewComps(){
   }).join('') + '</ul>';
   return h;
 }
-function featured(c){
-  const st = compStats(c); const lb = leaderboard(c); const rs = compRounds(c);
-  const open = rs.find(r => roundState(r) === 'open'); const next = rs.find(r => roundState(r) === 'upcoming');
-  const show = open || next || rs[rs.length-1]; const p = dParts(show.from);
-  const when = open ? `Round ${open.n} open now · ${roundLabel(open)}` : next ? `Round ${next.n} opens ${roundLabel(next)}` : 'All rounds played';
-  const leader = lb.ranked[0];
-  return `<section class="feature">
-    <div class="datebox"><span class="dow">${p.dow}</span><span class="day">${p.day}</span><span class="mon">${p.mon}</span></div>
-    <div class="feat-body">
-      <span class="eyebrow">${esc(when)}</span>
-      <h2 class="feat-name">${esc(c.name)}</h2>
-      <div class="chips">${chipsFor(c)}</div>
-      <dl class="figs"><div><dt>Entries</dt><dd>${st.entries}</dd></div><div><dt>Paid</dt><dd>${st.paid}</dd></div><div><dt>Pot</dt><dd>${euro(st.pot)}</dd></div></dl>
-      ${leader ? `<p class="hint">Leading: <b>${esc(leader.golfer.name)}</b>, ${esc(monthText(leader, c))} ${monthUnit(c)}</p>` : ''}
-      ${S.myGid && payState(entryOf(c.id, S.myGid)) === 'unpaid' ? `<p class="notebox">Your ${euro(st.fee)} entry isn't paid yet. Open the competition to pay with Revolut.</p>` : ''}
-      <button class="btn primary" data-act="openComp" data-id="${esc(c.id)}">Open competition</button>
-    </div>
-  </section>`;
+/* ----- Home: this month at a glance, with the golfer's own card first ----- */
+function openComps(){ return Object.values(D.comps).filter(c => c.status !== 'final').sort((a,b) => String(a.date||'').localeCompare(String(b.date||''))); }
+// The month that's running now: one with a round open, else one with a round coming up, else the latest unfinished one.
+function currentComp(){
+  const open = openComps(); const has = st => c => compRounds(c).some(r => roundState(r) === st);
+  return open.find(has('open')) || open.find(has('upcoming')) || open[open.length - 1] || null;
+}
+function lastFinal(){ return Object.values(D.comps).filter(c => c.status === 'final').sort((a,b) => String(b.date||'').localeCompare(String(a.date||'')))[0] || null; }
+function potLine(c){ const st = compStats(c); return `Pot ${euro(st.pot)} · Winner ${euro(st.prizes[0] || 0)} · Runner-up ${euro(st.prizes[1] || 0)}`; }
+function roundInfo(c, n){ const rc = rcfg(c, n); return `${(FORMATS[rc.format] || FORMATS.stableford).short} · ${rc.holes.length} holes · ${(TEES[rc.tee] || TEES.white).name} tees`; }
+function viewHome(){
+  let h = todoHtml(openComps());
+  const c = currentComp();
+  if (!c) {
+    if (!Object.keys(D.comps).length) return h + emptyComps();
+    h += `<section class="hero"><span class="eyebrow">Pot of Gold</span><h1 class="hero-title">No month running</h1><p class="hero-sub">${S.isAdmin ? 'Create the next month and it shows here for everyone.' : 'The organiser will post the next month here.'}</p>${S.isAdmin ? '<button class="btn primary block" data-act="newComp">New competition</button>' : ''}</section>`;
+    const last = lastFinal(); return h + (last ? miniTable(last) : '');
+  }
+  h += homeHero(c) + miniTable(c);
+  const last = lastFinal(); if (last && last.id !== c.id) h += lastMonthHtml(last);
+  return h;
+}
+function homeHero(c){
+  const rs = compRounds(c); const open = rs.find(r => roundState(r) === 'open'); const next = rs.find(r => roundState(r) === 'upcoming');
+  const me = S.myGid; const e = me ? entryOf(c.id, me) : null; const fee = compFee(c); const cid = esc(c.id);
+  let h = `<section class="hero"><span class="eyebrow">${esc(c.name)}${rs.length > 1 ? ` · best ${compBest(c)} of ${rs.length} rounds` : ''}</span>`;
+  if (open) h += `<h1 class="hero-title">Round ${open.n} is open</h1><p class="hero-sub">${esc(roundLabel(open))} · ${esc(roundInfo(c, open.n))}</p>`;
+  else if (next) { const d = dParts(next.from); h += `<h1 class="hero-title">Round ${next.n} opens ${d.dow} ${d.day} ${d.mon}</h1><p class="hero-sub">Open Friday to Sunday · ${esc(roundInfo(c, next.n))}</p>`; }
+  else h += `<h1 class="hero-title">All rounds played</h1><p class="hero-sub">The results are final once the organiser finalises the month.</p>`;
+  if (me && !e) {
+    h += `<p class="hero-text">Entry is ${euro(fee)} and covers all ${rs.length} round${rs.length === 1 ? '' : 's'}. Your best ${compBest(c)} card${compBest(c) === 1 ? '' : 's'} count.</p><button class="btn primary block big" data-act="selfEnter" data-cid="${cid}">Enter ${esc(c.name)}</button>${payNote(c)}`;
+  } else if (me && e) {
+    if (open) {
+      const sc = scoreCard(c, open.n, me); const done = sc.complete && sc.marked; const u = unitFor(sc.rc.format);
+      const val = `${cardValueText(sc)}${u ? ' ' + u : ''}`;
+      const status = !sc.filled ? 'No scores yet' : !sc.complete ? `Thru ${sc.filled} of ${sc.rows.length} holes` : sc.nr ? 'No return (picked up)' : done ? `${val} · signed by ${markerName(sc.card)}` : `${val} · not ticked as signed yet`;
+      h += `<div class="mycard ${done ? 'ok' : sc.complete ? 'warn' : ''}"><span class="label">Your round ${open.n} card</span><b>${esc(status)}</b>${done ? '<span class="okmark">Counts</span>' : ''}</div>`;
+      h += `<div class="hero-actions"><button class="btn primary big" data-act="openCard" data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}">${sc.filled ? 'Open my card' : 'Enter my card'}</button><button class="btn big" data-act="scan" data-cid="${cid}" data-round="${open.n}">${ICONS.camera}Scan my card</button></div>`;
+      if (!done) h += `<p class="hint">Get your card signed by your marker, then enter or scan it. Add the marker's name and tick that it's signed.</p>`;
+    }
+    const ps = payState(e);
+    if (ps === 'unpaid') h += `<div class="paynote"><span>Your ${euro(fee)} entry isn't paid yet.</span><button class="btn small primary" data-act="pay" data-id="${esc(c.id + '/' + me)}">Pay now</button></div>`;
+    else if (ps === 'claimed') h += `<p class="hint">Payment sent. The organiser is checking it.</p>`;
+    h += positionHtml(c);
+  } else if (S.isAdmin) {
+    const st = compStats(c); h += `<dl class="figs"><div><dt>Entries</dt><dd>${st.entries}</dd></div><div><dt>Paid</dt><dd>${st.paid}</dd></div><div><dt>Pot</dt><dd>${euro(st.pot)}</dd></div></dl>`;
+  }
+  if (S.isAdmin) h += `<button class="btn block" data-act="openComp" data-id="${cid}">Manage ${esc(c.name)}</button>`;
+  return h + '</section>';
+}
+function positionHtml(c){
+  const lb = leaderboard(c); const row = lb.all.find(r => r.gid === S.myGid); if (!row) return '';
+  if (!row.count) return `<div class="mypos"><span class="label">This month</span><b class="mypos-none">No counting cards yet</b></div>`;
+  const u = monthUnit(c); const best = compBest(c); const leader = lb.ranked[0];
+  const sub = `${monthText(row, c)}${u ? ' ' + u : ''} from ${row.count} of ${best} card${best === 1 ? '' : 's'}`;
+  let lead = '';
+  if (row.pos === 1 && !row.tied) { const second = lb.ranked.find(r => r.pos === 2); lead = second ? `Ahead of ${second.golfer.name}, ${monthText(second, c)}${u ? ' ' + u : ''}` : ''; }
+  else if (leader && leader.gid !== row.gid) lead = `Leader: ${leader.golfer.name}, ${monthText(leader, c)}${u ? ' ' + u : ''}`;
+  return `<div class="mypos"><span class="label">This month</span><div class="mypos-line"><b class="mypos-place">${row.tied ? 'T' : ''}${ord(row.pos)}</b><span class="mypos-sub">${esc(sub)}</span></div><div class="rcells">${roundCells(c, row)}</div>${lead ? `<p class="hint">${esc(lead)}</p>` : ''}</div>`;
+}
+function miniTable(c){
+  const lb = leaderboard(c); const fin = c.status === 'final'; const u = monthUnit(c);
+  let rows = lb.ranked.slice(0, 5); const mine = lb.ranked.find(r => r.gid === S.myGid); if (mine && !rows.includes(mine)) rows = rows.concat(mine);
+  let h = `<div class="sec-head"><h2>${fin ? `${esc(c.name)} · final` : 'Table so far'}</h2><button class="btn small" data-act="openTable" data-id="${esc(c.id)}">Full table</button></div>`;
+  if (!rows.length) return h + `<div class="panel"><p class="hint">The table fills in as signed cards come in.</p></div><p class="potline">${esc(potLine(c))}</p>`;
+  h += `<ul class="list">${rows.map(r => `<li><button class="mini-row ${r.pos === 1 ? 'first' : ''} ${r.gid === S.myGid ? 'me' : ''}" data-act="openTable" data-id="${esc(c.id)}"><span class="lb-pos">${r.tied ? 'T' : ''}${r.pos}</span><span class="mini-name">${esc(r.golfer.name)}${r.gid === S.myGid ? ' <small>(you)</small>' : ''}</span><span class="mini-score">${esc(monthText(r, c))}${u ? `<small>${u}</small>` : ''}</span></button></li>`).join('')}</ul>`;
+  return h + `<p class="potline">${esc(potLine(c))}</p>`;
+}
+function lastMonthHtml(c){
+  const lb = leaderboard(c); const names = p => lb.ranked.filter(r => r.pos === p).map(r => r.golfer.name).join(' & ');
+  const w = names(1), ru = names(2); if (!w) return ''; const d = dParts(c.date);
+  return `<div class="sec-head"><h2>Last month</h2></div><ul class="list"><li><button class="row" data-act="openTable" data-id="${esc(c.id)}"><span class="row-date"><b>${d.day}</b>${d.mon}</span><span class="row-main"><span class="row-title">${esc(c.name)}</span><span class="row-sub">Won by ${esc(w)}${ru ? ' · runner-up ' + esc(ru) : ''}</span></span><span class="pill final">Final</span></button></li></ul>`;
 }
 // Organiser's list of things waiting on them: join requests and payments golfers say they've made.
 function todoHtml(open){
@@ -593,7 +658,6 @@ function viewComp(){
     <div class="prizes">${st.prizes.map((p,i) => `<span class="prize">${i === 0 ? 'Winner' : i === 1 ? 'Runner-up' : ord(i+1)} <b>${euro(p)}</b></span>`).join('')}${kitty > 0.004 ? `<span class="prize kitty">Kitty <b>${euro(kitty)}</b></span>` : ''}</div>`;
   if (A && st.entries) { const es = entriesFor(c.id); const chk = es.filter(e => payState(e) === 'claimed').length, un = es.filter(e => payState(e) === 'unpaid').length;
     h += `<button class="btn block paysum ${chk ? 'alert' : ''}" data-act="payments" data-id="${esc(c.id)}">Payments${chk ? ` · ${chk} to check` : ''}${un ? ` · ${un} unpaid` : ''}${!chk && !un ? ' · all paid' : ''}</button>`; }
-  if (!fin && S.myGid) h += myPanel(c);
   h += `<div class="seg" role="group" aria-label="View"><button data-act="compTab" data-v="entries" aria-pressed="${S.compTab === 'entries'}">Entries (${st.entries})</button><button data-act="compTab" data-v="board" aria-pressed="${S.compTab === 'board'}">Leaderboard</button></div>`;
   h += S.compTab === 'board' ? boardHtml(c, lb) : entriesHtml(c, lb);
   if (A) {
@@ -605,22 +669,6 @@ function viewComp(){
 function pointsKeyText(){ const k = cfg(); return k.points.map((p,i) => `${ord(i+1)} ${p}`).join(', ') + `, everyone else ${k.entryPoint}`; }
 function payNote(c){
   return `<p class="hint">Entry is ${euro(compFee(c))} for the month, paid through Revolut: in the Revolut app, or by debit card, Apple Pay or Google Pay if you don't have Revolut.</p>`;
-}
-function myPanel(c){
-  const e = entryOf(c.id, S.myGid);
-  if (!e) return `<section class="mypanel"><span class="eyebrow">You</span><h3>Enter this month</h3><p class="hint">One entry covers all ${compRounds(c).length} rounds. Your best ${compBest(c)} cards count.</p><button class="btn primary block" data-act="selfEnter">Enter ${esc(c.name)}</button>${payNote(c)}</section>`;
-  const rs = compRounds(c); const open = rs.find(r => roundState(r) === 'open'); const next = rs.find(r => roundState(r) === 'upcoming');
-  const ps = payState(e); const pid = esc(c.id + '/' + S.myGid);
-  let h = `<section class="mypanel"><div class="mp-head"><span class="eyebrow">You're entered</span>${ps === 'paid' ? `<span class="pill final">Paid · ${esc(METHODS[e.method] || 'Paid')}</span>` : `<button class="paytag ${ps}" data-act="pay" data-id="${pid}">${ps === 'claimed' ? 'Checking' : 'Unpaid'}</button>`}</div>`;
-  if (ps === 'unpaid') h += `<div class="paynote"><span>Your ${euro(compFee(c))} entry isn't paid yet.</span><button class="btn small primary" data-act="pay" data-id="${pid}">Pay now</button></div>`;
-  if (!open) { h += `<p class="hint">${next ? `Round ${next.n} opens ${esc(roundLabel(next))}. Cards can be entered Friday to Sunday.` : 'All rounds for this month have been played.'}</p></section>`; return h; }
-  const mine = scoreCard(c, open.n, S.myGid);
-  const myStatus = !mine.filled ? 'No scores yet' : !mine.complete ? `Thru ${mine.filled} · ${esc(signText(mine.card))}` : esc(signText(mine.card));
-  h += `<h3>Round ${open.n} · ${esc(roundLabel(open))}</h3>`;
-  h += `<ul class="grp"><li><span class="avatar sm">${esc(initials(gName(S.myGid)))}</span><span class="grp-main"><b>Your card</b><small>${myStatus}</small></span><button class="btn small primary" data-act="openCard" data-cid="${esc(c.id)}" data-round="${open.n}" data-gid="${esc(S.myGid)}">${mine.filled ? 'Open' : 'Enter'}</button></li></ul>`;
-  h += `<div class="mp-tools one"><button class="btn" data-act="scan" data-round="${open.n}">${ICONS.camera}Scan my card</button></div>`;
-  h += `<p class="hint">Get your card signed by your marker, then enter or scan it here. Add your marker's name and tick that it's signed, and it counts.</p></section>`;
-  return h;
 }
 function roundCells(c, row){
   const mixed = monthMode(c).mixed; const val = sc => mixed ? String(sc.pts) : cardValueText(sc);
@@ -657,7 +705,7 @@ function monthListHtml(c, lb){
   const rows = lb.ranked.map(r => {
     const tag = r.pos === 1 ? (fin ? 'Winner' : 'Leading') : r.pos === 2 ? 'Runner-up' : '';
     const note = r.count < compBest(c) ? `${r.count} of ${compBest(c)} rounds` : r.onCb ? 'on countback' : r.tied ? 'tied' : '';
-    return `<li class="lb-row ${r.pos === 1 ? 'first' : ''}"><span class="lb-pos">${r.tied ? 'T' : ''}${r.pos}</span><button class="lb-name" data-act="openPlayer" data-id="${esc(r.gid)}">${esc(r.golfer.name)}${rs.length > 1 ? `<span class="rcells">${roundCells(c, r)}</span>` : ''}${note ? `<small>${note}</small>` : ''}${tag ? `<span class="tag">${tag}</span>` : ''}</button><span class="lb-score">${esc(monthText(r, c))}<small>${monthUnit(c)}</small></span><span class="lb-pts"><b>${r.points} pt${r.points === 1 ? '' : 's'}</b>${r.prize > 0.004 ? euro(r.prize) : ''}</span></li>`;
+    return `<li class="lb-row ${r.pos === 1 ? 'first' : ''} ${r.gid === S.myGid ? 'me' : ''}"><span class="lb-pos">${r.tied ? 'T' : ''}${r.pos}</span><button class="lb-name" data-act="openPlayer" data-id="${esc(r.gid)}">${esc(r.golfer.name)}${rs.length > 1 ? `<span class="rcells">${roundCells(c, r)}</span>` : ''}${note ? `<small>${note}</small>` : ''}${tag ? `<span class="tag">${tag}</span>` : ''}</button><span class="lb-score">${esc(monthText(r, c))}<small>${monthUnit(c)}</small></span><span class="lb-pts"><b>${r.points} pt${r.points === 1 ? '' : 's'}</b>${r.prize > 0.004 ? euro(r.prize) : ''}</span></li>`;
   }).join('');
   const rest = lb.rest.map(r => `<li class="lb-row lb-rest"><span class="lb-pos">–</span><button class="lb-name" data-act="openPlayer" data-id="${esc(r.gid)}">${esc(r.golfer.name)}<small>${esc(r.status)}</small></button><span class="lb-score"></span><span class="lb-pts"><b>${r.points} pt${r.points === 1 ? '' : 's'}</b></span></li>`).join('');
   const mixNote = lb.mode && lb.mode.mixed ? `<p class="hint" style="margin-top:10px">Rounds use different formats, so this table adds up Stableford points from each golfer's best ${compBest(c)} cards.</p>` : '';
@@ -677,7 +725,7 @@ function roundBoardHtml(c, n){
 /* ----- Scorecard ----- */
 function viewCard(){
   const {cid, round, gid} = S.card; const c = D.comps[cid]; const g = D.golfers[gid];
-  if (!c || !g) { S.card = null; return viewComp(); }
+  if (!c || !g) { S.card = null; return mainHtml(); }
   const sc = scoreCard(c, round, gid); const fin = c.status === 'final';
   const mine = gid === S.myGid && !S.isAdmin;
   const W = !fin && canEnter(cid, round, gid);
@@ -685,7 +733,7 @@ function viewCard(){
   if (!rc.holes.includes(S.activeHole)) S.activeHole = rc.holes.find(h => !(sc.card && sc.card.scores && sc.card.scores[h] !== undefined)) || rc.holes[0];
   const resHead = fmt === 'stableford' ? 'Pts' : fmt === 'medal' ? 'Nett' : fmt === 'parbogey' ? '±' : 'vs Par';
   const t = g.gender === 'L' ? RED : (TEES[rc.tee] || TEES.white); const rs = compRounds(c);
-  let h = backBtn(c.name, 'closeCard');
+  let h = backBtn('Back', 'closeCard');
   if (rs.length > 1) h += `<div class="bsel rtabs">${rs.map(r => `<button data-act="cardRound" data-v="${r.n}" aria-pressed="${r.n === round}">R${r.n}<small>${esc(shortRange(r))}</small></button>`).join('')}</div>`;
   h += `<div class="card-head"><div><span class="eyebrow">${g.gender === 'L' ? "Ladies' card" : "Men's card"} · ${t.name} tees · Round ${round}</span><h1 class="card-name">${esc(g.name)}</h1><p class="hint">Hcp ${fmtHi(cardHi(sc.card, g))} · ${rc.holes.length} holes · ${esc((FORMATS[fmt]||FORMATS.stableford).name)}</p></div>
     ${S.isAdmin && !fin ? `<button class="shotsbtn" data-act="editShots"><b>${sc.total}</b><span>Shots ✎</span></button>` : `<div class="shotsbtn" style="cursor:default"><b>${sc.total}</b><span>Shots</span></div>`}</div>`;
@@ -738,22 +786,22 @@ function viewCard(){
 
 /* ----- League, golfers, stats ----- */
 function seasonSelect(){ const ys = seasonList(); return `<select id="season" aria-label="Season">${ys.map(y => `<option value="${y}" ${S.season === y ? 'selected' : ''}>${y}</option>`).join('')}<option value="all" ${S.season === 'all' ? 'selected' : ''}>All time</option></select>`; }
-function viewLeague(){
-  let h = `<div class="pagehead"><div><span class="eyebrow">Tables</span><h1>League</h1></div>${S.leagueTab === 'year' ? seasonSelect() : ''}</div>`;
-  h += `<div class="seg" role="group" aria-label="Table" style="margin-top:0"><button data-act="leagueTab" data-v="month" aria-pressed="${S.leagueTab !== 'year'}">Monthly table</button><button data-act="leagueTab" data-v="year" aria-pressed="${S.leagueTab === 'year'}">Year table</button></div>`;
+function viewTable(){
+  let h = `<div class="pagehead"><div><span class="eyebrow">Pot of Gold</span><h1>Table</h1></div>${S.leagueTab === 'year' ? seasonSelect() : ''}</div>`;
+  h += `<div class="seg" role="group" aria-label="Table" style="margin-top:0"><button data-act="leagueTab" data-v="month" aria-pressed="${S.leagueTab !== 'year'}">This month</button><button data-act="leagueTab" data-v="year" aria-pressed="${S.leagueTab === 'year'}">Year</button></div>`;
   return h + (S.leagueTab === 'year' ? yearTableHtml() : monthTableHtml());
 }
 function monthTableHtml(){
   const comps = Object.values(D.comps).sort((a,b) => String(b.date||'').localeCompare(String(a.date||'')));
   if (!comps.length) return `<section class="empty"><p class="hint">No months yet. The monthly table appears once the organiser creates a month.</p></section>`;
-  const open = comps.filter(c => c.status !== 'final').sort((a,b) => String(a.date||'').localeCompare(String(b.date||'')));
-  let c = D.comps[S.leagueMonth]; if (!c) c = open[0] || comps[0];
-  const lb = leaderboard(c); const st = lb.stats; const rs = compRounds(c); const fin = c.status === 'final';
+  let c = D.comps[S.leagueMonth]; if (!c) c = currentComp() || comps[0];
+  const lb = leaderboard(c); const rs = compRounds(c); const fin = c.status === 'final';
   const played = rs.filter(r => roundState(r) !== 'upcoming').length;
   let h = `<div class="mt-head"><label class="field" style="margin:0"><span>Month</span><select id="leagueMonth">${comps.map(x => `<option value="${esc(x.id)}" ${x.id === c.id ? 'selected' : ''}>${esc(x.name)}${x.status === 'final' ? '' : ' (open)'}</option>`).join('')}</select></label>
-    <div class="mt-meta"><span class="pill ${fin ? 'final' : 'open'}">${fin ? 'Final' : 'Provisional'}</span><span class="hint">${rs.length > 1 ? `${played} of ${rs.length} rounds started · best ${compBest(c)} count` : esc((FORMATS[rcfg(c, rs[0].n).format] || FORMATS.stableford).short)}${lb.mode.mixed ? ' · Stableford points' : ''} · pot ${euro(st.pot)}</span></div></div>`;
-  h += monthListHtml(c, lb);
-  h += `<div class="btnrow"><button class="btn" data-act="openComp" data-id="${esc(c.id)}">Open ${esc(c.name)}</button>${lb.ranked.length ? `<button class="btn" data-act="shareTable" data-id="${esc(c.id)}">${ICONS.share}Share</button>` : ''}</div>`;
+    <div class="mt-meta"><span class="pill ${fin ? 'final' : 'open'}">${fin ? 'Final' : 'Provisional'}</span><span class="hint">${rs.length > 1 ? `${played} of ${rs.length} rounds started · best ${compBest(c)} count` : esc((FORMATS[rcfg(c, rs[0].n).format] || FORMATS.stableford).short)}${lb.mode.mixed ? ' · Stableford points' : ''}</span></div>
+    <p class="potline left">${esc(potLine(c))}</p></div>`;
+  h += boardHtml(c, lb);
+  if (S.isAdmin) h += `<button class="btn block" style="margin-top:10px" data-act="openComp" data-id="${esc(c.id)}">Manage ${esc(c.name)}</button>`;
   return h;
 }
 function yearTableHtml(){
@@ -765,7 +813,7 @@ function yearTableHtml(){
     const p = D.golfers[r.id]; const tied = rows.filter(x => x.pos === r.pos).length > 1;
     return `<li><button class="lg-row ${r.pos === 1 ? 'p1' : ''}" data-act="openPlayer" data-id="${esc(r.id)}"><span class="lb-pos">${tied ? 'T' : ''}${r.pos}</span><span class="lg-name">${esc(p.name)}<small>${r.seconds ? r.seconds + '× runner-up · ' : ''}${r.won > 0.004 ? euro(r.won) + ' won' : 'Hcp ' + fmtHi(curHcp(p.id))}</small></span><span class="lg-n">${r.played}</span><span class="lg-n">${r.wins}</span><span class="lg-pts">${r.pts}</span></button></li>`;
   }).join('') + '</ul>';
-  if (open.length) h += `<p class="hint" style="margin-top:10px">${open.map(c => esc(c.name)).join(' and ')} ${open.length === 1 ? 'is' : 'are'} still open. ${open.length === 1 ? 'Its' : 'Their'} points are added when finalised; see the Monthly table for where things stand.</p>`;
+  if (open.length) h += `<p class="hint" style="margin-top:10px">${open.map(c => esc(c.name)).join(' and ')} ${open.length === 1 ? 'is' : 'are'} still open. ${open.length === 1 ? 'Its' : 'Their'} points are added when finalised; see This month for where things stand.</p>`;
   // month-by-month grid
   const months = Object.values(D.comps).filter(c => c.status === 'final' && inSeason(c, S.season)).sort((a,b) => String(a.date||'').localeCompare(String(b.date||'')));
   const pts = {}; months.forEach(c => leaderboard(c).all.forEach(r => { (pts[r.gid] || (pts[r.gid] = {}))[c.id] = r; }));
@@ -807,11 +855,14 @@ function hcpPanel(gid){
 }
 function viewPlayer(){
   const p = D.golfers[S.playerId]; if (!p) { S.playerId = null; return viewGolfers(); }
-  const st = playerStats(p.id, S.season); const lg = league(S.season).find(r => r.id === p.id);
   let h = backBtn('All golfers', 'closePlayer');
   h += `<div class="phead"><span class="avatar">${esc(initials(p.name))}</span><div><h1>${esc(p.name)}</h1><p>Handicap ${fmtHi(curHcp(p.id))} · ${p.gender === 'L' ? "Ladies'" : "Men's"} card</p></div></div>`;
   h += hcpPanel(p.id);
-  h += `<div class="pagehead" style="margin-bottom:10px"><span class="label">Stats for</span><span style="display:flex;gap:8px">${S.isAdmin ? `<button class="btn small" data-act="editGolfer" data-id="${esc(p.id)}">Edit</button>` : ''}${seasonSelect()}</span></div>`;
+  return h + playerStatsHtml(p, S.isAdmin);
+}
+function playerStatsHtml(p, canEdit){
+  const st = playerStats(p.id, S.season); const lg = league(S.season).find(r => r.id === p.id);
+  let h = `<div class="pagehead" style="margin:${p.id === S.myGid && S.view === 'me' ? 28 : 0}px 0 10px"><span class="label">Stats for</span><span style="display:flex;gap:8px">${canEdit ? `<button class="btn small" data-act="editGolfer" data-id="${esc(p.id)}">Edit</button>` : ''}${seasonSelect()}</span></div>`;
   h += `<dl class="tiles"><div class="tile"><dt>League</dt><dd>${lg ? lg.pts : 0}<small>${lg ? ord(lg.pos) : ''}</small></dd></div><div class="tile"><dt>Months</dt><dd>${lg ? lg.played : 0}</dd></div><div class="tile"><dt>Wins</dt><dd>${lg ? lg.wins : 0}</dd></div><div class="tile"><dt>Runner-up</dt><dd>${lg ? lg.seconds : 0}</dd></div><div class="tile"><dt>Cards</dt><dd>${st.cards}</dd></div><div class="tile"><dt>Winnings</dt><dd>${euro(lg ? lg.won : 0)}</dd></div></dl>`;
   if (!st.holes) return h + `<section class="empty" style="margin-top:16px"><p class="hint">No scores ${S.season === 'all' ? 'yet' : 'in ' + S.season + ' yet'}.</p></section>`;
   const C = st.counts, tot = st.holes;
@@ -824,6 +875,36 @@ function viewPlayer(){
   if (bk.length) h += `<div class="sec-head"><h2>Personal bests</h2></div><div class="panel">${bk.map(n => { const b = st.bests[n]; return `<div class="pb-row"><span class="label">${n} holes</span><span><b>${b.pts}</b><small>pts</small></span><span><b>${b.gross == null ? '–' : b.gross}</b><small>gross</small></span><span><b>${b.nett == null ? '–' : b.nett}</b><small>nett</small></span></div>`; }).join('')}</div>`;
   if (st.months.length) h += `<div class="sec-head"><h2>Months</h2></div><ul class="list">${st.months.map(m => { const c = m.comp, r = m.row, d = dParts(c.date), fin = c.status === 'final'; const place = r.pos ? (m.tied ? 'T' + r.pos : ord(r.pos)) : '–';
     return `<li><button class="row" data-act="openComp" data-id="${esc(c.id)}"><span class="row-date"><b>${d.day}</b>${d.mon}</span><span class="row-main"><span class="row-title">${esc(c.name)}</span><span class="row-sub">${r.count ? esc(monthText(r, c)) + ' ' + monthUnit(c) + ` from ${r.count} card${r.count === 1 ? '' : 's'}` : 'No counting cards'}${fin ? ` · ${r.points} league pt${r.points === 1 ? '' : 's'}` : ''}${r.prize > 0.004 ? ' · ' + euro(r.prize) : ''}</span></span><span class="pill ${fin ? 'final' : 'open'}">${fin ? place : 'Open'}</span></button></li>`; }).join('')}</ul>`;
+  return h;
+}
+
+/* ----- Me: this month's cards and payment, handicap, stats, account ----- */
+function viewMe(){
+  const p = D.golfers[S.myGid]; if (!p) return viewHome();
+  let h = `<div class="phead"><span class="avatar">${esc(initials(p.name))}</span><div><h1>${esc(p.name)}</h1><p>Handicap ${fmtHi(curHcp(p.id))} · ${p.gender === 'L' ? "Ladies'" : "Men's"} card</p></div></div>`;
+  const c = currentComp(); if (c) h += meMonthHtml(c);
+  h += hcpPanel(p.id);
+  h += playerStatsHtml(p, S.isAdmin);
+  const iosTip = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.matchMedia('(display-mode: standalone)').matches;
+  h += `<div class="sec-head"><h2>Account</h2></div><div class="panel stack"><p class="hint" style="margin:0">Signed in as <b>${esc(S.user.email)}</b></p>
+    ${S.installEvt ? '<button class="btn primary block" data-act="install">Install the app</button>' : iosTip ? '<p class="notebox" style="margin:0">To install on iPhone: tap the Share button in Safari, then <b>Add to Home Screen</b>.</p>' : ''}
+    <button class="btn block danger" data-act="signout">Sign out</button></div>`;
+  return h;
+}
+function meMonthHtml(c){
+  const me = S.myGid; const e = entryOf(c.id, me); const cid = esc(c.id); const ps = payState(e);
+  const pay = !e ? '' : ps === 'paid' ? `<span class="pill final">Paid · ${esc(METHODS[e.method] || 'Paid')}</span>` : `<button class="paytag ${ps}" data-act="pay" data-id="${esc(c.id + '/' + me)}">${ps === 'claimed' ? 'Checking' : 'Pay ' + euro(compFee(c))}</button>`;
+  let h = `<div class="sec-head" style="margin-top:4px"><h2>${esc(c.name)}</h2>${pay}</div>`;
+  if (!e) return h + `<div class="panel stack"><p class="hint" style="margin:0">You haven't entered this month yet.</p><button class="btn primary block" data-act="selfEnter" data-cid="${cid}">Enter ${esc(c.name)}</button></div>`;
+  const row = leaderboard(c).all.find(r => r.gid === me);
+  h += '<ul class="list">' + compRounds(c).map(r => {
+    const sc = scoreCard(c, r.n, me); const st = roundState(r); const u = unitFor(sc.rc.format);
+    const sub = st === 'upcoming' ? `Opens ${roundLabel(r)}` : !sc.filled ? (st === 'open' ? 'Open now · no scores yet' : `${shortRange(r)} · not played`)
+      : `${sc.complete ? (sc.nr ? 'NR' : cardValueText(sc) + (u ? ' ' + u : '')) : 'Thru ' + sc.filled} · ${sc.marked ? 'signed by ' + markerName(sc.card) : 'not ticked as signed'}`;
+    const counted = row && row.countedNs.has(r.n); const tag = counted ? '<span class="pill open">Counts</span>' : sc.complete && sc.marked && !sc.nr ? '<span class="pill final">Dropped</span>' : st === 'open' ? '<span class="pill open">Open</span>' : '';
+    const inner = `<span class="row-date"><b>R${r.n}</b>${esc(dParts(r.from).mon)}</span><span class="row-main"><span class="row-title">Round ${r.n}</span><span class="row-sub">${esc(sub)}</span></span>${tag}`;
+    return `<li>${sc.filled || st === 'open' ? `<button class="row" data-act="openCard" data-cid="${cid}" data-round="${r.n}" data-gid="${esc(me)}">${inner}</button>` : `<div class="row">${inner}</div>`}</li>`;
+  }).join('') + '</ul>';
   return h;
 }
 
@@ -937,7 +1018,7 @@ function sheetAccount(){
   return `<h3>Account</h3><p class="sub">${esc(S.myGid ? gName(S.myGid) : 'Organiser')} · ${esc(S.user.email)}</p>
     <p class="hint" style="margin-bottom:14px">${S.isAdmin ? 'You are an organiser.' : 'You are a golfer.'}${S.myGid ? ` Handicap ${fmtHi(curHcp(S.myGid))}.` : ''}</p>
     ${S.installEvt ? '<button class="btn primary block" data-act="install">Install the app</button>' : iosTip ? '<p class="notebox">To install on iPhone: tap the Share button in Safari, then <b>Add to Home Screen</b>.</p>' : ''}
-    ${S.myGid ? `<button class="btn block" style="margin-top:8px" data-act="openPlayer" data-id="${esc(S.myGid)}">My stats</button>` : ''}
+    ${S.myGid ? `<button class="btn block" style="margin-top:8px" data-act="tab" data-v="me">My cards and stats</button>` : ''}
     <button class="btn block danger" style="margin-top:8px" data-act="signout">Sign out</button>`;
 }
 function sheetComp(){
@@ -1215,7 +1296,8 @@ function shareText(text){
   window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank', 'noopener');
 }
 const ACT = {
-  tab(el){ const v = el.dataset.v; if (S.view === v) { if (v === 'comps') { S.compId = null; S.card = null; } if (v === 'golfers') S.playerId = null; } else if (v === 'comps') S.card = null; S.view = v; top(); render(); },
+  tab(el){ const v = el.dataset.v; if (S.sheet) closeSheetQuiet(); S.card = null; if (S.view === v) { if (v === 'comps') S.compId = null; if (v === 'golfers') S.playerId = null; } S.view = v; top(); render(); },
+  openTable(el){ S.card = null; S.view = 'table'; S.leagueTab = 'month'; if (el.dataset.id) S.leagueMonth = el.dataset.id; S.boardSel = 'month'; top(); render(); },
   account(){ openSheet({type:'account'}); },
   install(){ const e = S.installEvt; if (!e) return; e.prompt(); e.userChoice.finally(() => { S.installEvt = null; closeSheet(); }); },
   async google(){ try { S.busy = true; render(); await be.signInGoogle(); } catch (e) { toast(authErr(e)); } finally { S.busy = false; render(); } },
@@ -1223,17 +1305,19 @@ const ACT = {
   async forgot(){ const em = ($('#si-email') || {}).value; if (!em) { toast('Type your email first, then tap Forgot password.'); return; } try { await be.resetPassword(em.trim()); toast('Password reset email sent.'); } catch (e) { toast(authErr(e)); } },
   async verified(){ const u = await be.reloadUser(); if (u && u.emailVerified) onUser(u); else toast("Not confirmed yet. Tap the link in the email, then try again."); },
   async resendVerify(){ try { await be.sendVerify(); toast('Sent. Check your inbox and spam folder.'); } catch (e) { toast('Could not send just now. Try again shortly.'); } },
-  async signout(){ closeSheetQuiet(); await be.signOut(); S.view = 'comps'; S.compId = null; S.card = null; S.playerId = null; },
+  async signout(){ closeSheetQuiet(); await be.signOut(); S.view = 'home'; S.compId = null; S.card = null; S.playerId = null; },
   recheck(){ onUser(S.user); },
   async bootstrap(){ if (await put('config/admins', {emails:[S.user.email], createdAt:Date.now()})) toast("You're the organiser. Set your admin code in Admin."); },
   sampleSignin(el){ be.signInEmail(el.dataset.email); },
   newComp(){ openSheet({type:'comp'}); },
   editComp(){ openSheet({type:'comp', id:S.compId}); },
-  openComp(el){ const c = D.comps[el.dataset.id]; if (!c) return; S.view = 'comps'; S.compId = c.id; S.card = null; S.compTab = c.status === 'final' ? 'board' : 'entries'; S.boardSel = 'month'; top(); render(); },
+  openComp(el){ const c = D.comps[el.dataset.id]; if (!c) return; S.card = null;
+    if (!S.isAdmin) { S.view = 'table'; S.leagueTab = 'month'; S.leagueMonth = c.id; S.boardSel = 'month'; top(); render(); return; }
+    S.view = 'comps'; S.compId = c.id; S.compTab = c.status === 'final' ? 'board' : 'entries'; S.boardSel = 'month'; top(); render(); },
   closeComp(){ S.compId = null; top(); render(); },
   compTab(el){ S.compTab = el.dataset.v; render(); },
   boardSel(el){ S.compTab = 'board'; S.boardSel = el.dataset.v === 'month' ? 'month' : Number(el.dataset.v); render(); },
-  openCard(el){ const cid = el.dataset.cid, gid = el.dataset.gid; const c = D.comps[cid]; if (!c || !D.golfers[gid]) return; S.view = 'comps'; S.compId = cid; S.card = {cid, round: Number(el.dataset.round) || currentRound(c), gid}; S.activeHole = null; top(); render(); },
+  openCard(el){ const cid = el.dataset.cid, gid = el.dataset.gid; const c = D.comps[cid]; if (!c || !D.golfers[gid]) return; S.card = {cid, round: Number(el.dataset.round) || currentRound(c), gid}; S.activeHole = null; top(); render(); },
   cardRound(el){ if (!S.card) return; S.card = Object.assign({}, S.card, {round:Number(el.dataset.v)}); S.activeHole = null; render(); },
   closeCard(){ S.card = null; top(); render(); },
   hole(el){ S.activeHole = +el.dataset.h; render(); },
@@ -1250,7 +1334,7 @@ const ACT = {
   editShots(){ openSheet({type:'shots'}); },
   async resetShots(){ const {cid, round, gid} = S.card; const prev = cardOf(cid, round, gid); if (prev) await put(`comps/${cid}/cards/${round}_${gid}`, Object.assign({}, prev, {shots:null, id:undefined})); closeSheet(); toast('Using calculated shots'); },
   addEntry(){ openSheet({type:'addEntry'}); },
-  async selfEnter(){ const c = D.comps[S.compId]; if (!c) return; const path = `comps/${c.id}/entries/${S.myGid}`; const data = {compId:c.id, golferId:S.myGid, paid:false, method:null, paidAt:null, createdAt:Date.now()};
+  async selfEnter(el){ const c = D.comps[(el && el.dataset.cid) || S.compId]; if (!c) return; const path = `comps/${c.id}/entries/${S.myGid}`; const data = {compId:c.id, golferId:S.myGid, paid:false, method:null, paidAt:null, createdAt:Date.now()};
     if (await put(path, data)) { localSet(path, data); openSheet({type:'pay', id:c.id + '/' + S.myGid}); render(); toast("You're entered. Now pay your entry."); } },
   pay(el){ openSheet({type:'pay', id:el.dataset.id}); },
   setPay(el){ const e = D.entries[S.sheet && S.sheet.id]; if (e) markPaid(e.compId, e.golferId, el.dataset.m); },
@@ -1308,7 +1392,7 @@ const ACT = {
   leagueTab(el){ S.leagueTab = el.dataset.v; render(); },
   closeSheet(){ closeSheet(); },
   confirmOk(){ const f = CONFIRM_FN; closeSheet(); if (f) f(); },
-  scan(el){ const c = D.comps[S.compId]; if (!c) return; const round = Number(el.dataset.round) || currentRound(c);
+  scan(el){ const c = D.comps[el.dataset.cid || S.compId]; if (!c) return; const round = Number(el.dataset.round) || currentRound(c);
     if (!S.isAdmin && !entryOf(c.id, S.myGid)) { toast('Enter this month first.'); return; }
     pickScanPhoto({cid:c.id, round}); },
   newScan(){ const ctx = S.sheet && S.sheet.ctx; if (!ctx) return; closeSheetQuiet(); pickScanPhoto(ctx); render(); },
@@ -1441,7 +1525,7 @@ document.addEventListener('submit', ev => { const f = ev.target; const k = f.dat
 document.addEventListener('change', ev => {
   const t = ev.target;
   if (t.id === 'season') { S.season = t.value; render(); return; }
-  if (t.id === 'leagueMonth') { S.leagueMonth = t.value; t.blur(); render(); return; }
+  if (t.id === 'leagueMonth') { S.leagueMonth = t.value; S.boardSel = 'month'; t.blur(); render(); return; }
   if (t.id === 'scanFile') { startScan(t.files); return; }
   if (t.id === 'pinRemember') { S.pinRemember = t.checked; if (!t.checked) { try { localStorage.removeItem('rgc-admin'); } catch (_) {} } return; }
   if ((t.id === 'markerName' || t.id === 'signedChk') && S.card) { const {cid, round, gid} = S.card;
@@ -1476,6 +1560,6 @@ async function checkVersion(){
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - verAt > 5 * 60e3) checkVersion(); });
 setInterval(() => { if (document.visibilityState === 'visible') checkVersion(); }, 30 * 60e3);
 checkVersion();
-const hv = (location.hash || '').slice(1); if (['comps','league','golfers','admin'].includes(hv)) S.view = hv;
+const hv = (location.hash || '').slice(1); if (['home','table','me','comps','golfers','admin'].includes(hv)) S.view = hv; else if (hv === 'league') S.view = 'table';
 window.__rgc = {S, D, scoreCard, leaderboard, roundBoard, league, allocShots, checkVersion};
 boot();
