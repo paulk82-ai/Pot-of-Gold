@@ -11,7 +11,7 @@ window.RGC_CONFIG = {
     appId: "1:757571052994:web:882d87b5a6f38b4415225b"
   },
   // App Check site key (reCAPTCHA Enterprise). Needed for card scanning with Gemini.
-  recaptchaEnterpriseSiteKey: "",
+  recaptchaEnterpriseSiteKey: "6LfRXgMuAAAAABEfqGNLN-Le2u-KgrTx0vCoTn-j",
   // The Gemini model that reads scorecard photos.
   geminiModel: "gemini-3.8-flash"
 };
