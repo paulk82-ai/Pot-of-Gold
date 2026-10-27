@@ -102,6 +102,7 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 ## What the organiser can do
 
 - Add and edit golfers and their emails, let in people who ask to join, and add other organisers.
+- Play too: tap **Add me** in the To do box on Home to put yourself on the golfer list. Locking **Admin** (or tapping your initials → **See the app as a golfer**) shows you exactly what golfers see, with your own card. Tap your initials → **Back to organiser view** to return; Admin asks for the code again.
 - Create months and change round dates.
 - Confirm payments under **Payments**: people who say they've paid are listed first, with the reference to look for in Revolut. **Remind** sends the unpaid list to WhatsApp.
 - Share the table to the WhatsApp group from the leaderboard.

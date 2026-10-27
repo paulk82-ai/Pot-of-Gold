@@ -32,7 +32,7 @@ const D = { golfers:{}, comps:{}, entries:{}, cards:{}, members:{}, requests:{},
 const S = {
   phase:'boot', user:null, myGid:null, isAdmin:false, view:'home', compId:null, compTab:'entries', boardSel:'month',
   card:null, activeHole:null, playerId:null, season:String(new Date().getFullYear()), sheet:null, loaded:{},
-  adminHash:null, pin:null, changing:false, golferTab:'list', hcpSynced:false, leagueTab:'month', leagueMonth:null, pinRemember:true, courseOpen:false, installEvt:null, signinMode:'signin', busy:false
+  adminHash:null, pin:null, changing:false, golferTab:'list', hcpSynced:false, leagueTab:'month', leagueMonth:null, pinRemember:true, courseOpen:false, adminRole:false, golferMode:false, installEvt:null, signinMode:'signin', busy:false
 };
 let MEMO = {}, CONFIRM_FN = null, unsubs = [], SCAN_CTL = null, SCAN_PENDING = null;
 const cardTimers = {};
@@ -332,7 +332,7 @@ function hcpOps(){
   Object.values(D.golfers).forEach(g => { const l = L[g.id]; if (!l || l.base === null) return; if (snapHcp(g) !== l.current) ops.push({path:`golfers/${g.id}`, data: Object.assign({}, g, {hcp:l.current})}); });
   return ops;
 }
-async function syncHandicaps(){ if (!S.isAdmin) return; const ops = hcpOps(); if (ops.length) { ops.forEach(o => localSet(o.path, o.data)); await batch(ops); } }
+async function syncHandicaps(){ if (!S.adminRole) return; const ops = hcpOps(); if (ops.length) { ops.forEach(o => localSet(o.path, o.data)); await batch(ops); } }
 function previewHcp(cid, status){
   const before = hcpLedger(); const c = D.comps[cid]; const saved = c.status;
   c.status = status; MEMO = {}; const after = hcpLedger(); c.status = saved; MEMO = {};
@@ -382,7 +382,7 @@ function stopData(){ unsubs.forEach(f => { try { f(); } catch (_) {} }); unsubs 
 function onUser(u){
   stopData();
   Object.assign(D, { golfers:{}, comps:{}, entries:{}, cards:{}, members:{}, requests:{}, settings:null, admins:undefined, adminCode:undefined, member:undefined, myReq:undefined });
-  S.loaded = {}; S.user = u; S.myGid = null; S.isAdmin = false; MEMO = {};
+  S.loaded = {}; S.user = u; S.myGid = null; S.isAdmin = false; S.adminRole = false; MEMO = {};
   if (!u) { S.phase = 'signin'; render(); return; }
   if (!u.emailVerified) { S.phase = 'verify'; render(); return; }
   S.phase = 'checking'; render();
@@ -392,14 +392,22 @@ function onUser(u){
   // A request to join, if this email isn't on the golfer list yet.
   unsubs.push(be.watch('requests/' + u.email, d => { D.myReq = d ? d.data : null; if (S.phase === 'nomember') render(); }, () => { D.myReq = null; }));
 }
+// S.adminRole: really an organiser. S.isAdmin: showing the organiser's screens (off in golfer view).
+function applyMode(){ S.isAdmin = S.adminRole && !(S.golferMode && S.myGid); }
+function setMode(golfer){
+  S.golferMode = !!golfer; try { localStorage.setItem('rgc-golfer-view', golfer ? '1' : '0'); } catch (_) {}
+  applyMode(); closeSheetQuiet(); S.card = null; S.compId = null; S.playerId = null; S.view = 'home'; MEMO = {}; top(); render();
+}
 function resolveRole(){
   if (D.admins === undefined || D.member === undefined) return;
   const email = S.user.email;
-  const wasAdmin = S.isAdmin, wasGid = S.myGid;
-  S.isAdmin = !!(D.admins && (D.admins.emails || []).includes(email));
+  const wasAdmin = S.adminRole, wasGid = S.myGid;
+  S.adminRole = !!(D.admins && (D.admins.emails || []).includes(email));
   S.myGid = D.member ? D.member.golferId : null;
-  if (!S.isAdmin && !S.myGid) { S.phase = D.admins ? 'nomember' : 'bootstrap'; stopDataOnly(); render(); return; }
-  if (S.phase !== 'app' || wasAdmin !== S.isAdmin || wasGid !== S.myGid) { S.phase = 'app'; startData(); }
+  try { S.golferMode = localStorage.getItem('rgc-golfer-view') === '1'; } catch (_) {}
+  applyMode();
+  if (!S.adminRole && !S.myGid) { S.phase = D.admins ? 'nomember' : 'bootstrap'; stopDataOnly(); render(); return; }
+  if (S.phase !== 'app' || wasAdmin !== S.adminRole || wasGid !== S.myGid) { S.phase = 'app'; startData(); }
   render();
 }
 let dataUnsubs = [];
@@ -410,10 +418,10 @@ function startData(){
   const coll = (path, key) => dataUnsubs.push(be.watch(path, docs => { D[key] = {}; docs.forEach(d => D[key][d.id] = Object.assign({}, d.data, {id:d.id})); S.loaded[key] = true; MEMO = {}; render(); }, err));
   const group = (name, key) => dataUnsubs.push(be.watchGroup(name, docs => { D[key] = {}; docs.forEach(d => { const s = d.path.split('/'); const cid = s[1]; D[key][cid + '/' + d.id] = Object.assign({}, d.data, {id:d.id, compId:cid}); }); S.loaded[key] = true; MEMO = {}; render(); }, err));
   coll('golfers', 'golfers'); coll('comps', 'comps');
-  if (S.isAdmin) { const wait = setInterval(() => { if (S.loaded.golfers && S.loaded.comps && S.loaded.entries && S.loaded.cards && S.loaded.settings) { clearInterval(wait); if (!S.hcpSynced) { S.hcpSynced = true; syncHandicaps(); } } }, 800); dataUnsubs.push(() => clearInterval(wait)); }
+  if (S.adminRole) { const wait = setInterval(() => { if (S.loaded.golfers && S.loaded.comps && S.loaded.entries && S.loaded.cards && S.loaded.settings) { clearInterval(wait); if (!S.hcpSynced) { S.hcpSynced = true; syncHandicaps(); } } }, 800); dataUnsubs.push(() => clearInterval(wait)); }
   group('entries', 'entries'); group('cards', 'cards');
   dataUnsubs.push(be.watch('config/settings', d => { D.settings = d ? d.data : null; S.loaded.settings = true; MEMO = {}; render(); }, err));
-  if (S.isAdmin) {
+  if (S.adminRole) {
     dataUnsubs.push(be.watch('config/admin', d => { D.adminCode = d ? d.data : null; restoreAdmin(); S.loaded.adminCode = true; render(); }, () => { D.adminCode = null; S.loaded.adminCode = true; render(); }));
     dataUnsubs.push(be.watch('members', docs => { D.members = {}; docs.forEach(d => D.members[d.id] = d.data); render(); }, () => {}));
     dataUnsubs.push(be.watch('requests', docs => { D.requests = {}; docs.forEach(d => D.requests[d.id] = d.data); render(); }, () => {}));
@@ -628,6 +636,7 @@ function lastMonthHtml(c){
 function todoHtml(open){
   if (!S.isAdmin) return '';
   const items = []; const reqs = Object.keys(D.requests || {}).length;
+  if (!S.myGid) items.push(`<li><span class="grp-main"><b>Playing too? Add yourself as a golfer</b><small>Then you can enter your own cards and see the app as golfers do</small></span><button class="btn small primary" data-act="addMe">Add me</button></li>`);
   if (reqs) items.push(`<li><span class="grp-main"><b>${reqs} ${reqs === 1 ? 'person is' : 'people are'} asking to join</b><small>Add them to the golfer list so they can sign in</small></span><button class="btn small primary" data-act="joinList">Review</button></li>`);
   open.forEach(c => { const chk = entriesFor(c.id).filter(e => payState(e) === 'claimed').length;
     if (chk) items.push(`<li><span class="grp-main"><b>${chk} payment${chk === 1 ? '' : 's'} to check</b><small>${esc(c.name)} · check your Revolut, then confirm</small></span><button class="btn small primary" data-act="payments" data-id="${esc(c.id)}">Check</button></li>`); });
@@ -888,6 +897,7 @@ function viewMe(){
   const iosTip = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.matchMedia('(display-mode: standalone)').matches;
   h += `<div class="sec-head"><h2>Account</h2></div><div class="panel stack"><p class="hint" style="margin:0">Signed in as <b>${esc(S.user.email)}</b></p>
     ${S.installEvt ? '<button class="btn primary block" data-act="install">Install the app</button>' : iosTip ? '<p class="notebox" style="margin:0">To install on iPhone: tap the Share button in Safari, then <b>Add to Home Screen</b>.</p>' : ''}
+    ${S.adminRole && !S.isAdmin ? '<button class="btn primary block" data-act="organiserView">Back to organiser view</button>' : ''}
     <button class="btn block danger" data-act="signout">Sign out</button></div>`;
   return h;
 }
@@ -981,7 +991,7 @@ function viewAdmin(){
   </form>
   <section class="setup"><div class="sec-head"><h2>Organisers</h2></div><div class="panel"><ul class="plain">${admins.map(e => `<li><span>${esc(e)}${e === S.user.email ? ' (you)' : ''}</span>${admins.length > 1 && e !== S.user.email ? `<button class="btn small danger" data-act="removeAdmin" data-email="${esc(e)}">Remove</button>` : ''}</li>`).join('')}</ul>
     <form data-form="addAdmin" class="inline"><input type="email" id="aa-email" name="email" placeholder="organiser@email.com" required aria-label="Organiser email"><button class="btn small" type="submit">Add</button></form><p class="hint">Organisers can manage golfers, competitions, payments and every card.</p></div></section>
-  <section class="setup"><div class="sec-head"><h2>Admin code</h2></div><div class="panel row-panel"><p class="hint">Anyone opening Admin needs the code.</p><span style="display:flex;gap:8px"><button class="btn small" data-act="changePin">Change code</button><button class="btn small" data-act="lockAdmin">Lock now</button></span></div></section>
+  <section class="setup"><div class="sec-head"><h2>Admin code</h2></div><div class="panel row-panel"><p class="hint">Anyone opening Admin needs the code. Locking also switches you to the golfer view; tap your initials (top right) to come back.</p><span style="display:flex;gap:8px"><button class="btn small" data-act="changePin">Change code</button><button class="btn small" data-act="lockAdmin">Lock now</button></span></div></section>
   ${SAMPLE ? '' : `<section class="setup"><div class="panel row-panel"><p class="hint">Try every screen with made-up golfers. Nothing is saved to the league.</p><a class="btn small" href="?sample=1">Sample data</a></div></section>`}`;
 }
 
@@ -1016,9 +1026,10 @@ function askConfirm(title, text, ok, fn, danger){ CONFIRM_FN = fn; openSheet({ty
 function sheetAccount(){
   const iosTip = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.matchMedia('(display-mode: standalone)').matches;
   return `<h3>Account</h3><p class="sub">${esc(S.myGid ? gName(S.myGid) : 'Organiser')} · ${esc(S.user.email)}</p>
-    <p class="hint" style="margin-bottom:14px">${S.isAdmin ? 'You are an organiser.' : 'You are a golfer.'}${S.myGid ? ` Handicap ${fmtHi(curHcp(S.myGid))}.` : ''}</p>
+    <p class="hint" style="margin-bottom:14px">${S.isAdmin ? 'You are an organiser.' : S.adminRole ? "You're an organiser, seeing the app as a golfer." : 'You are a golfer.'}${S.myGid ? ` Handicap ${fmtHi(curHcp(S.myGid))}.` : ''}</p>
     ${S.installEvt ? '<button class="btn primary block" data-act="install">Install the app</button>' : iosTip ? '<p class="notebox">To install on iPhone: tap the Share button in Safari, then <b>Add to Home Screen</b>.</p>' : ''}
     ${S.myGid ? `<button class="btn block" style="margin-top:8px" data-act="tab" data-v="me">My cards and stats</button>` : ''}
+    ${S.adminRole ? (S.isAdmin ? `<button class="btn block" style="margin-top:8px" data-act="golferView">See the app as a golfer</button>` : `<button class="btn primary block" style="margin-top:8px" data-act="organiserView">Back to organiser view</button>`) : ''}
     <button class="btn block danger" style="margin-top:8px" data-act="signout">Sign out</button>`;
 }
 function sheetComp(){
@@ -1094,7 +1105,7 @@ function sheetPayments(){
   return h;
 }
 function sheetGolfer(){
-  const p = S.sheet.id ? D.golfers[S.sheet.id] : null; const email = p ? golferEmails()[p.id] || '' : '';
+  const p = S.sheet.id ? D.golfers[S.sheet.id] : null; const email = p ? golferEmails()[p.id] || '' : (S.sheet.prefill || '');
   return `<form data-form="golfer"><h3>${p ? 'Edit golfer' : 'Add golfer'}</h3><p class="sub">${p ? esc(p.name) : 'The email is how they sign in.'}</p>
     <label class="field"><span>Name</span><input type="text" id="gl-name" name="name" value="${esc(p ? p.name : '')}" required></label>
     <label class="field"><span>Email they sign in with</span><input type="email" id="gl-email" name="email" value="${esc(email)}" autocapitalize="off" placeholder="name@gmail.com"></label>
@@ -1280,7 +1291,8 @@ function saveCard(cid, round, gid, scores){
   const data = Object.assign(cardBase(cid, round, gid), {scores, updatedAt:Date.now(), updatedBy:S.user.uid});
   const path = `comps/${cid}/cards/${round}_${gid}`;
   localSet(path, data); render();
-  clearTimeout(cardTimers[path]); cardTimers[path] = setTimeout(() => put(path, data), 600);
+  // Save the latest version of the card when the timer fires, so a later change (marker, tick) is never overwritten.
+  clearTimeout(cardTimers[path]); cardTimers[path] = setTimeout(() => { const cur = D.cards[`${cid}/${round}_${gid}`]; put(path, Object.assign({}, cur || data)); }, 600);
 }
 async function markPaid(cid, gid, m){
   const e = entryOf(cid, gid); if (!e) return;
@@ -1410,7 +1422,12 @@ const ACT = {
   },
   changePin(){ S.changing = true; S.pin = {mode:'create', val:'', first:'', err:''}; top(); render(); },
   cancelPin(){ S.changing = false; S.pin = null; render(); },
-  lockAdmin(){ S.adminHash = null; S.pin = null; S.changing = false; try { localStorage.removeItem('rgc-admin'); } catch (_) {} top(); render(); toast('Admin locked'); },
+  lockAdmin(){ S.adminHash = null; S.pin = null; S.changing = false; try { localStorage.removeItem('rgc-admin'); } catch (_) {}
+    if (S.myGid) { setMode(true); toast("Admin locked. You're seeing the app as a golfer."); }
+    else { top(); render(); toast('Admin locked. Add yourself as a golfer on Home to see the golfer view.'); } },
+  golferView(){ if (!S.myGid) { ACT.addMe(); return; } setMode(true); toast("You're seeing the app as a golfer. Tap your initials to switch back."); },
+  organiserView(){ setMode(false); toast('Back to organiser view'); },
+  addMe(){ closeSheetQuiet(); openSheet({type:'golfer', prefill: S.user.email}); },
   resetPin(){ askConfirm('Reset admin code?', 'Organisers can reset it. The current code stops working and you choose a new one.', 'Reset', async () => { if (await drop('config/admin')) { D.adminCode = null; S.adminHash = null; S.pin = null; try { localStorage.removeItem('rgc-admin'); } catch (_) {} render(); toast('Code cleared. Set a new one.'); } }, true); },
   async removeAdmin(el){ const e = el.dataset.email; const list = ((D.admins && D.admins.emails) || []).filter(x => x !== e); if (!list.length) return; if (await put('config/admins', Object.assign({}, D.admins, {emails:list}))) toast('Organiser removed'); }
 };
@@ -1533,7 +1550,8 @@ document.addEventListener('change', ev => {
     if (signed && !name) { if (chk) chk.checked = false; signed = false; toast("Add your marker's name first."); }
     const base = cardBase(cid, round, gid); if (base.marker === name && base.signed === signed) return;
     const data = Object.assign(base, {marker:name, signed, updatedAt:Date.now(), updatedBy:S.user.uid}); const path = `comps/${cid}/cards/${round}_${gid}`;
-    localSet(path, data); render(); put(path, data).then(ok => ok && t.id === 'signedChk' && toast(signed ? (markedOK(data) && scoreCard(D.comps[cid], round, gid).complete ? 'Signed. Your card counts now.' : 'Ticked as signed.') : 'Unticked. The card won\'t count until it\'s ticked as signed.')); return; }
+    // Typing the name then tapping the tick: wait a moment before redrawing so the tap isn't lost.
+    localSet(path, data); if (t.id === 'signedChk') render(); else setTimeout(render, 350); put(path, data).then(ok => ok && t.id === 'signedChk' && toast(signed ? (markedOK(data) && scoreCard(D.comps[cid], round, gid).complete ? 'Signed. Your card counts now.' : 'Ticked as signed.') : 'Unticked. The card won\'t count until it\'s ticked as signed.')); return; }
   if (t.closest('#setupForm')) { saveSettings(); return; }
   if (t.name === 'holes' && t.closest('form[data-form=comp]')) { $('#holepick').hidden = t.value !== 'custom'; return; }
   if (t.id === 'f-rcount') { const n = Number(t.value); const box = $('#f-rounds'); const show = !!($('#f-perround') || {}).checked;
@@ -1546,7 +1564,7 @@ document.addEventListener('change', ev => {
 });
 document.addEventListener('toggle', ev => { if (ev.target.id === 'courseDetails') S.courseOpen = ev.target.open; }, true);
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && S.sheet) closeSheet(); });
-document.addEventListener('focusout', () => { if (deferred) { deferred = false; setTimeout(render, 0); } });
+document.addEventListener('focusout', () => { if (deferred) { deferred = false; setTimeout(render, 350); } });
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); S.installEvt = e; });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').catch(() => {});
 // Spot a newer version on GitHub (the version name lives in sw.js) and offer to load it,
