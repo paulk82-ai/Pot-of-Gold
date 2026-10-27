@@ -34,7 +34,7 @@ const S = {
   card:null, activeHole:null, playerId:null, season:String(new Date().getFullYear()), sheet:null, loaded:{},
   adminHash:null, pin:null, changing:false, golferTab:'list', hcpSynced:false, leagueTab:'month', leagueMonth:null, pinRemember:true, courseOpen:false, adminRole:false, golferMode:false, installEvt:null, signinMode:'signin', busy:false
 };
-let MEMO = {}, CONFIRM_FN = null, unsubs = [], SCAN_CTL = null, SCAN_PENDING = null;
+let MEMO = {}, CONFIRM_FN = null, unsubs = [], SCAN_CTL = null, SCAN_PENDING = null, PHOTO_PENDING = null;
 const cardTimers = {};
 
 /* ---------- Helpers ---------- */
@@ -624,7 +624,7 @@ function homeHero(c){
         if (late) h += `<button class="btn block" data-act="openCard" data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}">View my card</button>`;
         else {
           h += `<div class="hero-actions"><button class="btn primary big" data-act="openCard" data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}">${sc.filled ? 'Open my card' : 'Enter my card'}</button><button class="btn big" data-act="scan" data-cid="${cid}" data-round="${open.n}">${ICONS.camera}Scan my card</button></div>`;
-          if (!done) h += `<p class="hint">Get your card signed by your marker, then enter or scan it by ${esc(deadlineText(card) || 'midnight')}. Add the marker's name and tick that it's signed.</p>`;
+          if (!done) h += `<p class="hint">Get your card signed by your marker, then enter or scan it by ${esc(deadlineText(card) || 'midnight')}. Add the marker's name, tick that it's signed, and send the organiser a photo of the card.</p>`;
         }
       }
     }
@@ -782,8 +782,9 @@ function viewCard(){
   if (cardStarted(sc.card)) mk += `<small class="timing">Started ${esc(whenText(sc.card.startedAt))} · ${cardLocked(sc.card) ? 'locked at midnight' : 'enter by ' + esc(deadlineText(sc.card))}</small>`;
   h += mk + '</div>';
   if (mine && !fin && canStart(cid, round)) h += `<div class="startbox"><p><b>Start your round before you tee off.</b> You get one round this weekend. Enter it and tick it as signed by midnight that day, or it doesn't count.</p><button class="btn primary block big" data-act="startRound" data-cid="${esc(cid)}" data-round="${round}">Start my round</button></div>`;
-  else if (mine && W && !sc.marked) h += `<p class="hint" style="margin:-4px 0 12px">Your card counts once all ${rc.holes.length} holes are in and it's ticked as signed, by ${esc(deadlineText(sc.card))}. Keep the signed card in case the organiser asks to see it.</p>`;
+  else if (mine && W && !sc.marked) h += `<p class="hint" style="margin:-4px 0 12px">Your card counts once all ${rc.holes.length} holes are in and it's ticked as signed, by ${esc(deadlineText(sc.card))}. Then send the organiser a photo of your signed card.</p>`;
   else if (!W && !fin && !S.isAdmin && mine) h += `<p class="hint" style="margin:-4px 0 12px">${cardLocked(sc.card) ? (sc.valid ? 'Locked at midnight. This card counts.' : "Locked at midnight. It wasn't entered and signed in time, so it doesn't count.") : !entryOf(cid, S.myGid) ? 'Enter this month to add your card.' : 'This round is closed. Cards can be entered Friday to Sunday.'}</p>`;
+  if (gid === S.myGid && !S.isAdmin && cardStarted(sc.card)) h += `<button class="btn block" style="margin:-4px 0 14px" data-act="photoCard" data-cid="${esc(cid)}" data-round="${round}">${ICONS.camera}Send a photo of my card to the organiser</button>`;
   if (S.isAdmin && !fin && sc.card) h += `<button class="textbtn" style="margin:-6px 0 10px" data-act="delCard">Delete this card (lets ${esc(firstName(g.name))} start the round again)</button>`;
   const nettRel = sc.runNett - sc.runPar;
   const cells = [['Gross', sc.gross || '–', '']];
@@ -1031,7 +1032,7 @@ function viewAdmin(){
 /* ---------- Sheets ---------- */
 function openSheet(s){ S.sheet = s; renderSheet(); document.body.classList.add('locked'); }
 function closeSheetQuiet(){
-  if (S.sheet && S.sheet.type === 'scan') { if (SCAN_CTL) { SCAN_CTL.aborted = true; SCAN_CTL = null; } (S.sheet.thumbs || []).forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} }); }
+  if (S.sheet && (S.sheet.type === 'scan' || S.sheet.type === 'photo')) { if (SCAN_CTL) { SCAN_CTL.aborted = true; SCAN_CTL = null; } (S.sheet.thumbs || []).forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} }); }
   S.sheet = null; CONFIRM_FN = null; $('#sheet').hidden = true; document.body.classList.remove('locked');
 }
 function closeSheet(){ closeSheetQuiet(); render(); }
@@ -1048,6 +1049,7 @@ function renderSheet(){
     case 'golfer': h = sheetGolfer(); break;
     case 'shots': h = sheetShots(); break;
     case 'scan': h = sheetScan(); break;
+    case 'photo': h = sheetPhoto(); break;
     case 'account': h = sheetAccount(); break;
     case 'confirm': h = `<h3>${esc(S.sheet.title)}</h3><p class="sub">${esc(S.sheet.text)}</p><div class="confirm-actions"><button class="btn" data-act="closeSheet">Cancel</button><button class="btn ${S.sheet.danger ? 'danger-fill' : 'primary'}" data-act="confirmOk">${esc(S.sheet.ok)}</button></div>`; break;
   }
@@ -1268,6 +1270,7 @@ function sheetScan(){
   const sh = S.sheet; const c = D.comps[sh.ctx.cid]; if (!c) return null; const round = sh.ctx.round; const holes = rcfg(c, round).holes;
   let h = `<h3>Scan scorecard</h3><p class="sub">${esc(c.name)} · Round ${round}</p>`;
   if (sh.thumbs && sh.thumbs.length) h += `<div class="thumbs">${sh.thumbs.map(u => `<img src="${esc(u)}" alt="Scorecard photo">`).join('')}</div>`;
+  if (sh.phase === 'saved') return h + `<p class="notebox"><b>${esc(sh.msg)}</b></p>` + photoShareHtml();
   if (sh.phase === 'reading') return h + `<div class="reading"><span class="pulse"></span><p><b>Reading the card…</b> This usually takes 10 to 30 seconds.</p></div><button class="btn block" data-act="stopScan">Stop</button>`;
   if (sh.phase === 'error') return h + `<p class="errbox">${esc(sh.err)}</p><div class="confirm-actions"><button class="btn" data-act="closeSheet">Close</button><button class="btn primary" data-act="newScan">New photo</button></div>`;
   if (!sh.rows.length) return h + `<p class="errbox">No scores found on this photo.${sh.notes ? ' ' + esc(sh.notes) : ''}</p><div class="confirm-actions"><button class="btn" data-act="closeSheet">Close</button><button class="btn primary" data-act="newScan">New photo</button></div>`;
@@ -1288,6 +1291,17 @@ function sheetScan(){
   h += okRows.length ? `<button class="btn primary block" data-act="applyScan">Add ${okRows.length} card${okRows.length === 1 ? '' : 's'}</button><p class="hint" style="margin-top:10px">Scanned holes replace what's on each card. Blank holes are left as they are.</p>` : `<div class="confirm-actions"><button class="btn" data-act="closeSheet">Close</button><button class="btn primary" data-act="newScan">New photo</button></div>`;
   return h;
 }
+// Golfers send the organiser a photo of their signed card through the phone's share menu (WhatsApp).
+function photoShareHtml(){
+  return `<p style="margin:12px 0 10px">Now send the organiser a photo of your signed card.</p>
+    <button class="btn primary block big" data-act="sharePhoto">Send photo to the organiser</button>
+    <button class="btn block" style="margin-top:8px" data-act="closeSheet">Done</button>
+    <p class="hint" style="margin-top:10px">Opens your phone's share menu. Pick WhatsApp, then the organiser (not the group).</p>`;
+}
+function sheetPhoto(){
+  const sh = S.sheet; const c = D.comps[sh.ctx.cid]; if (!c) return null;
+  return `<h3>Card photo</h3><p class="sub">${esc(c.name)} · Round ${sh.ctx.round}</p>${sh.thumbs && sh.thumbs.length ? `<div class="thumbs">${sh.thumbs.map(u => `<img src="${esc(u)}" alt="Card photo">`).join('')}</div>` : ''}` + photoShareHtml();
+}
 async function applyScan(){
   const sh = S.sheet; const c = sh && D.comps[sh.ctx.cid]; if (!c || !sh.rows) return; const round = sh.ctx.round; const holes = rcfg(c, round).holes;
   document.querySelectorAll('#sheetIn .sg.bad').forEach(x => x.classList.remove('bad'));
@@ -1304,7 +1318,10 @@ async function applyScan(){
   });
   if (bad) { toast(bad); return; }
   const unsigned = ok.filter(x => !(x.r.done && x.r.done.signed)).length;
-  if (await batch(ops)) { closeSheet(); toast(`${ok.length} card${ok.length === 1 ? '' : 's'} added.${unsigned ? ` ${unsigned === 1 ? "It doesn't" : `${unsigned} don't`} count until ticked as signed.` : ''}`); }
+  if (await batch(ops)) {
+    const msg = `${ok.length} card${ok.length === 1 ? '' : 's'} added.${unsigned ? ` ${unsigned === 1 ? "It doesn't" : `${unsigned} don't`} count until ticked as signed.` : ''}`;
+    if (!S.isAdmin && sh.file) { sh.phase = 'saved'; sh.msg = msg; renderSheet(); } else { closeSheet(); toast(msg); }
+  }
 }
 
 /* ---------- Actions ---------- */
@@ -1377,6 +1394,12 @@ const ACT = {
     if (v !== 'X' && idx === holes.length - 1 && Object.keys(scores).length >= holes.length) toast(markedOK(cardOf(cid, round, gid)) ? 'Card complete' : "Card complete. Add the marker's name and tick that it's signed.");
   },
   editShots(){ openSheet({type:'shots'}); },
+  photoCard(el){ PHOTO_PENDING = {cid: el.dataset.cid, round: Number(el.dataset.round)}; const f = $('#photoFile'); if (!f) return; f.value = ''; f.click(); },
+  async sharePhoto(){ const sh = S.sheet; const f = sh && sh.file; if (!f) return; const c = D.comps[sh.ctx.cid];
+    const text = `Pot of Gold · ${gName(S.myGid)} · ${c ? c.name : ''} round ${sh.ctx.round} card`;
+    try { if (navigator.canShare && navigator.canShare({files:[f]})) { await navigator.share({files:[f], text}); closeSheet(); toast('Photo shared'); return; } }
+    catch (e) { if (e && e.name === 'AbortError') return; }
+    toast("This phone can't send the photo from here. Send it from your photos in WhatsApp instead."); },
   startRound(el){ const cid = el.dataset.cid, round = Number(el.dataset.round); const c = D.comps[cid]; if (!c || !canStart(cid, round)) return;
     askConfirm('Start your round?', `This is your round ${round} card for ${c.name}. You only get one this weekend. Enter your scores and tick it as signed by midnight tonight, or the round won't count.`, 'Start my round', async () => {
       const now = Date.now(); const path = `comps/${cid}/cards/${round}_${S.myGid}`;
@@ -1587,6 +1610,8 @@ document.addEventListener('change', ev => {
   if (t.id === 'season') { S.season = t.value; render(); return; }
   if (t.id === 'leagueMonth') { S.leagueMonth = t.value; S.boardSel = 'month'; t.blur(); render(); return; }
   if (t.id === 'scanFile') { startScan(t.files); return; }
+  if (t.id === 'photoFile') { const ctx = PHOTO_PENDING; PHOTO_PENDING = null; const file = t.files && t.files[0]; if (!ctx || !file) return;
+    let thumbs = []; try { thumbs = [URL.createObjectURL(file)]; } catch (_) {} openSheet({type:'photo', ctx, file, thumbs}); return; }
   if (t.id === 'pinRemember') { S.pinRemember = t.checked; if (!t.checked) { try { localStorage.removeItem('rgc-admin'); } catch (_) {} } return; }
   if ((t.id === 'markerName' || t.id === 'signedChk') && S.card) { const {cid, round, gid} = S.card;
     const name = String(($('#markerName') || {}).value || '').trim().slice(0, 60); const chk = $('#signedChk'); let signed = !!(chk && chk.checked);

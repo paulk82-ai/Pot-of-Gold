@@ -17,7 +17,8 @@ An installable phone app for the Pot of Gold, a monthly golf competition played 
 - Golfers with fewer than 3 counting cards are ranked on what they have, below anyone with 3.
 - Before teeing off, each player taps **Start my round** in the app. That's their one round for the weekend, and the start time is recorded.
 - After the round they get the paper card signed by their marker (anyone, not just players in the competition), then enter or scan it, add the marker's name and tick **My marker has signed my card**, all by **midnight that day**. Complete, signed cards count.
-- At midnight the card locks. If it isn't complete and ticked as signed by then, that round doesn't count and can't be re-entered. Players should keep the signed card in case the organiser asks to see it.
+- At midnight the card locks. If it isn't complete and ticked as signed by then, that round doesn't count and can't be re-entered.
+- Players send the organiser a photo of their signed card. After a scan the app offers **Send photo to the organiser**, and the card has a **Send a photo of my card** button for cards typed in. Both open the phone's share menu (WhatsApp).
 - Scanned cards are only accepted for golfers whose names match the golfer list and who are entered that month. Unrecognised names are turned away.
 - League points: 1st 5, 2nd 4, 3rd 3, 4th 2, everyone else 1. They are added when the organiser finalises the month. You can change them in Admin.
 - The **Table** tab has **This month** (any month, with live provisional standings while it's open, and each round's results) and **Year** (the Order of Merit for the year, plus a points-by-month grid).
@@ -100,7 +101,8 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 3. Before you tee off (Friday to Sunday), tap **Start my round** on **Home**. You get one round per weekend.
 4. Play, and get your marker to sign your paper card.
 5. By midnight that day, tap **Enter my card** and enter your scores hole by hole, or tap **Scan my card** and photograph it, then check the numbers.
-6. Add your marker's name and tick **My marker has signed my card**. Your card counts from then. Keep the signed card.
+6. Add your marker's name and tick **My marker has signed my card**. Your card counts from then.
+7. Send the organiser a photo of your signed card: tap **Send photo to the organiser** after scanning, or **Send a photo of my card** on your card, and pick the organiser in WhatsApp.
 
 ## What the organiser can do
 
