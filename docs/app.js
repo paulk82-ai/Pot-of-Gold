@@ -874,6 +874,7 @@ function viewAdmin(){
   const kittyPct = 100 - k.prize.reduce((a,b)=>a+b,0);
   const admins = (D.admins && D.admins.emails) || [];
   return `<div class="pagehead"><div><span class="eyebrow">Admin</span><h1>Settings</h1></div><button class="btn small" data-act="lockAdmin">Lock</button></div>
+  <p class="hint" style="margin:-4px 0 14px">Changes save as you go, and you'll see "Settings saved" each time. The button at the bottom saves everything again if you want to be sure.</p>
   <form id="setupForm" class="setup" onsubmit="return false">
     <section><div class="sec-head" style="margin-top:0"><h2>Entry & payments</h2></div><div class="panel">
       <div class="grid2"><label class="field"><span>Entry fee (€)</span>${n('s-fee', k.fee, 'min="0" step="1"')}</label><label class="field"><span>Revolut username</span><input type="text" id="s-rev" value="${esc(k.revtag)}" placeholder="e.g. johnsmith" autocapitalize="off" autocorrect="off"></label></div>
@@ -895,6 +896,7 @@ function viewAdmin(){
       <p class="hint">From the published Rathsallagh scorecard. Check it against the card in the clubhouse.</p>
       <div class="ctable"><table><thead><tr><th>Hole</th><th>Men's par</th><th>Men's SI</th><th>Ladies' par</th><th>Ladies' SI</th></tr></thead><tbody>${range(1,18).map(h => `<tr><td>${h}</td><td>${n('c-pm-'+h, c.parM[h-1])}</td><td>${n('c-sm-'+h, c.siM[h-1])}</td><td>${n('c-pl-'+h, c.parL[h-1])}</td><td>${n('c-sl-'+h, c.siL[h-1])}</td></tr>`).join('')}</tbody></table></div>
       ${!siOk(c.siM) || !siOk(c.siL) ? '<p class="warnline">Each stroke index from 1 to 18 should appear once per card.</p>' : ''}</details></div></section>
+    <button type="button" class="btn primary block" style="margin-top:14px" data-act="saveSettings">Save settings</button>
   </form>
   <section class="setup"><div class="sec-head"><h2>Organisers</h2></div><div class="panel"><ul class="plain">${admins.map(e => `<li><span>${esc(e)}${e === S.user.email ? ' (you)' : ''}</span>${admins.length > 1 && e !== S.user.email ? `<button class="btn small danger" data-act="removeAdmin" data-email="${esc(e)}">Remove</button>` : ''}</li>`).join('')}</ul>
     <form data-form="addAdmin" class="inline"><input type="email" id="aa-email" name="email" placeholder="organiser@email.com" required aria-label="Organiser email"><button class="btn small" type="submit">Add</button></form><p class="hint">Organisers can manage golfers, competitions, payments and every card.</p></div></section>
@@ -1275,6 +1277,7 @@ const ACT = {
     askConfirm('Decline this request?', `${r ? r.name : email} won't be added. They can ask again later.`, 'Decline', async () => { if (await drop('requests/' + email)) { delete D.requests[email]; render(); toast('Request declined'); } }, true); },
   async cancelReq(){ if (await drop('requests/' + S.user.email)) { D.myReq = null; render(); toast('Request cancelled'); } },
   reload(){ location.reload(); },
+  saveSettings(){ const a = document.activeElement; if (a && a.blur) a.blur(); saveSettings(); },
   copy(el){ const text = el.dataset.text; const fb = () => { const code = $('#refcode'); if (code) { const r = document.createRange(); r.selectNodeContents(code); const s = getSelection(); s.removeAllRanges(); s.addRange(r); } toast('Reference selected. Copy it from here.'); }; try { navigator.clipboard.writeText(text).then(() => toast('Reference copied'), fb); } catch (_) { fb(); } },
   finalise(){
     const c = D.comps[S.compId]; if (!c) return; const lb = leaderboard(c); const unpaid = entriesFor(c.id).filter(e => !e.paid).length;
@@ -1394,7 +1397,7 @@ function saveSettings(){
   const rev = String((g('s-rev') || {}).value || '').trim().replace(/^https?:\/\/(www\.)?revolut\.me\//i, '').replace(/^@/, '').replace(/\/.*$/, '');
   const data = { fee:n('s-fee', k.fee), revtag:rev, prize:[n('s-p1', k.prize[0]), n('s-p2', k.prize[1] != null ? k.prize[1] : 0)], points:[n('s-pt1', k.points[0]), n('s-pt2', k.points[1]), n('s-pt3', k.points[2]), n('s-pt4', k.points[3])], entryPoint:n('s-pte', k.entryPoint), rounds: Math.max(1, Math.min(5, n('s-rounds', k.rounds))), best: Math.max(1, Math.min(5, n('s-best', k.best))), allowance:n('s-allow', k.allowance), tee:(g('s-tee') || {}).value || k.tee, course, bands: (() => { const a = n('s-b1', k.bands[0]), b = n('s-b2', k.bands[1]); return a < b ? [a, b] : k.bands; })(), cutWin:[n('s-w1', k.cutWin[0]), n('s-w2', k.cutWin[1]), n('s-w3', k.cutWin[2])], cutRun:[n('s-r1', k.cutRun[0]), n('s-r2', k.cutRun[1]), n('s-r3', k.cutRun[2])], riseBy:n('s-rb', k.riseBy), riseAfter:Math.max(1, Math.round(n('s-ra', k.riseAfter))), hcpMax:n('s-hm', k.hcpMax) };
   D.settings = data; MEMO = {};
-  clearTimeout(settingsTimer); settingsTimer = setTimeout(async () => { if (await put('config/settings', data)) syncHandicaps(); }, 400);
+  clearTimeout(settingsTimer); settingsTimer = setTimeout(async () => { if (await put('config/settings', data)) { syncHandicaps(); toast('Settings saved'); } }, 400);
 }
 
 /* ---------- Sample data ---------- */
