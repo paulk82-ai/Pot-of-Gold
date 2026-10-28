@@ -15,6 +15,13 @@ const COURSE = {
   siL:[15,1,13,11,9,5,17,7,3, 10,4,14,12,18,8,6,16,2]
 };
 // Men's tees. Ladies always play off the red tees with the ladies' rating (RED below).
+// Yards per hole from the published Rathsallagh scorecard (red = forward tees, used by ladies and by men who play the reds).
+const YARDS = {
+  black:[571,454,400,173,396,502,176,382,416, 465,519,390,153,351,382,536,170,449],
+  blue: [506,436,367,157,373,490,177,351,370, 439,510,355,135,332,374,516,170,427],
+  white:[488,414,353,147,362,460,154,341,359, 424,478,336,124,317,329,495,160,359],
+  red:  [432,393,304,127,342,424,135,309,302, 399,402,308,115,260,309,423,126,373]
+};
 const TEES = { white:{name:'White', cr:70.3, slope:125, par:72}, blue:{name:'Blue', cr:71.7, slope:127, par:72}, black:{name:'Black', cr:74.0, slope:132, par:72}, red:{name:'Red', cr:69.9, slope:120, par:72} };
 const RED = {name:'Red', cr:72.2, slope:122, par:73};
 const FORMATS = {
@@ -843,6 +850,7 @@ function viewCard(){
   if (!rc.holes.includes(S.activeHole)) S.activeHole = rc.holes.find(h => !(sc.card && sc.card.scores && sc.card.scores[h] !== undefined)) || rc.holes[0];
   const resHead = fmt === 'stableford' ? 'Pts' : fmt === 'medal' ? 'Nett' : fmt === 'parbogey' ? '±' : 'vs Par';
   const t = g.gender === 'L' ? RED : (TEES[rc.tee] || TEES.white); const rs = compRounds(c);
+  const yds = YARDS[g.gender === 'L' ? 'red' : (TEES[rc.tee] ? rc.tee : 'white')];
   let h = backBtn('Back', 'closeCard');
   if (rs.length > 1) h += `<div class="bsel rtabs">${rs.map(r => `<button data-act="cardRound" data-v="${r.n}" aria-pressed="${r.n === round}">R${r.n}<small>${esc(shortRange(r))}</small></button>`).join('')}</div>`;
   h += `<div class="card-head"><div><span class="eyebrow">${g.gender === 'L' ? "Ladies' card" : "Men's card"} · ${t.name} tees · Round ${round}</span><h1 class="card-name">${esc(g.name)}</h1><p class="hint">Hcp ${fmtHi(cardHi(sc.card, g))} · ${rc.holes.length} holes · ${esc((FORMATS[fmt]||FORMATS.stableford).name)}</p></div>
@@ -878,14 +886,15 @@ function viewCard(){
       else res = typeof r.g === 'number' ? toPar(r.g - r.par) : '–';
     }
     const dots = r.shots > 0 ? '•'.repeat(r.shots) : r.shots < 0 ? 'gives ' + (-r.shots) : '';
-    return `<button class="hole ${W && S.activeHole === r.h ? 'active' : ''}" data-act="hole" data-h="${r.h}" ${W ? '' : 'disabled'} aria-label="Hole ${r.h}, par ${r.par}, score ${val}"><span class="h-num">${r.h}</span><span class="h-info"><span><b>Par ${r.par}</b> · SI ${r.si}</span><span class="dots">${dots}</span></span><span class="h-score"><span class="sc ${cls}">${val}</span></span><span class="h-res ${rc}">${esc(String(res))}</span></button>`;
+    return `<button class="hole ${W && S.activeHole === r.h ? 'active' : ''}" data-act="hole" data-h="${r.h}" ${W ? '' : 'disabled'} aria-label="Hole ${r.h}, par ${r.par}, score ${val}"><span class="h-num">${r.h}</span><span class="h-info"><span><b>Par ${r.par}</b> · SI ${r.si}${yds ? ` · ${yds[r.h-1]} yds` : ''}</span><span class="dots">${dots}</span></span><span class="h-score"><span class="sc ${cls}">${val}</span></span><span class="h-res ${rc}">${esc(String(res))}</span></button>`;
   };
   const sub = (label, rows) => {
+    const y = yds ? rows.reduce((a, r) => a + (yds[r.h-1] || 0), 0) : 0;
     const gr = rows.reduce((a,r) => a + (typeof r.g === 'number' ? r.g : 0), 0); let res = '';
     if (fmt === 'stableford') res = rows.reduce((a,r) => a + (r.pts || 0), 0);
     else if (fmt === 'medal') res = rows.reduce((a,r) => a + (r.nett || 0), 0);
     else if (fmt === 'parbogey') res = pbStr(rows.reduce((a,r) => a + (r.pb || 0), 0));
-    return `<div class="subtotal"><span class="st-label">${label} · Par ${rows.reduce((a,r)=>a+r.par,0)}</span><span class="st-val">${gr || '–'}</span><span class="st-val">${esc(String(res))}</span></div>`;
+    return `<div class="subtotal"><span class="st-label">${label} · Par ${rows.reduce((a,r)=>a+r.par,0)}${y ? ` · ${y} yds` : ''}</span><span class="st-val">${gr || '–'}</span><span class="st-val">${esc(String(res))}</span></div>`;
   };
   const out = sc.rows.filter(r => r.h <= 9), inn = sc.rows.filter(r => r.h > 9);
   h += `<div class="holes"><div class="hole-head"><span>Hole</span><span>Par · SI · Shots</span><span>Score</span><span>${resHead}</span></div>`;
