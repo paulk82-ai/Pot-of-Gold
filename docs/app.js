@@ -491,7 +491,7 @@ function doRender(){
   else if (S.phase === 'nomember') html = viewNoMember();
   else if (S.phase === 'bootstrap') html = viewBootstrap();
   else if (!(S.loaded.golfers && S.loaded.comps && S.loaded.entries && S.loaded.cards)) html = '<p class="loading">Loading the league…</p>';
-  else html = S.card ? viewCard() : mainHtml();
+  else html = S.card ? viewCard() : nudgeHtml() + mainHtml();
   main.innerHTML = html;
   const kp = !!main.querySelector('.keypad');
   document.body.classList.toggle('with-keypad', kp);
@@ -661,6 +661,29 @@ function lastMonthHtml(c){
   const w = names(1), ru = names(2); if (!w) return ''; const d = dParts(c.date);
   return `<div class="sec-head"><h2>Last month</h2></div><ul class="list"><li><button class="row" data-act="openTable" data-id="${esc(c.id)}"><span class="row-date"><b>${d.day}</b>${d.mon}</span><span class="row-main"><span class="row-title">${esc(c.name)}</span><span class="row-sub">Won by ${esc(w)}${ru ? ' · runner-up ' + esc(ru) : ''}</span></span><span class="pill final">Final</span></button></li></ul>`;
 }
+// What's next in a month, for reminders: the open round, or the next one coming up.
+function roundLine(c){
+  const rs = compRounds(c); const open = rs.find(r => roundState(r) === 'open'); const next = rs.find(r => roundState(r) === 'upcoming');
+  if (open) return `Round ${open.n} is open now (${roundLabel(open)}).`;
+  if (next) return `Round ${next.n} is on ${roundLabel(next)}.`;
+  return '';
+}
+function stillToPlay(c){ return compRounds(c).some(r => roundState(r) !== 'played'); }
+// Golfers who haven't entered the month yet, and entries not paid (and not marked as paid by the golfer).
+function chaseLists(c){
+  const notEntered = stillToPlay(c) ? sortedGolfers().filter(g => !entryOf(c.id, g.id)) : [];
+  const unpaid = entriesFor(c.id).filter(e => payState(e) === 'unpaid').map(e => D.golfers[e.golferId]).filter(Boolean).sort(byName);
+  return {notEntered, unpaid};
+}
+// A reminder strip at the top of every tab (Home already shows the same buttons) for a golfer who hasn't entered or paid.
+function nudgeHtml(){
+  if (!S.myGid || S.view === 'home') return '';
+  const c = currentComp(); if (!c) return '';
+  const e = entryOf(c.id, S.myGid); const line = roundLine(c);
+  if (!e && stillToPlay(c)) return `<div class="nudge"><span><b>You haven't entered ${esc(c.name)} yet</b>${line ? `<small>${esc(line)}</small>` : ''}</span><button class="btn small primary" data-act="selfEnter" data-cid="${esc(c.id)}">Enter now</button></div>`;
+  if (e && payState(e) === 'unpaid') return `<div class="nudge"><span><b>Your ${euro(compFee(c))} entry isn't paid yet</b><small>Pay through Revolut, then tap I've paid.</small></span><button class="btn small primary" data-act="pay" data-id="${esc(c.id + '/' + S.myGid)}">Pay now</button></div>`;
+  return '';
+}
 // Organiser's list of things waiting on them: join requests and payments golfers say they've made.
 function todoHtml(open){
   if (!S.isAdmin) return '';
@@ -669,6 +692,9 @@ function todoHtml(open){
   if (reqs) items.push(`<li><span class="grp-main"><b>${reqs} ${reqs === 1 ? 'person is' : 'people are'} asking to join</b><small>Add them to the golfer list so they can sign in</small></span><button class="btn small primary" data-act="joinList">Review</button></li>`);
   open.forEach(c => { const chk = entriesFor(c.id).filter(e => payState(e) === 'claimed').length;
     if (chk) items.push(`<li><span class="grp-main"><b>${chk} payment${chk === 1 ? '' : 's'} to check</b><small>${esc(c.name)} · check your Revolut, then confirm</small></span><button class="btn small primary" data-act="payments" data-id="${esc(c.id)}">Check</button></li>`); });
+  const cur = currentComp();
+  if (cur) { const L = chaseLists(cur); const a = L.notEntered.length, b = L.unpaid.length;
+    if (a || b) items.push(`<li><span class="grp-main"><b>${[a ? `${a} not entered` : '', b ? `${b} not paid` : ''].filter(Boolean).join(' · ')}</b><small>${esc(cur.name)} · send the group a reminder</small></span><button class="btn small primary" data-act="remindAll" data-id="${esc(cur.id)}">${ICONS.share}Remind</button></li>`); }
   return items.length ? `<section class="todo"><span class="eyebrow">To do</span><ul class="grp">${items.join('')}</ul></section>` : '';
 }
 function emptyComps(){
@@ -1423,6 +1449,12 @@ const ACT = {
   remindUnpaid(){ const c = D.comps[S.sheet && S.sheet.id]; if (!c) return; const un = entriesFor(c.id).filter(e => payState(e) === 'unpaid').map(e => gName(e.golferId)).sort();
     if (!un.length) { toast('Everyone has paid or says they have.'); return; }
     shareText([`Pot of Gold · ${c.name}`, `Entry is ${euro(compFee(c))} for the month. Still to pay: ${un.join(', ')}.`, `Pay with Revolut: ${revUrl()} (Revolut app, or debit card, Apple Pay or Google Pay).`, `Then tap "I've paid" in the app: ${appUrl()}`].join('\n')); },
+  remindAll(el){ const c = D.comps[el.dataset.id]; if (!c) return; const L = chaseLists(c); const names = list => list.map(g => g.name).join(', ');
+    if (!L.notEntered.length && !L.unpaid.length) { toast("Everyone's entered and paid."); return; }
+    const lines = [`⛳ Pot of Gold · ${c.name}`]; const rl = roundLine(c); if (rl) lines.push(rl); lines.push('');
+    if (L.notEntered.length) lines.push(`Not entered yet: ${names(L.notEntered)}. Open the app and tap Enter ${c.name}, then pay ${euro(compFee(c))}.`);
+    if (L.unpaid.length) lines.push(`Entered but not paid: ${names(L.unpaid)}. Tap Pay now on Home, pay through Revolut, then tap I've paid.`);
+    lines.push('', appUrl()); shareText(lines.join('\n')); },
   shareTable(el){ const c = D.comps[el.dataset.id || S.compId]; if (!c) return; const lb = leaderboard(c); const fin = c.status === 'final'; const u = monthUnit(c); const best = compBest(c);
     const lines = [`Pot of Gold · ${c.name}`, fin ? 'Final results' : `Table so far · best ${best} of ${compRounds(c).length} rounds count`, ''];
     lb.ranked.slice(0, 12).forEach(r => lines.push(`${r.tied ? 'T' : ''}${r.pos}. ${r.golfer.name} ${monthText(r, c)}${u ? ' ' + u : ''}${r.count < best ? ` (${r.count} card${r.count === 1 ? '' : 's'})` : ''}`));

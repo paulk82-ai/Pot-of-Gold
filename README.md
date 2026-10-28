@@ -111,6 +111,7 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 - Create months and change round dates.
 - Confirm payments under **Payments**: people who say they've paid are listed first, with the reference to look for in Revolut. **Remind** sends the unpaid list to WhatsApp.
 - Share the table to the WhatsApp group from the leaderboard.
+- Chase entries and payments: the **To do** box on Home shows how many golfers haven't entered or paid this month. **Remind** opens WhatsApp with a ready message naming them and saying what to do. Golfers who haven't entered or paid also see a reminder strip at the top of the app.
 - Enter or correct any card, at any time, including the marker's name and the signed tick (untick it if a card turns out not to be signed), and override shots. Each card shows when the golfer started it.
 - Delete a card if a golfer started a round by mistake; they can then start it again while the round is open.
 - Scan any card. Only golfers on your list are accepted. The marker's name and signature are read from the card for you to check.
