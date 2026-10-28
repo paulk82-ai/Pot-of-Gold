@@ -109,6 +109,7 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 - Add and edit golfers and their emails, let in people who ask to join, and add other organisers.
 - Play too: tap **Add me** in the To do box on Home to put yourself on the golfer list. Locking **Admin** (or tapping your initials → **See the app as a golfer**) shows you exactly what golfers see, with your own card. Tap your initials → **Back to organiser view** to return; Admin asks for the code again.
 - Create months and change round dates.
+- Try things out with a **Test month** (tick it on New competition): rounds can start on any day, and it never counts towards the league or handicaps. Delete it when you're done.
 - Confirm payments under **Payments**: people who say they've paid are listed first, with the reference to look for in Revolut. **Remind** sends the unpaid list to WhatsApp.
 - Share the table to the WhatsApp group from the leaderboard.
 - Get phone notifications: in **Admin → Phone notifications**, tap **Turn on**, install the free **ntfy** app, subscribe to the channel name shown and tap **Send test**. You'll be notified when someone asks to join, enters, says they've paid, starts a round or finishes a card. Keep the channel name private; your own actions don't send notifications.

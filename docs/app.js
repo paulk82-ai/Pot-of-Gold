@@ -271,7 +271,7 @@ function compStats(c){
 function league(season){
   const key = 'lg:' + season; if (MEMO[key]) return MEMO[key];
   const rows = {};
-  Object.values(D.comps).filter(c => c.status === 'final' && inSeason(c, season)).forEach(comp => {
+  Object.values(D.comps).filter(c => c.status === 'final' && !c.test && inSeason(c, season)).forEach(comp => {
     leaderboard(comp).all.forEach(r => {
       const o = rows[r.gid] || (rows[r.gid] = {id:r.gid, pts:0, played:0, wins:0, seconds:0, top4:0, won:0});
       o.played++; o.pts += r.points; o.won += r.prize || 0;
@@ -325,7 +325,7 @@ function hcpLedger(){
   if (MEMO.ledger) return MEMO.ledger;
   const R = hcpRules(); const L = {};
   Object.values(D.golfers).forEach(g => { const b = g.hi === null || g.hi === undefined || g.hi === '' || !isFinite(g.hi) ? null : Number(g.hi); L[g.id] = {base:b, current:b, events:[], streak:0, played:0}; });
-  Object.values(D.comps).filter(c => c.status === 'final').sort((a,b) => String(a.date||'').localeCompare(String(b.date||''))).forEach(c => {
+  Object.values(D.comps).filter(c => c.status === 'final' && !c.test).sort((a,b) => String(a.date||'').localeCompare(String(b.date||''))).forEach(c => {
     leaderboard(c).all.forEach(r => {
       const l = L[r.gid]; if (!l || l.base === null) return;
       l.played++; let change = 0, reason = '';
@@ -516,7 +516,8 @@ function mainHtml(){
   return viewHome();
 }
 function backBtn(label, act){ return `<button class="back" data-act="${act}">${ICONS.back}${esc(label)}</button>`; }
-function chipsFor(c){
+function chipsFor(c){ return (c.test ? '<span class="chip testchip">Test month</span>' : '') + chipsFor0(c); }
+function chipsFor0(c){
   const k = cfg(); const rs = compRounds(c); const best = rs.length > 1 ? `<span class="chip">Best ${compBest(c)} of ${rs.length}</span>` : ''; const fee = `<span class="chip">${euro(c.fee != null ? c.fee : k.fee)} entry</span>`;
   if (roundsVary(c)) { const fs = [...new Set(rs.map(r => (FORMATS[rcfg(c, r.n).format] || FORMATS.stableford).short))]; return `<span class="chip">${esc(fs.join(' · '))}</span><span class="chip">Varies by round</span>${best}${fee}`; }
   const rc = rcfg(c, rs[0].n); const t = TEES[rc.tee] || TEES.white;
@@ -638,7 +639,7 @@ function currentComp(){
   const open = openComps(); const has = st => c => compRounds(c).some(r => roundState(r) === st);
   return open.find(has('open')) || open.find(has('upcoming')) || open[open.length - 1] || null;
 }
-function lastFinal(){ return Object.values(D.comps).filter(c => c.status === 'final').sort((a,b) => String(b.date||'').localeCompare(String(a.date||'')))[0] || null; }
+function lastFinal(){ return Object.values(D.comps).filter(c => c.status === 'final' && !c.test).sort((a,b) => String(b.date||'').localeCompare(String(a.date||'')))[0] || null; }
 function potLine(c){ const st = compStats(c); return `Pot ${euro(st.pot)} · Winner ${euro(st.prizes[0] || 0)} · Runner-up ${euro(st.prizes[1] || 0)}`; }
 function roundInfo(c, n){ const rc = rcfg(c, n); return `${(FORMATS[rc.format] || FORMATS.stableford).short} · ${rc.holes.length} holes · ${(TEES[rc.tee] || TEES.white).name} tees`; }
 function viewHome(){
@@ -938,7 +939,7 @@ function yearTableHtml(){
   }).join('') + '</ul>';
   if (open.length) h += `<p class="hint" style="margin-top:10px">${open.map(c => esc(c.name)).join(' and ')} ${open.length === 1 ? 'is' : 'are'} still open. ${open.length === 1 ? 'Its' : 'Their'} points are added when finalised; see This month for where things stand.</p>`;
   // month-by-month grid
-  const months = Object.values(D.comps).filter(c => c.status === 'final' && inSeason(c, S.season)).sort((a,b) => String(a.date||'').localeCompare(String(b.date||'')));
+  const months = Object.values(D.comps).filter(c => c.status === 'final' && !c.test && inSeason(c, S.season)).sort((a,b) => String(a.date||'').localeCompare(String(b.date||'')));
   const pts = {}; months.forEach(c => leaderboard(c).all.forEach(r => { (pts[r.gid] || (pts[r.gid] = {}))[c.id] = r; }));
   h += `<div class="sec-head"><h2>Points by month</h2></div><div class="tscroll"><table class="mgrid"><thead><tr><th>Golfer</th>${months.map(c => `<th title="${esc(c.name)}">${esc(dParts(c.date).mon)}</th>`).join('')}<th>Total</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(D.golfers[r.id].name)}</td>${months.map(c => { const x = pts[r.id] && pts[r.id][c.id]; return `<td class="${x && x.pos === 1 ? 'win' : x && x.pos === 2 ? 'second' : ''}">${x ? x.points : '–'}</td>`; }).join('')}<td class="tot">${r.pts}</td></tr>`).join('')}</tbody></table></div>`;
   h += `<p class="hint" style="margin-top:10px">Gold = monthly winner, outlined = runner-up. P = months played, W = wins. Tap a golfer above for their stats.</p>`;
@@ -1172,6 +1173,7 @@ function sheetComp(){
     <div class="grid2"><label class="field"><span>Weekend rounds</span><select id="f-rcount" name="rcount">${range(1,5).map(i => `<option value="${i}" ${i === rs.length ? 'selected' : ''}>${i}</option>`).join('')}</select></label>
     <label class="field"><span>Best cards count</span><select id="f-best" name="best">${range(1,5).map(i => `<option value="${i}" ${i === best ? 'selected' : ''}>${i}</option>`).join('')}</select></label></div>
     <div class="field"><span>Rounds</span><div id="f-rounds" class="rrows">${rs.map(r => roundRow(r.n, r, perRound)).join('')}</div><p class="hint">Pick each round's Friday; it runs Friday, Saturday and Sunday.</p></div>
+    <label class="check toggle"><input type="checkbox" id="f-test" name="test" ${c && c.test ? 'checked' : ''}><span><b>Test month.</b> Rounds can start on any day, so you can try the app out. It never counts towards the league or handicaps. Delete it when you've finished.</span></label>
     <label class="check toggle"><input type="checkbox" id="f-perround" name="perround" ${perRound ? 'checked' : ''}><span>Different format, tees or holes for some rounds. "Default" uses the month's settings below.</span></label>
     <label class="field"><span>Entry fee for the month (€)</span><input type="number" id="f-fee" name="fee" min="0" step="1" value="${esc(c && c.fee != null ? c.fee : k.fee)}"></label>
     <div class="field"><span>Format${'' /* default */}</span><div class="radios">${Object.entries(FORMATS).map(([key,f]) => radio('format', key, f.name, fmt === key)).join('')}</div></div>
@@ -1562,7 +1564,7 @@ const ACT = {
     askConfirm('Delete competition?', `${c.name}, its entries and cards will be removed, along with their league points. This can't be undone.`, 'Delete', async () => {
       const ops = [].concat(entriesFor(c.id).map(e => ({path:`comps/${c.id}/entries/${e.golferId}`, del:true})), Object.values(D.cards).filter(x => x.compId === c.id).map(x => ({path:`comps/${c.id}/cards/${x.id}`, del:true})), [{path:`comps/${c.id}`, del:true}]);
       for (let i = 0; i < ops.length; i += 400) { if (!(await batch(ops.slice(i, i + 400)))) return; }
-      S.compId = null; render(); toast('Competition deleted');
+      S.compId = null; MEMO = {}; await syncHandicaps(); render(); toast('Competition deleted');
     }, true);
   },
   newGolfer(){ openSheet({type:'golfer'}); },
@@ -1613,12 +1615,13 @@ const FORMS = {
     const count = Math.max(1, Math.min(5, Number(fd.get('rcount')) || 4)); const per = !!fd.get('perround');
     const rows = range(1, count).map(i => ({from: fd.get('r' + i), format: per ? fd.get('rf' + i) || null : null, tee: per ? fd.get('rt' + i) || null : null, holes: per ? ({'18': range(1,18), '14': range(1,14)})[fd.get('rh' + i)] || null : null}));
     if (rows.some(r => !r.from)) { toast('Set a date for every round'); return; }
-    if (rows.some(r => parseDate(r.from).getDay() !== 5)) { toast('Each round should start on a Friday'); return; }
+    const test = !!fd.get('test');
+    if (!test && rows.some(r => parseDate(r.from).getDay() !== 5)) { toast('Each round should start on a Friday (or tick Test month)'); return; }
     rows.sort((a, b) => a.from.localeCompare(b.from)); const sorted = rows.map(r => r.from);
     const rounds = rows.map((r, i) => ({n:i+1, from:r.from, to:addDays(r.from, 2), opens: be.stamp(parseDate(r.from)), closes: be.stamp(parseDate(addDays(r.from, 3))), format:r.format, tee:r.tee, holes:r.holes}));
     const best = Math.min(count, Math.max(1, Number(fd.get('best')) || count));
     const id = S.sheet.id || newId(); const prev = D.comps[id] || {}; const format = fd.get('format') || 'stableford';
-    const data = Object.assign({}, prev, {name: String(fd.get('name') || '').trim() || `${dParts(sorted[0]).month} ${FORMATS[format].short}`, date: sorted[0], rounds, best, format, holes, tee: fd.get('tee') || k.tee, fee: num(fd.get('fee'), k.fee), allowance: num(fd.get('allowance'), k.allowance), status: prev.status || 'open', createdAt: prev.createdAt || Date.now()});
+    const data = Object.assign({}, prev, {test, name: String(fd.get('name') || '').trim() || (test ? 'Test month' : `${dParts(sorted[0]).month} ${FORMATS[format].short}`), date: sorted[0], rounds, best, format, holes, tee: fd.get('tee') || k.tee, fee: num(fd.get('fee'), k.fee), allowance: num(fd.get('allowance'), k.allowance), status: prev.status || 'open', createdAt: prev.createdAt || Date.now()});
     delete data.id;
     if (await put(`comps/${id}`, data)) { localSet(`comps/${id}`, data); closeSheetQuiet(); S.view = 'comps'; S.compId = id; S.card = null; S.compTab = 'entries'; top(); render(); toast(prev.name ? 'Competition updated' : 'Month created'); }
   },
@@ -1734,6 +1737,7 @@ document.addEventListener('change', ev => {
     const first = (have[0] && have[0].from) || defaultFirstFri();
     box.innerHTML = range(1, n).map(i => roundRow(i, have[i-1] && have[i-1].from ? have[i-1] : {from: addDays(first, 7*(i-1))}, show)).join(''); const b = $('#f-best'); if (b && Number(b.value) > n) b.value = String(n); return; }
   if (t.id === 'jq-link') { const box = $('#jq-new'); if (box) box.hidden = !!t.value; return; }
+  if (t.id === 'f-test' && t.checked) { const r1 = $('#f-r-1'); if (r1) { r1.value = iso(new Date()); r1.dispatchEvent(new Event('change', {bubbles:true})); } const nm = $('#f-name'); if (nm && !nm.value) nm.value = 'Test month'; return; }
   if (t.id === 'f-perround') { document.querySelectorAll('#f-rounds .rrow-opts').forEach(x => { x.hidden = !t.checked; }); return; }
   if (t.id === 'f-r-1') { const ins = [...document.querySelectorAll('#f-rounds input[type=date]')]; ins.slice(1).forEach((inp, i) => { inp.value = addDays(t.value, 7*(i+1)); }); }
 });
