@@ -14,7 +14,8 @@ const COURSE = {
   parL:[5,4,4,3,4,5,3,4,4, 5,5,4,3,4,4,5,3,4],
   siL:[15,1,13,11,9,5,17,7,3, 10,4,14,12,18,8,6,16,2]
 };
-const TEES = { white:{name:'White', cr:70.3, slope:125, par:72}, blue:{name:'Blue', cr:71.7, slope:127, par:72}, black:{name:'Black', cr:74.0, slope:132, par:72} };
+// Men's tees. Ladies always play off the red tees with the ladies' rating (RED below).
+const TEES = { white:{name:'White', cr:70.3, slope:125, par:72}, blue:{name:'Blue', cr:71.7, slope:127, par:72}, black:{name:'Black', cr:74.0, slope:132, par:72}, red:{name:'Red', cr:69.9, slope:120, par:72} };
 const RED = {name:'Red', cr:72.2, slope:122, par:73};
 const FORMATS = {
   stableford:{name:'Stableford', short:'Stableford', better:'high'},
