@@ -481,7 +481,9 @@ function doRender(){
   if (S.view === 'league') S.view = 'table';
   if ((S.view === 'admin' || S.view === 'comps') && !S.isAdmin) S.view = 'home';
   if (S.view === 'me' && !S.myGid) S.view = 'home';
-  $('#tabsIn').innerHTML = inApp ? tabs.map(([k,l]) => `<button class="tab" data-act="tab" data-v="${k}" ${S.view === k ? 'aria-current="page"' : ''}>${ICONS[k]}<span>${l}</span></button>`).join('') : '';
+  const fresh = inApp && S.loaded.cards ? newActivity() : 0;
+  try { if (navigator.setAppBadge) { if (fresh) navigator.setAppBadge(fresh); else navigator.clearAppBadge(); } } catch (_) {}
+  $('#tabsIn').innerHTML = inApp ? tabs.map(([k,l]) => `<button class="tab" data-act="tab" data-v="${k}" ${S.view === k ? 'aria-current="page"' : ''}>${ICONS[k]}<span>${l}</span>${k === 'home' && fresh ? `<i class="tbadge">${fresh > 9 ? '9+' : fresh}</i>` : ''}</button>`).join('') : '';
   let html;
   if (S.phase === 'boot' || S.phase === 'checking') html = '<p class="loading">Loading…</p>';
   else if (S.phase === 'error') html = viewError();
@@ -578,6 +580,49 @@ function viewComps(){
   }).join('') + '</ul>';
   return h;
 }
+/* ---------- Organiser notifications (free ntfy app) and the activity list ---------- */
+// The private channel name lives on config/admins, which every signed-in user can read, so even people
+// asking to join can send a notification. The organiser's own actions don't notify anyone.
+function notifyTopic(){ const t = D.admins && D.admins.notify; return typeof t === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(t) ? t : null; }
+function sendNotify(title, msg, tags, force){
+  const topic = notifyTopic(); if (!topic || (S.adminRole && !force)) return;
+  if (SAMPLE) { (window.__notifyLog = window.__notifyLog || []).push({title, msg, tags}); return; }
+  const url = `https://ntfy.sh/${encodeURIComponent(topic)}?title=${encodeURIComponent(title)}${tags ? '&tags=' + encodeURIComponent(tags) : ''}`;
+  try { fetch(url, {method:'POST', body:msg, mode:'no-cors', keepalive:true}).catch(() => {}); } catch (_) {}
+}
+function cardCounts(cid, round, gid){ const c = D.comps[cid]; return !!(c && scoreCard(c, round, gid).valid); }
+// Tell the organiser when a golfer's card has just started counting (complete and ticked as signed).
+function notifyIfDone(cid, round, gid, before){
+  if (before || !cardCounts(cid, round, gid)) return;
+  const c = D.comps[cid]; const sc = scoreCard(c, round, gid); const u = unitFor(sc.rc.format);
+  sendNotify(`${gName(gid)} · round ${round} card in`, `${cardValueText(sc)}${u ? ' ' + u : ''}, signed by ${markerName(sc.card)} · ${c.name}`, 'white_check_mark');
+}
+function seenAt(){ try { return Number(localStorage.getItem('rgc-activity-seen')) || 0; } catch (_) { return 0; } }
+function activityItems(){
+  const out = []; const since = Date.now() - 14 * 864e5; const t = x => msOf(x);
+  Object.entries(D.requests || {}).forEach(([email, r]) => { if (t(r.createdAt)) out.push({t:t(r.createdAt), text:`${r.name} asked to join`, act:'joinList'}); });
+  Object.values(D.entries).forEach(e => { const g = D.golfers[e.golferId], c = D.comps[e.compId]; if (!g || !c) return;
+    if (t(e.createdAt)) out.push({t:t(e.createdAt), text:`${g.name} entered ${c.name}`});
+    if (e.claimed && !e.paid && t(e.claimedAt)) out.push({t:t(e.claimedAt), text:`${g.name} says they've paid${e.claimMethod && METHODS[e.claimMethod] ? ' by ' + METHODS[e.claimMethod] : ''}`, act:'payments', id:c.id}); });
+  Object.values(D.cards).forEach(card => { const g = D.golfers[card.golferId], c = D.comps[card.compId]; if (!g || !c) return;
+    if (t(card.startedAt)) out.push({t:t(card.startedAt), text:`${g.name} started round ${card.round}`, card});
+    if (t(card.updatedAt) && card.updatedBy !== (S.user && S.user.uid)) { const sc = scoreCard(c, card.round, card.golferId); const u = unitFor(sc.rc.format);
+      if (sc.valid) out.push({t:t(card.updatedAt), text:`${g.name}'s round ${card.round} card counts: ${cardValueText(sc)}${u ? ' ' + u : ''}, signed by ${markerName(card)}`, card}); } });
+  return out.filter(x => x.t > since && x.t <= Date.now() + 60000).sort((a, b) => b.t - a.t);
+}
+function agoText(ms){ const m = Math.round((Date.now() - ms) / 60000); if (m < 1) return 'just now'; if (m < 60) return `${m} min ago`; const h = Math.round(m / 60); if (h < 24 && new Date(ms).getDate() === new Date().getDate()) return `${h} hr ago`; return whenText(ms); }
+function newActivity(){ if (!S.isAdmin) return 0; const seen = seenAt(); return activityItems().filter(x => x.t > seen).length; }
+function activityHtml(){
+  const items = activityItems(); if (!items.length) return '';
+  const seen = seenAt(); const fresh = items.filter(x => x.t > seen).length; const shown = items.slice(0, S.actMore ? 25 : 6);
+  let h = `<div class="sec-head"><h2>Activity${fresh ? ` <span class="newpill">${fresh} new</span>` : ''}</h2>${fresh ? '<button class="btn small" data-act="actSeen">Mark as seen</button>' : ''}</div><ul class="list act">`;
+  h += shown.map(x => { const attrs = x.card ? `data-act="openCard" data-cid="${esc(x.card.compId)}" data-round="${x.card.round}" data-gid="${esc(x.card.golferId)}"` : x.act ? `data-act="${x.act}" ${x.id ? `data-id="${esc(x.id)}"` : ''}` : '';
+    const inner = `<span class="act-dot ${x.t > seen ? 'on' : ''}"></span><span class="act-text">${esc(x.text)}</span><span class="act-time">${esc(agoText(x.t))}</span>`;
+    return `<li>${attrs ? `<button class="act-row" ${attrs}>${inner}</button>` : `<div class="act-row">${inner}</div>`}</li>`; }).join('') + '</ul>';
+  if (items.length > shown.length) h += `<button class="textbtn" data-act="actMore">Show more</button>`;
+  return h;
+}
+
 /* ----- Home: this month at a glance, with the golfer's own card first ----- */
 function openComps(){ return Object.values(D.comps).filter(c => c.status !== 'final').sort((a,b) => String(a.date||'').localeCompare(String(b.date||''))); }
 // The month that's running now: one with a round open, else one with a round coming up, else the latest unfinished one.
@@ -596,7 +641,7 @@ function viewHome(){
     h += `<section class="hero"><span class="eyebrow">Pot of Gold</span><h1 class="hero-title">No month running</h1><p class="hero-sub">${S.isAdmin ? 'Create the next month and it shows here for everyone.' : 'The organiser will post the next month here.'}</p>${S.isAdmin ? '<button class="btn primary block" data-act="newComp">New competition</button>' : ''}</section>`;
     const last = lastFinal(); return h + (last ? miniTable(last) : '');
   }
-  h += homeHero(c) + miniTable(c);
+  h += homeHero(c) + (S.isAdmin ? activityHtml() : '') + miniTable(c);
   const last = lastFinal(); if (last && last.id !== c.id) h += lastMonthHtml(last);
   return h;
 }
@@ -1016,6 +1061,16 @@ async function submitPin(){
   }
   render();
 }
+function notifySettingsHtml(){
+  const t = notifyTopic();
+  if (!t) return `<section class="setup"><div class="sec-head"><h2>Phone notifications</h2></div><div class="panel stack"><p class="hint" style="margin:0">Get a notification on your phone when someone asks to join, enters, says they've paid, starts a round or finishes a card. It uses ntfy, a free notification app for iPhone and Android.</p><button class="btn primary block" data-act="notifyOn">Turn on notifications</button></div></section>`;
+  return `<section class="setup"><div class="sec-head"><h2>Phone notifications</h2><span class="pill open">On</span></div><div class="panel stack">
+    <ol class="nsteps"><li>Install <b>ntfy</b> from the App Store or Google Play (it's free).</li><li>Open it, tap <b>+</b> and enter this channel name. Leave the server as ntfy.sh.</li></ol>
+    <div class="refrow"><code>${esc(t)}</code><button class="btn small" data-act="copy" data-text="${esc(t)}">Copy</button></div>
+    <ol class="nsteps" start="3"><li>Tap <b>Subscribe</b>, then <b>Send test</b> below.</li></ol>
+    <div class="btnrow" style="margin-top:0"><button class="btn" data-act="notifyTest">Send test</button><button class="btn danger" data-act="notifyOff">Turn off</button></div>
+    <p class="hint" style="margin:0">Keep the channel name to yourself: anyone who has it can see the notifications. Your own actions don't send notifications.</p></div></section>`;
+}
 function viewAdmin(){
   if (!S.loaded.adminCode) return '<p class="loading">Loading…</p>';
   if (!adminUnlocked() || S.changing) return viewLock();
@@ -1051,6 +1106,7 @@ function viewAdmin(){
   </form>
   <section class="setup"><div class="sec-head"><h2>Organisers</h2></div><div class="panel"><ul class="plain">${admins.map(e => `<li><span>${esc(e)}${e === S.user.email ? ' (you)' : ''}</span>${admins.length > 1 && e !== S.user.email ? `<button class="btn small danger" data-act="removeAdmin" data-email="${esc(e)}">Remove</button>` : ''}</li>`).join('')}</ul>
     <form data-form="addAdmin" class="inline"><input type="email" id="aa-email" name="email" placeholder="organiser@email.com" required aria-label="Organiser email"><button class="btn small" type="submit">Add</button></form><p class="hint">Organisers can manage golfers, competitions, payments and every card.</p></div></section>
+  ${notifySettingsHtml()}
   <section class="setup"><div class="sec-head"><h2>Admin code</h2></div><div class="panel row-panel"><p class="hint">Anyone opening Admin needs the code. Locking also switches you to the golfer view; tap your initials (top right) to come back.</p><span style="display:flex;gap:8px"><button class="btn small" data-act="changePin">Change code</button><button class="btn small" data-act="lockAdmin">Lock now</button></span></div></section>
   ${SAMPLE ? '' : `<section class="setup"><div class="panel row-panel"><p class="hint">Try every screen with made-up golfers. Nothing is saved to the league.</p><a class="btn small" href="?sample=1">Sample data</a></div></section>`}`;
 }
@@ -1344,7 +1400,9 @@ async function applyScan(){
   });
   if (bad) { toast(bad); return; }
   const unsigned = ok.filter(x => !(x.r.done && x.r.done.signed)).length;
+  const before = {}; ok.forEach(({r}) => { before[r.gid] = cardCounts(c.id, round, r.gid); });
   if (await batch(ops)) {
+    ops.forEach(o => localSet(o.path, o.data)); ok.forEach(({r}) => notifyIfDone(c.id, round, r.gid, before[r.gid]));
     const msg = `${ok.length} card${ok.length === 1 ? '' : 's'} added.${unsigned ? ` ${unsigned === 1 ? "It doesn't" : `${unsigned} don't`} count until ticked as signed.` : ''}`;
     if (!S.isAdmin && sh.file) { sh.phase = 'saved'; sh.msg = msg; renderSheet(); } else { closeSheet(); toast(msg); }
   }
@@ -1365,8 +1423,8 @@ function authErr(e){
 }
 function saveCard(cid, round, gid, scores){
   const data = Object.assign(cardBase(cid, round, gid), {scores, updatedAt:Date.now(), updatedBy:S.user.uid});
-  const path = `comps/${cid}/cards/${round}_${gid}`;
-  localSet(path, data); render();
+  const path = `comps/${cid}/cards/${round}_${gid}`; const before = cardCounts(cid, round, gid);
+  localSet(path, data); render(); notifyIfDone(cid, round, gid, before);
   // Save the latest version of the card when the timer fires, so a later change (marker, tick) is never overwritten.
   clearTimeout(cardTimers[path]); cardTimers[path] = setTimeout(() => { const cur = D.cards[`${cid}/${round}_${gid}`]; put(path, Object.assign({}, cur || data)); }, 600);
 }
@@ -1430,14 +1488,14 @@ const ACT = {
     askConfirm('Start your round?', `This is your round ${round} card for ${c.name}. You only get one this weekend. Enter your scores and tick it as signed by midnight tonight, or the round won't count.`, 'Start my round', async () => {
       const now = Date.now(); const path = `comps/${cid}/cards/${round}_${S.myGid}`;
       const data = Object.assign(cardBase(cid, round, S.myGid), {startedAt: now, deadline: Math.min(endOfDay(now), roundCloses(c, round)), updatedAt: now, updatedBy: S.user.uid});
-      if (await put(path, data)) { localSet(path, data); S.card = {cid, round, gid: S.myGid}; S.activeHole = null; top(); render(); toast('Round started. Good luck!'); } }); },
+      if (await put(path, data)) { localSet(path, data); S.card = {cid, round, gid: S.myGid}; S.activeHole = null; top(); render(); toast('Round started. Good luck!'); sendNotify(`${gName(S.myGid)} started round ${round}`, `${c.name} · ${whenText(now)}`, 'golf'); } }); },
   delCard(){ const {cid, round, gid} = S.card || {}; if (!S.isAdmin || !cardOf(cid, round, gid)) return;
     askConfirm('Delete this card?', `${gName(gid)}'s round ${round} card and its scores are removed, and they can start the round again while it's open.`, 'Delete', async () => {
       if (await drop(`comps/${cid}/cards/${round}_${gid}`)) { delete D.cards[`${cid}/${round}_${gid}`]; MEMO = {}; S.card = null; render(); toast('Card deleted'); } }, true); },
   async resetShots(){ const {cid, round, gid} = S.card; const prev = cardOf(cid, round, gid); if (prev) await put(`comps/${cid}/cards/${round}_${gid}`, Object.assign({}, prev, {shots:null, id:undefined})); closeSheet(); toast('Using calculated shots'); },
   addEntry(){ openSheet({type:'addEntry'}); },
   async selfEnter(el){ const c = D.comps[(el && el.dataset.cid) || S.compId]; if (!c) return; const path = `comps/${c.id}/entries/${S.myGid}`; const data = {compId:c.id, golferId:S.myGid, paid:false, method:null, paidAt:null, createdAt:Date.now()};
-    if (await put(path, data)) { localSet(path, data); openSheet({type:'pay', id:c.id + '/' + S.myGid}); render(); toast("You're entered. Now pay your entry."); } },
+    if (await put(path, data)) { localSet(path, data); openSheet({type:'pay', id:c.id + '/' + S.myGid}); render(); toast("You're entered. Now pay your entry."); sendNotify(`${gName(S.myGid)} entered`, `${c.name} · not paid yet`, 'ticket'); } },
   pay(el){ openSheet({type:'pay', id:el.dataset.id}); },
   setPay(el){ const e = D.entries[S.sheet && S.sheet.id]; if (e) markPaid(e.compId, e.golferId, el.dataset.m); },
   payments(el){ openSheet({type:'payments', id: el.dataset.id || S.compId}); },
@@ -1445,7 +1503,8 @@ const ACT = {
   async claim(el){ const id = S.sheet && S.sheet.id; const e = D.entries[id]; if (!e || e.golferId !== S.myGid) return; const m = el.dataset.m;
     const data = Object.assign({}, e, {claimed: !!m, claimMethod: m || null, claimedAt: m ? Date.now() : null}); delete data.id;
     const path = `comps/${e.compId}/entries/${e.golferId}`;
-    if (await put(path, data)) { localSet(path, data); renderSheet(); render(); toast(m ? 'Thanks. The organiser will check Revolut and confirm it.' : 'No problem. Pay when you can.'); } },
+    if (await put(path, data)) { localSet(path, data); renderSheet(); render(); toast(m ? 'Thanks. The organiser will check Revolut and confirm it.' : 'No problem. Pay when you can.');
+      if (m) { const c = D.comps[e.compId]; sendNotify(`${gName(e.golferId)} says they've paid`, `${euro(compFee(c))} by ${METHODS[m]} · ${c ? c.name : ''}. Check Revolut and confirm in the app.`, 'euro'); } } },
   remindUnpaid(){ const c = D.comps[S.sheet && S.sheet.id]; if (!c) return; const un = entriesFor(c.id).filter(e => payState(e) === 'unpaid').map(e => gName(e.golferId)).sort();
     if (!un.length) { toast('Everyone has paid or says they have.'); return; }
     shareText([`Pot of Gold · ${c.name}`, `Entry is ${euro(compFee(c))} for the month. Still to pay: ${un.join(', ')}.`, `Pay with Revolut: ${revUrl()} (Revolut app, or debit card, Apple Pay or Google Pay).`, `Then tap "I've paid" in the app: ${appUrl()}`].join('\n')); },
@@ -1469,6 +1528,12 @@ const ACT = {
     askConfirm('Decline this request?', `${r ? r.name : email} won't be added. They can ask again later.`, 'Decline', async () => { if (await drop('requests/' + email)) { delete D.requests[email]; render(); toast('Request declined'); } }, true); },
   async cancelReq(){ if (await drop('requests/' + S.user.email)) { D.myReq = null; render(); toast('Request cancelled'); } },
   reload(){ location.reload(); },
+  actSeen(){ try { localStorage.setItem('rgc-activity-seen', String(Date.now())); } catch (_) {} render(); },
+  actMore(){ S.actMore = true; render(); },
+  async notifyOn(){ const topic = 'potofgold-' + randHex(10); if (await put('config/admins', Object.assign({}, D.admins, {notify: topic}))) { D.admins = Object.assign({}, D.admins, {notify: topic}); render(); toast('Notifications turned on. Now set up the ntfy app.'); } },
+  async notifyOff(){ askConfirm('Turn off notifications?', "You won't get notifications on your phone any more. You can turn them on again, with a new channel name.", 'Turn off', async () => {
+    const data = Object.assign({}, D.admins, {notify: null}); if (await put('config/admins', data)) { D.admins = data; render(); toast('Notifications off'); } }, true); },
+  notifyTest(){ if (!notifyTopic()) return; sendNotify('Pot of Gold test', 'Notifications are working.', 'white_check_mark', true); toast('Test sent. It should pop up on your phone in a few seconds.'); },
   saveSettings(){ const a = document.activeElement; if (a && a.blur) a.blur(); saveSettings(); },
   copy(el){ const text = el.dataset.text; const fb = () => { const code = $('#refcode'); if (code) { const r = document.createRange(); r.selectNodeContents(code); const s = getSelection(); s.removeAllRanges(); s.addRange(r); } toast('Reference selected. Copy it from here.'); }; try { navigator.clipboard.writeText(text).then(() => toast('Reference copied'), fb); } catch (_) { fb(); } },
   finalise(){
@@ -1571,7 +1636,7 @@ const FORMS = {
   async joinReq(f){ const fd = new FormData(f); const name = String(fd.get('name') || '').trim().replace(/\s+/g, ' ').slice(0, 60); if (!name) { toast('Add your name'); return; }
     const raw = String(fd.get('hi') || '').trim(); const hi = parseHi(raw); if (raw && (hi === null || hi < -10 || hi > 54)) { toast('That handicap doesn\'t look right'); return; }
     const data = {name, hi, gender: fd.get('jgender') === 'L' ? 'L' : 'M', email: S.user.email, createdAt: Date.now()};
-    if (await put('requests/' + S.user.email, data)) { D.myReq = data; render(); toast('Request sent to the organiser'); } },
+    if (await put('requests/' + S.user.email, data)) { D.myReq = data; render(); toast('Request sent to the organiser'); sendNotify('New join request', `${name} wants to join. Open the app to let them in.`, 'wave'); } },
   async approveJoin(f){ const fd = new FormData(f); const email = S.sheet && S.sheet.email; if (!email) return;
     const link = String(fd.get('link') || ''); const ops = [{path:'requests/' + email, del:true}];
     if (D.members[email]) { if (await batch(ops)) { closeSheet(); toast('That email is already on the list'); } return; }
@@ -1649,9 +1714,9 @@ document.addEventListener('change', ev => {
     const name = String(($('#markerName') || {}).value || '').trim().slice(0, 60); const chk = $('#signedChk'); let signed = !!(chk && chk.checked);
     if (signed && !name) { if (chk) chk.checked = false; signed = false; toast("Add your marker's name first."); }
     const base = cardBase(cid, round, gid); if (base.marker === name && base.signed === signed) return;
-    const data = Object.assign(base, {marker:name, signed, updatedAt:Date.now(), updatedBy:S.user.uid}); const path = `comps/${cid}/cards/${round}_${gid}`;
+    const data = Object.assign(base, {marker:name, signed, updatedAt:Date.now(), updatedBy:S.user.uid}); const path = `comps/${cid}/cards/${round}_${gid}`; const before = cardCounts(cid, round, gid);
     // Typing the name then tapping the tick: wait a moment before redrawing so the tap isn't lost.
-    localSet(path, data); if (t.id === 'signedChk') render(); else setTimeout(render, 350); put(path, data).then(ok => ok && t.id === 'signedChk' && toast(signed ? (markedOK(data) && scoreCard(D.comps[cid], round, gid).complete ? 'Signed. Your card counts now.' : 'Ticked as signed.') : 'Unticked. The card won\'t count until it\'s ticked as signed.')); return; }
+    localSet(path, data); notifyIfDone(cid, round, gid, before); if (t.id === 'signedChk') render(); else setTimeout(render, 350); put(path, data).then(ok => ok && t.id === 'signedChk' && toast(signed ? (markedOK(data) && scoreCard(D.comps[cid], round, gid).complete ? 'Signed. Your card counts now.' : 'Ticked as signed.') : 'Unticked. The card won\'t count until it\'s ticked as signed.')); return; }
   if (t.closest('#setupForm')) { saveSettings(); return; }
   if (t.name === 'holes' && t.closest('form[data-form=comp]')) { $('#holepick').hidden = t.value !== 'custom'; return; }
   if (t.id === 'f-rcount') { const n = Number(t.value); const box = $('#f-rounds'); const show = !!($('#f-perround') || {}).checked;
