@@ -1183,13 +1183,20 @@ function sheetComp(){
     <label class="field"><span>Allowance %</span><input type="number" id="f-allow" name="allowance" min="0" max="100" value="${esc(c && c.allowance != null ? c.allowance : k.allowance)}"></label></div>
     <button class="btn primary block" type="submit">${c ? 'Save changes' : 'Create month'}</button></form>`;
 }
+// Rounds of the month being edited that have already started: their date and settings can't change,
+// so scores already in are never re-scored by an edit.
+function startedRounds(c){ return c ? compRounds(c).filter(r => roundState(r) !== 'upcoming').map(r => r.n) : []; }
 function roundRow(n, r, show){
-  r = r || {}; const hv = Array.isArray(r.holes) && r.holes.length ? (r.holes.length === 18 ? '18' : '14') : '';
-  return `<div class="rrow"><label class="rrow-top"><span class="rn">R${n}</span><input type="date" id="f-r-${n}" name="r${n}" value="${esc(r.from || '')}" required aria-label="Round ${n} Friday"></label>
+  const ec = S.sheet && S.sheet.type === 'comp' && S.sheet.id ? D.comps[S.sheet.id] : null;
+  const locked = startedRounds(ec).includes(n);
+  if (locked) { const eff = rcfg(ec, n); r = Object.assign({}, compRounds(ec).find(x => x.n === n), {format: eff.format, tee: eff.tee, holes: eff.holes}); }
+  r = r || {}; const hv = Array.isArray(r.holes) && r.holes.length ? (r.holes.length === 18 ? '18' : '14') : ''; const dis = locked ? 'disabled' : '';
+  return `<div class="rrow ${locked ? 'locked' : ''}"><label class="rrow-top"><span class="rn">R${n}</span><input type="date" id="f-r-${n}" name="r${n}" value="${esc(r.from || '')}" required ${locked ? 'readonly' : ''} aria-label="Round ${n} Friday"></label>
+    ${locked ? `<p class="hint" style="margin:6px 0 0">Started, so its date, format, tees and holes stay as they are.</p>` : ''}
     <div class="rrow-opts" ${show ? '' : 'hidden'}>
-      <label><span>Format</span><select id="f-rf-${n}" name="rf${n}" aria-label="Round ${n} format"><option value="">Default</option>${Object.entries(FORMATS).map(([k, f]) => `<option value="${k}" ${r.format === k ? 'selected' : ''}>${f.short}</option>`).join('')}</select></label>
-      <label><span>Tees</span><select id="f-rt-${n}" name="rt${n}" aria-label="Round ${n} tees"><option value="">Default</option>${Object.entries(TEES).map(([k, t]) => `<option value="${k}" ${r.tee === k ? 'selected' : ''}>${t.name}</option>`).join('')}</select></label>
-      <label><span>Holes</span><select id="f-rh-${n}" name="rh${n}" aria-label="Round ${n} holes"><option value="">Default</option><option value="18" ${hv === '18' ? 'selected' : ''}>18</option><option value="14" ${hv === '14' ? 'selected' : ''}>14 (1–14)</option></select></label>
+      <label><span>Format</span><select id="f-rf-${n}" name="rf${n}" ${dis} aria-label="Round ${n} format"><option value="">Default</option>${Object.entries(FORMATS).map(([k, f]) => `<option value="${k}" ${r.format === k ? 'selected' : ''}>${f.short}</option>`).join('')}</select></label>
+      <label><span>Tees</span><select id="f-rt-${n}" name="rt${n}" ${dis} aria-label="Round ${n} tees"><option value="">Default</option>${Object.entries(TEES).map(([k, t]) => `<option value="${k}" ${r.tee === k ? 'selected' : ''}>${t.name}</option>`).join('')}</select></label>
+      <label><span>Holes</span><select id="f-rh-${n}" name="rh${n}" ${dis} aria-label="Round ${n} holes"><option value="">Default</option><option value="18" ${hv === '18' ? 'selected' : ''}>18</option><option value="14" ${hv === '14' ? 'selected' : ''}>14 (1–14)</option></select></label>
     </div></div>`;
 }
 function sheetAddEntry(){
@@ -1619,6 +1626,12 @@ const FORMS = {
     if (!test && rows.some(r => parseDate(r.from).getDay() !== 5)) { toast('Each round should start on a Friday (or tick Test month)'); return; }
     rows.sort((a, b) => a.from.localeCompare(b.from)); const sorted = rows.map(r => r.from);
     const rounds = rows.map((r, i) => ({n:i+1, from:r.from, to:addDays(r.from, 2), opens: be.stamp(parseDate(r.from)), closes: be.stamp(parseDate(addDays(r.from, 3))), format:r.format, tee:r.tee, holes:r.holes}));
+    const ec = S.sheet.id ? D.comps[S.sheet.id] : null; const done = startedRounds(ec);
+    if (done.length > count) { toast(`${done.length} rounds have already started, so the month needs at least ${done.length}.`); return; }
+    done.forEach(n => { const pr = compRounds(ec).find(x => x.n === n); const eff = rcfg(ec, n);
+      rounds[n - 1] = Object.assign({}, pr, {n, format: eff.format, tee: eff.tee, holes: eff.holes, allowance: eff.allowance}); });
+    rounds.sort((a, b) => a.from.localeCompare(b.from)); rounds.forEach((r, i) => { if (i && r.from <= rounds[i - 1].from) r.bad = true; });
+    if (rounds.some(r => r.bad)) { toast('Each round needs a later date than the one before.'); return; }
     const best = Math.min(count, Math.max(1, Number(fd.get('best')) || count));
     const id = S.sheet.id || newId(); const prev = D.comps[id] || {}; const format = fd.get('format') || 'stableford';
     const data = Object.assign({}, prev, {test, name: String(fd.get('name') || '').trim() || (test ? 'Test month' : `${dParts(sorted[0]).month} ${FORMATS[format].short}`), date: sorted[0], rounds, best, format, holes, tee: fd.get('tee') || k.tee, fee: num(fd.get('fee'), k.fee), allowance: num(fd.get('allowance'), k.allowance), status: prev.status || 'open', createdAt: prev.createdAt || Date.now()});
