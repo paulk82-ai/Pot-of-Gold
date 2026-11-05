@@ -20,6 +20,7 @@ An installable phone app for the Pot of Gold, a monthly golf competition played 
 - At midnight the card locks. If it isn't complete and ticked as signed by then, that round doesn't count and can't be re-entered.
 - Players send the organiser a photo of their signed card. After a scan the app offers **Send photo to the organiser**, and the card has a **Send a photo of my card** button for cards typed in. Both open the phone's share menu (WhatsApp).
 - Scanned cards are only accepted for golfers whose names match the golfer list and who are entered that month. Unrecognised names are turned away.
+- The app always works out the points itself from the strokes on each hole. When a card is scanned, any points and totals written on the paper card are read too and checked against the app's sums. If they differ, the scan, the card and the round leaderboard say so, and the organiser's notification carries a warning. The app explains whether a hole looks misread, the card was added up wrong, or the marker used different shots. The organiser can tap **Looked at it, clear this** once checked.
 - League points: 1st 5, 2nd 4, 3rd 3, 4th 2, everyone else 1. They are added when the organiser finalises the month. You can change them in Admin.
 - The **Table** tab has **This month** (any month, with live provisional standings while it's open, and each round's results) and **Year** (the Order of Merit for the year, plus a points-by-month grid).
 
@@ -118,6 +119,7 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 - Enter or correct any card, at any time, including the marker's name and the signed tick (untick it if a card turns out not to be signed), and override shots. Each card shows when the golfer started it.
 - Delete a card if a golfer started a round by mistake; they can then start it again while the round is open.
 - Scan any card. Only golfers on your list are accepted. The marker's name and signature are read from the card for you to check.
+- A **⚠ check card** note on a round's leaderboard means the points or totals written on that scanned card don't match the app. Open the card to see why, fix any misread holes (or the shots), then tap **Looked at it, clear this**.
 - Finalise the month, which locks scores and adds league points. Months can be reopened.
 
 ## Payments through Revolut

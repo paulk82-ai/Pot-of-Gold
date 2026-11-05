@@ -165,12 +165,12 @@ function deadlineText(card){ if (!card || !card.deadline) return ''; const d = n
 function cardBase(cid, round, gid){
   const prev = cardOf(cid, round, gid) || {}; const g = D.golfers[gid];
   const out = {compId:cid, golferId:gid, round, marker: markerName(prev), signed: isSigned(prev), scores: Object.assign({}, prev.scores || {}), hi: prev.hi != null ? prev.hi : snapHcp(g), shots: prev.shots != null ? prev.shots : null};
-  if (prev.scanned) out.scanned = true;
+  if (prev.scanned) out.scanned = typeof prev.scanned === 'object' ? JSON.parse(JSON.stringify(prev.scanned)) : true;
   if (prev.startedAt) { out.startedAt = prev.startedAt; out.deadline = prev.deadline; }
   return out;
 }
-function scoreCard(comp, round, gid){
-  const g = D.golfers[gid]; const card = cardOf(comp.id, round, gid);
+function scoreCard(comp, round, gid, over){
+  const g = D.golfers[gid]; const card = over !== undefined ? over : cardOf(comp.id, round, gid);
   const rc = rcfg(comp, round);
   const {par, si} = parsFor(g); const holes = rc.holes;
   const total = cardShots(card, rc, g); const alloc = allocShots(holes, si, total);
@@ -190,6 +190,49 @@ function scoreCard(comp, round, gid){
   const marked = markedOK(card);
   const nr = stroke && pickups > 0;
   return {comp, rc, round, gid, golfer:g, card, rows, total, gross, runNett, runPar, pts, pb, filled, complete, nr, pickups, parSum, marked, valid: complete && !nr && marked};
+}
+// Card check: a scanned card also has the points and totals written on the paper card read off it,
+// which are compared with the app's own sums. The organiser can clear a check once they've looked at it.
+function writtenOf(card){ const s = card && card.scanned; return s && typeof s === 'object' ? s : null; }
+function holePtsWith(sc, t){
+  const al = allocShots(sc.rows.map(r => r.h), parsFor(sc.golfer).si, t); const out = {};
+  sc.rows.forEach(r => { out[r.h] = r.g === 'P' ? 0 : typeof r.g === 'number' ? Math.max(0, 2 + r.par - (r.g - al[r.h])) : null; });
+  return out;
+}
+function holesText(hs){ return `hole${hs.length > 1 ? 's' : ''} ${hs.length > 1 ? hs.slice(0, -1).join(', ') + ' and ' + hs[hs.length - 1] : hs[0]}`; }
+function cardCheck(sc){
+  const w = writtenOf(sc.card); if (!w || w.ok) return null;
+  const wh = w.holes || {}; const has = h => wh[h] !== undefined && wh[h] !== null;
+  const known = sc.rows.filter(r => has(r.h) && r.pts != null).map(r => r.h);
+  const holes = known.filter(h => Number(wh[h]) !== sc.rows.find(r => r.h === h).pts);
+  const ptsOff = sc.complete && w.pts != null && w.pts !== sc.pts;
+  const grossOff = sc.complete && !sc.pickups && w.gross != null && w.gross !== sc.gross;
+  if (!holes.length && !ptsOff && !grossOff) return null;
+  // Every hole's points match but the total doesn't: the card was added up wrong.
+  const addErr = ptsOff && !holes.length && known.length === sc.rows.length;
+  // Would the card's points fit these strokes with a different number of shots?
+  let alt = null;
+  if (!addErr && (holes.length || ptsOff) && (known.length || ptsOff)) {
+    for (const d of [1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6]) {
+      const p = holePtsWith(sc, sc.total + d); const tot = Object.values(p).reduce((a, v) => a + (v || 0), 0);
+      if (known.every(h => p[h] === Number(wh[h])) && (!ptsOff || tot === w.pts)) { alt = sc.total + d; break; }
+    }
+  }
+  const lines = [];
+  if (grossOff) lines.push(`The card's total is ${w.gross} strokes, but the holes add up to ${sc.gross}.`);
+  if (ptsOff) lines.push(`The card says ${w.pts} points. The app makes it ${sc.pts}.`);
+  if (holes.length) lines.push(`Points differ on ${holesText(holes)}.`);
+  const short = grossOff ? `card total ${w.gross}, holes add up to ${sc.gross}` : ptsOff ? `card says ${w.pts} pts, app ${sc.pts}` : `points differ on ${holesText(holes)}`;
+  return {w, lines, holes, alt, addErr, grossOff, short};
+}
+function checkBoxHtml(k, sc, where){
+  if (!k) return '';
+  let tip;
+  if (k.grossOff) tip = where === 'scan' ? 'A hole may have been misread. Check each hole against the card before adding it.' : 'A hole may have been misread, or the card added up wrong. Check each hole against the card.';
+  else if (k.addErr) tip = "Every hole's points match, so the total on the card looks added up wrong. The app's total is right.";
+  else if (k.alt != null) tip = `The card's points fit these strokes with ${k.alt} shots, but the app gives ${sc.total}. The app works out the shots from the handicap, so its points stand${where === 'admin' ? '. If the shots are wrong, tap Shots to change them.' : '.'}`;
+  else tip = where === 'scan' ? `Check the strokes on ${k.holes.length ? 'those holes' : 'each hole'} against the card before adding it.` : `Check the strokes on ${k.holes.length ? 'those holes' : 'each hole'} against the card${where === 'admin' ? ' photo' : ''} and fix any that are wrong.`;
+  return `<div class="cardcheck"><b>${k.grossOff ? "Total doesn't match the card" : "Points don't match the card"}</b>${k.lines.map(l => `<p>${esc(l)}</p>`).join('')}<p class="hint">${esc(tip)}</p>${where === 'admin' ? `<button class="btn small" data-act="checkOk">Looked at it, clear this</button>` : ''}</div>`;
 }
 function metric(comp, rows){
   switch (comp.format) {
@@ -604,7 +647,8 @@ function cardCounts(cid, round, gid){ const c = D.comps[cid]; return !!(c && sco
 function notifyIfDone(cid, round, gid, before){
   if (before || !cardCounts(cid, round, gid)) return;
   const c = D.comps[cid]; const sc = scoreCard(c, round, gid); const u = unitFor(sc.rc.format);
-  sendNotify(`${gName(gid)} · round ${round} card in`, `${cardValueText(sc)}${u ? ' ' + u : ''}, signed by ${markerName(sc.card)} · ${c.name}`, 'white_check_mark');
+  const k = cardCheck(sc);
+  sendNotify(`${gName(gid)} · round ${round} card in`, `${cardValueText(sc)}${u ? ' ' + u : ''}, signed by ${markerName(sc.card)} · ${c.name}${k ? `\n⚠ Check the card: ${k.short}` : ''}`, k ? 'warning' : 'white_check_mark');
 }
 function seenAt(){ try { return Number(localStorage.getItem('rgc-activity-seen')) || 0; } catch (_) { return 0; } }
 function activityItems(){
@@ -616,7 +660,7 @@ function activityItems(){
   Object.values(D.cards).forEach(card => { const g = D.golfers[card.golferId], c = D.comps[card.compId]; if (!g || !c) return;
     if (t(card.startedAt)) out.push({t:t(card.startedAt), text:`${g.name} started round ${card.round}`, card});
     if (t(card.updatedAt) && card.updatedBy !== (S.user && S.user.uid)) { const sc = scoreCard(c, card.round, card.golferId); const u = unitFor(sc.rc.format);
-      if (sc.valid) out.push({t:t(card.updatedAt), text:`${g.name}'s round ${card.round} card counts: ${cardValueText(sc)}${u ? ' ' + u : ''}, signed by ${markerName(card)}`, card}); } });
+      if (sc.valid) { const k = cardCheck(sc); out.push({t:t(card.updatedAt), text:`${g.name}'s round ${card.round} card counts: ${cardValueText(sc)}${u ? ' ' + u : ''}, signed by ${markerName(card)}${k ? ` · ⚠ check the card (${k.short})` : ''}`, card}); } } });
   return out.filter(x => x.t > since && x.t <= Date.now() + 60000).sort((a, b) => b.t - a.t);
 }
 function agoText(ms){ const m = Math.round((Date.now() - ms) / 60000); if (m < 1) return 'just now'; if (m < 60) return `${m} min ago`; const h = Math.round(m / 60); if (h < 24 && new Date(ms).getDate() === new Date().getDate()) return `${h} hr ago`; return whenText(ms); }
@@ -835,8 +879,8 @@ function roundBoardHtml(c, n){
   const info = `<p class="hint" style="margin-bottom:10px">Round ${n}${r ? ' · ' + esc(roundLabel(r)) : ''} · ${esc((FORMATS[rc.format] || FORMATS.stableford).name)} · ${rc.holes.length} holes · ${esc((TEES[rc.tee] || TEES.white).name)} tees</p>`;
   const head = `<div class="lb-head"><span>Pos</span><span>Golfer</span><span>Score</span><span>Month</span></div>`;
   const rows = rb.ranked.map(sc => { const row = lb.all.find(r => r.gid === sc.gid); const counts = row && row.countedNs.has(n);
-    return `<li class="lb-row ${sc.pos === 1 ? 'first' : ''}"><span class="lb-pos">${sc.tied ? 'T' : ''}${sc.pos}</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>Marker ${esc(markerName(sc.card))}${cardStarted(sc.card) ? ' · started ' + esc(whenText(sc.card.startedAt)) : ''}${sc.onCb ? ' · on countback' : ''}</small></button><span class="lb-score">${esc(cardValueText(sc))}<small>${unitFor(rc.format)}</small></span><span class="lb-pts"><b>${counts ? 'Counts' : 'Dropped'}</b></span></li>`; }).join('');
-  const rest = rb.rest.map(sc => `<li class="lb-row lb-rest"><span class="lb-pos">–</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>${esc(cardStatus(sc))}</small></button><span class="lb-score"></span><span class="lb-pts"></span></li>`).join('');
+    return `<li class="lb-row ${sc.pos === 1 ? 'first' : ''}"><span class="lb-pos">${sc.tied ? 'T' : ''}${sc.pos}</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>Marker ${esc(markerName(sc.card))}${cardStarted(sc.card) ? ' · started ' + esc(whenText(sc.card.startedAt)) : ''}${sc.onCb ? ' · on countback' : ''}${S.isAdmin && cardCheck(sc) ? ' · <span class="cardpts">⚠ check card</span>' : ''}</small></button><span class="lb-score">${esc(cardValueText(sc))}<small>${unitFor(rc.format)}</small></span><span class="lb-pts"><b>${counts ? 'Counts' : 'Dropped'}</b></span></li>`; }).join('');
+  const rest = rb.rest.map(sc => `<li class="lb-row lb-rest"><span class="lb-pos">–</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>${esc(cardStatus(sc))}${S.isAdmin && cardCheck(sc) ? ' · <span class="cardpts">⚠ check card</span>' : ''}</small></button><span class="lb-score"></span><span class="lb-pts"></span></li>`).join('');
   return `${info}<ul class="list">${head}${rows}${rest}</ul>`;
 }
 
@@ -866,6 +910,9 @@ function viewCard(){
   else if (mine && W && !sc.marked) h += `<p class="hint" style="margin:-4px 0 12px">Your card counts once all ${rc.holes.length} holes are in and it's ticked as signed, by ${esc(deadlineText(sc.card))}. Then send the organiser a photo of your signed card.</p>`;
   else if (!W && !fin && !S.isAdmin && mine) h += `<p class="hint" style="margin:-4px 0 12px">${cardLocked(sc.card) ? (sc.valid ? 'Locked at midnight. This card counts.' : "Locked at midnight. It wasn't entered and signed in time, so it doesn't count.") : !entryOf(cid, S.myGid) ? 'Enter this month to add your card.' : 'This round is closed. Cards can be entered Friday to Sunday.'}</p>`;
   if (gid === S.myGid && !S.isAdmin && cardStarted(sc.card)) h += `<button class="btn block" style="margin:-4px 0 14px" data-act="photoCard" data-cid="${esc(cid)}" data-round="${round}">${ICONS.camera}Send a photo of my card to the organiser</button>`;
+  const chk = (S.isAdmin || gid === S.myGid) ? cardCheck(sc) : null;
+  if (chk) h += checkBoxHtml(chk, sc, S.isAdmin ? 'admin' : 'card');
+  const wpts = chk ? chk.w.holes || {} : {};
   if (S.isAdmin && !fin && sc.card) h += `<button class="textbtn" style="margin:-6px 0 10px" data-act="delCard">Delete this card (lets ${esc(firstName(g.name))} start the round again)</button>`;
   const nettRel = sc.runNett - sc.runPar;
   const cells = [['Gross', sc.gross || '–', '']];
@@ -887,7 +934,8 @@ function viewCard(){
       else res = typeof r.g === 'number' ? toPar(r.g - r.par) : '–';
     }
     const dots = r.shots > 0 ? '•'.repeat(r.shots) : r.shots < 0 ? 'gives ' + (-r.shots) : '';
-    return `<button class="hole ${W && S.activeHole === r.h ? 'active' : ''}" data-act="hole" data-h="${r.h}" ${W ? '' : 'disabled'} aria-label="Hole ${r.h}, par ${r.par}, score ${val}"><span class="h-num">${r.h}</span><span class="h-info"><span><b>Par ${r.par}</b> · SI ${r.si}${yds ? ` · ${yds[r.h-1]} yds` : ''}</span><span class="dots">${dots}</span></span><span class="h-score"><span class="sc ${cls}">${val}</span></span><span class="h-res ${rc}">${esc(String(res))}</span></button>`;
+    const off = chk && chk.holes.includes(r.h);
+    return `<button class="hole ${W && S.activeHole === r.h ? 'active' : ''} ${off ? 'differ' : ''}" data-act="hole" data-h="${r.h}" ${W ? '' : 'disabled'} aria-label="Hole ${r.h}, par ${r.par}, score ${val}"><span class="h-num">${r.h}</span><span class="h-info"><span><b>Par ${r.par}</b> · SI ${r.si}${yds ? ` · ${yds[r.h-1]} yds` : ''}${off ? ` · <span class="cardpts">card ${esc(String(wpts[r.h]))} pts</span>` : ''}</span><span class="dots">${dots}</span></span><span class="h-score"><span class="sc ${cls}">${val}</span></span><span class="h-res ${rc}">${esc(String(res))}</span></button>`;
   };
   const sub = (label, rows) => {
     const y = yds ? rows.reduce((a, r) => a + (yds[r.h-1] || 0), 0) : 0;
@@ -1300,14 +1348,16 @@ function scanPrompt(c, round){
     `Holes played: ${holes.join(', ')}. Ignore other holes.`, `Pars: ${pars}.`, `Golfers on the club list: ${names}.`, '',
     'Rules:',
     '- Read the gross strokes written for each golfer on each hole. A card holds up to four golfers.',
-    '- Ignore printed hole numbers, yardages, par, stroke index, totals, handicap, nett and Stableford points columns.',
+    '- Ignore printed hole numbers, yardages, par and stroke index. Never use written totals, nett scores or points to change the strokes you read for a hole.',
     '- Use "P" for a pick-up (struck through, dash, line, X, P or NR). Leave out blank holes.',
+    '- "points" is the Stableford points written by hand for that golfer on each hole, only if the card has a points column filled in for them, otherwise {}.',
+    '- "points_total" is the total Stableford points written for that golfer, and "gross_total" the total strokes written for them (the overall total, not Out or In). Use null for either if it is not written.',
     '- If a figure is hard to read, give your best reading and list the hole in "unclear".',
     '- "match" is the exact name from the club list when the name on the card clearly refers to that golfer, otherwise null. Never guess a match for an unclear name.',
     '- "marker" is the name in the marker or attesting signature box for that golfer, if one is written, otherwise null.',
     '- "marker_signed" is true if there is a signature or initials in the marker or attesting box for that golfer, otherwise false.', '',
     'Reply with only JSON:',
-    '{"golfers":[{"name_on_card":"as written","match":"name from list or null","marker":"name or null","marker_signed":true,"scores":{"1":5,"2":4,"3":"P"},"unclear":[7]}],"notes":""}',
+    '{"golfers":[{"name_on_card":"as written","match":"name from list or null","marker":"name or null","marker_signed":true,"scores":{"1":5,"2":4,"3":"P"},"points":{"1":2,"2":3,"3":0},"points_total":36,"gross_total":88,"unclear":[7]}],"notes":""}',
     'If it is not a scorecard, reply {"golfers":[],"notes":"the reason"}.'].join('\n');
 }
 async function imageToBase64(file){
@@ -1353,19 +1403,46 @@ function buildScanRows(res, c, ctx){
     const gid = recognise(g && typeof g.match === 'string' ? g.match : null, name);
     const markerRead = g && typeof g.marker === 'string' ? g.marker.trim().slice(0, 60) : ''; const signedRead = !!(g && g.marker_signed === true);
     const unclear = Array.isArray(g && g.unclear) ? g.unclear.map(Number).filter(h => holes.includes(h)) : [];
+    // What's written on the card besides the strokes: points per hole and the totals, for the card check.
+    const num = (v, lo, hi) => { if (v === null || v === undefined || v === '') return null; const n = Number(v); return Number.isInteger(n) && n >= lo && n <= hi ? n : null; };
+    const rawP = (g && typeof g.points === 'object' && g.points) || {}; const wp = {};
+    holes.forEach(h => { const n = num(rawP[h] !== undefined ? rawP[h] : rawP[String(h)], 0, 9); if (n !== null) wp[String(h)] = n; });
+    const written = {pts: num(g && g.points_total, 0, 99), gross: num(g && g.gross_total, 9, 250), holes: wp};
     let status = 'ok', why = '';
     if (!gid) { status = 'reject'; why = "Name not recognised from the golfer list, so this card isn't accepted."; }
     else if (seen.has(gid)) { status = 'reject'; why = 'This golfer appears twice on the card.'; }
     else if (!S.isAdmin && gid !== S.myGid) { status = 'reject'; why = 'Each player submits their own card, so this one is left for them.'; }
     else if (S.isAdmin && !entryOf(c.id, gid)) { why = "Not entered this month. Adding the card enters them (unpaid)."; }
     if (gid) seen.add(gid);
-    return {name, gid, markerRead, signedRead, scores, unclear, status, why};
+    return {name, gid, markerRead, signedRead, scores, unclear, status, why, written};
   }).filter(r => Object.keys(r.scores).length || r.status === 'reject');
   // Marker: the name read from the card's marker box, else the name already on the card.
   rows.filter(r => r.status === 'ok').forEach(r => { const prev = cardOf(c.id, round, r.gid);
     const known = r.markerRead ? Object.values(D.golfers).find(x => normName(x.name) === normName(r.markerRead)) : null;
     r.marker = known ? known.name : r.markerRead || markerName(prev); r.signed = r.signedRead || isSigned(prev); });
   return rows;
+}
+// The check for one golfer on the scan review, using the strokes as they stand in the boxes.
+function scanCheck(c, round, r, scores){
+  if (!r.written) return null; const base = cardBase(c.id, round, r.gid);
+  const card = Object.assign(base, {scores: Object.assign(base.scores, scores), scanned: Object.assign({}, r.written)});
+  const sc = scoreCard(c, round, r.gid, card); return {k: cardCheck(sc), sc};
+}
+function scanCheckHtml(res, r){
+  if (!res) return ''; if (res.k) return checkBoxHtml(res.k, res.sc, 'scan');
+  const w = r.written; const any = Object.keys(w.holes).length || (res.sc.complete && (w.pts != null || w.gross != null));
+  return any ? `<p class="hint okline">✓ Matches the points and totals written on the card.</p>` : '';
+}
+function scanBoxScores(i, holes){
+  const out = {}; holes.forEach(hh => { const inp = document.getElementById(`sv-${i}-${hh}`); const t = (inp ? inp.value : '').trim().toUpperCase();
+    if (t === 'P') out[hh] = 'P'; else if (/^\d{1,2}$/.test(t) && +t >= 1 && +t <= 20) out[hh] = +t; });
+  return out;
+}
+function refreshScanCheck(i){
+  const sh = S.sheet; const c = sh && sh.type === 'scan' && D.comps[sh.ctx.cid]; const r = c && sh.rows && sh.rows[i]; if (!r || r.status !== 'ok') return;
+  const holes = rcfg(c, sh.ctx.round).holes; const res = scanCheck(c, sh.ctx.round, r, scanBoxScores(i, holes)); const k = res && res.k;
+  const box = document.getElementById('sck-' + i); if (box) box.innerHTML = scanCheckHtml(res, r);
+  holes.forEach(hh => { const inp = document.getElementById(`sv-${i}-${hh}`); if (inp) inp.closest('.sg').classList.toggle('differ', !!(k && k.holes.includes(hh))); });
 }
 function sheetScan(){
   const sh = S.sheet; const c = D.comps[sh.ctx.cid]; if (!c) return null; const round = sh.ctx.round; const holes = rcfg(c, round).holes;
@@ -1380,13 +1457,15 @@ function sheetScan(){
   const okRows = sh.rows.filter(r => r.status === 'ok');
   h += sh.rows.map((r, i) => {
     if (r.status === 'reject') return `<div class="scanrow rejected"><div class="oncard"><span class="label">On the card</span><b>${esc(r.name || 'Unnamed golfer')}</b></div><p class="errbox">${esc(r.why)}</p></div>`;
+    const chk = scanCheck(c, round, r, r.scores); const k = chk && chk.k;
     return `<div class="scanrow"><div class="scanrow-head"><span class="oncard"><span class="label">On the card</span><b>${esc(r.name)}</b></span><span class="oncard"><span class="label">Golfer</span><b class="okname">${esc(gName(r.gid))}</b></span></div>
       <label class="field" style="margin:0"><span>Marker's name</span><input type="text" id="sm-${i}" maxlength="60" autocomplete="off" list="markerNames" value="${esc(r.marker || '')}" placeholder="Who marked the card?"></label>
       <label class="signchk"><input type="checkbox" id="ss-${i}" ${r.signed ? 'checked' : ''}><span>The marker has signed this card</span></label>
       ${r.signedRead ? '' : `<p class="hint">No marker signature was found on the photo. Only tick this if the card is signed.</p>`}
       ${r.why ? `<p class="hint">${esc(r.why)}</p>` : ''}
-      <div class="sgrid">${holes.map(hh => `<label class="sg ${r.unclear.includes(hh) ? 'unclear' : ''}"><span>${hh}</span><input type="text" inputmode="numeric" maxlength="2" autocomplete="off" id="sv-${i}-${hh}" value="${r.scores[hh] !== undefined ? esc(String(r.scores[hh])) : ''}" aria-label="Hole ${hh}"></label>`).join('')}</div>
-      <p class="hint">${Object.keys(r.scores).length} of ${holes.length} holes read${r.unclear.length ? ` · check hole${r.unclear.length > 1 ? 's' : ''} ${r.unclear.join(', ')}` : ''}</p></div>`;
+      <div class="sgrid">${holes.map(hh => `<label class="sg ${r.unclear.includes(hh) ? 'unclear' : ''} ${k && k.holes.includes(hh) ? 'differ' : ''}"><span>${hh}</span><input type="text" inputmode="numeric" maxlength="2" autocomplete="off" id="sv-${i}-${hh}" value="${r.scores[hh] !== undefined ? esc(String(r.scores[hh])) : ''}" aria-label="Hole ${hh}"></label>`).join('')}</div>
+      <p class="hint">${Object.keys(r.scores).length} of ${holes.length} holes read${r.unclear.length ? ` · check hole${r.unclear.length > 1 ? 's' : ''} ${r.unclear.join(', ')}` : ''}</p>
+      <div id="sck-${i}">${scanCheckHtml(chk, r)}</div></div>`;
   }).join('');
   h += `<datalist id="markerNames">${sortedGolfers().map(x => `<option value="${esc(x.name)}">`).join('')}</datalist>`;
   h += okRows.length ? `<button class="btn primary block" data-act="applyScan">Add ${okRows.length} card${okRows.length === 1 ? '' : 's'}</button><p class="hint" style="margin-top:10px">Scanned holes replace what's on each card. Blank holes are left as they are.</p>` : `<div class="confirm-actions"><button class="btn" data-act="closeSheet">Close</button><button class="btn primary" data-act="newScan">New photo</button></div>`;
@@ -1414,7 +1493,7 @@ async function applyScan(){
     if (signed && !marker) { bad = bad || `Add the marker's name for ${gName(r.gid)}.`; return; }
     if (S.isAdmin && !entryOf(c.id, r.gid)) ops.push({path:`comps/${c.id}/entries/${r.gid}`, data:{compId:c.id, golferId:r.gid, paid:false, method:null, paidAt:null, createdAt:Date.now()}});
     const base = cardBase(c.id, round, r.gid);
-    ops.push({path:`comps/${c.id}/cards/${round}_${r.gid}`, data:Object.assign(base, {marker, signed, scores:Object.assign(base.scores, scores), updatedAt:Date.now(), updatedBy:S.user.uid, scanned:true})});
+    ops.push({path:`comps/${c.id}/cards/${round}_${r.gid}`, data:Object.assign(base, {marker, signed, scores:Object.assign(base.scores, scores), updatedAt:Date.now(), updatedBy:S.user.uid, scanned:Object.assign({at:Date.now()}, r.written || {pts:null, gross:null, holes:{}})})});
     r.done = {signed, marker};
   });
   if (bad) { toast(bad); return; }
@@ -1497,6 +1576,9 @@ const ACT = {
     if (v !== 'X' && idx === holes.length - 1 && Object.keys(scores).length >= holes.length) toast(markedOK(cardOf(cid, round, gid)) ? 'Card complete' : "Card complete. Add the marker's name and tick that it's signed.");
   },
   editShots(){ openSheet({type:'shots'}); },
+  async checkOk(){ const {cid, round, gid} = S.card || {}; const card = cardOf(cid, round, gid); if (!S.isAdmin || !writtenOf(card)) return;
+    const base = cardBase(cid, round, gid); const data = Object.assign(base, {updatedAt: card.updatedAt || Date.now(), updatedBy: card.updatedBy || S.user.uid, scanned: Object.assign(base.scanned, {ok:true})});
+    const path = `comps/${cid}/cards/${round}_${gid}`; localSet(path, data); render(); if (await put(path, data)) toast('Card check cleared'); },
   photoCard(el){ PHOTO_PENDING = {cid: el.dataset.cid, round: Number(el.dataset.round)}; const f = $('#photoFile'); if (!f) return; f.value = ''; f.click(); },
   async sharePhoto(){ const sh = S.sheet; const f = sh && sh.file; if (!f) return; const c = D.comps[sh.ctx.cid];
     const text = `Pot of Gold · ${gName(S.myGid)} · ${c ? c.name : ''} round ${sh.ctx.round} card`;
@@ -1754,6 +1836,7 @@ document.addEventListener('change', ev => {
   if (t.id === 'f-perround') { document.querySelectorAll('#f-rounds .rrow-opts').forEach(x => { x.hidden = !t.checked; }); return; }
   if (t.id === 'f-r-1') { const ins = [...document.querySelectorAll('#f-rounds input[type=date]')]; ins.slice(1).forEach((inp, i) => { inp.value = addDays(t.value, 7*(i+1)); }); }
 });
+document.addEventListener('input', ev => { const m = /^sv-(\d+)-\d+$/.exec(ev.target.id || ''); if (m) refreshScanCheck(Number(m[1])); });
 document.addEventListener('toggle', ev => { if (ev.target.id === 'courseDetails') S.courseOpen = ev.target.open; }, true);
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && S.sheet) closeSheet(); });
 document.addEventListener('focusout', () => { if (deferred) { deferred = false; setTimeout(render, 350); } });

@@ -376,6 +376,15 @@ details.course[open] summary::after{content:"Hide"}
 .sg input[type=text]{min-height:38px;padding:0;text-align:center;font-family:var(--display);font-stretch:80%;font-weight:700;font-size:18px;border-radius:7px}
 .sg.unclear input[type=text]{border-color:var(--warn);background:var(--warn-bg)}
 .sg.bad input[type=text]{border-color:var(--birdie);outline:2px solid var(--birdie);outline-offset:0}
+  .sg.differ input[type=text]{border-color:var(--warn);outline:2px solid var(--warn);outline-offset:0}
+  .cardcheck{padding:10px 12px;border-radius:10px;background:var(--warn-bg);border-left:3px solid var(--warn);font-size:13px;margin:0 0 12px}
+  .cardcheck b{display:block;color:var(--warn);margin-bottom:4px}
+  .cardcheck p{margin:2px 0}
+  .cardcheck .hint{margin-top:6px}
+  .cardcheck .btn{margin-top:8px}
+  .hole.differ{box-shadow:inset 3px 0 0 var(--warn)}
+  .cardpts{color:var(--warn);font-weight:600}
+  .okline{color:var(--fairway);margin-top:6px}
 
 .toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom,0px));transform:translate(-50%,16px);background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:10px;font-size:14px;font-weight:500;opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;z-index:60;max-width:calc(100% - 32px);text-align:center}
 .toast.show{opacity:1;transform:translate(-50%,0)}
