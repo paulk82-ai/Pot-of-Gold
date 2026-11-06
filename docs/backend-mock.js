@@ -56,7 +56,7 @@ export async function init(cfg){
         throw deny();
       }
       if (s[2] === 'twos') {
-        // 2's club: opt in for a round within 10 minutes of starting it; say you've paid. Only the organiser marks it paid.
+        // 2's club: join a round before starting it or within 10 minutes of starting; say you've paid. Only the organiser marks it paid.
         const cur = store[path]; if (!data) throw deny();
         if (!cur) {
           const keysOk = Object.keys(data).every(k => ['compId', 'golferId', 'round', 'paid', 'method', 'paidAt', 'createdAt', 'claimed', 'claimMethod', 'claimedAt'].includes(k));
@@ -65,7 +65,7 @@ export async function init(cfg){
           if (!store[`comps/${s[1]}/entries/${g}`]) throw deny('Enter this month first.');
           if (!roundOpen(comp, data.round)) throw deny('This round is not open.');
           if (typeof data.createdAt !== 'number' || Math.abs(data.createdAt - Date.now()) > 600000) throw deny();
-          if (!card || !(card.startedAt > Date.now() - 600000)) throw deny("Join the 2's when you start your round.");
+          if (card && !(card.startedAt > Date.now() - 600000)) throw deny("Join the 2's before you tee off.");
           return;
         }
         if (cur.golferId !== g || typeof data.claimed !== 'boolean') throw deny();

@@ -132,7 +132,7 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 
 Off until you switch it on in **Admin → 2's club**. Before switching it on, paste the latest `firestore.rules` into Firebase (Firestore Database → Rules → Publish), because the 2's club needs its own rules.
 
-- €2 a round (you can change it in Admin). Golfers tick **I'm in the 2's club this round** when they tap **Start my round**. If they forget, they can still join for 10 minutes after starting, but not later.
+- €2 a round (you can change it in Admin). Golfers can tap **Join** in the 2's panel on Home any time the round is open before they tee off. When they tap **Start my round**, the app knows if they're already in; if not, it asks **Are you in the 2's club this round?** with **Yes, I'm in** or **No, just start**. They can still join for 10 minutes after starting, but not later.
 - They pay on Revolut and tap **I've paid**, the same as the entry. You confirm it under the month's **2's club** button. Only paid golfers can win.
 - A gross 2 on any hole wins the pot, on a complete card ticked as signed by midnight. Each 2 is a share, so two 2s get a double share.
 - A hole-in-one takes the whole pot, however many 2s there are. Two aces share it.

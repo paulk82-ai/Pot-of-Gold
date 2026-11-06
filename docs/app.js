@@ -735,7 +735,7 @@ function homeHero(c){
       if (canStart(c.id, open.n)) {
         h += `<div class="mycard"><span class="label">Your round ${open.n} card</span><b>Not started yet</b></div>`;
         h += `<button class="btn primary block big" data-act="startRound" data-cid="${cid}" data-round="${open.n}">Start my round</button>`;
-        h += `<p class="hint">Tap this before you tee off. You get one round this weekend, and it has to be entered and ticked as signed by midnight that day, or it doesn't count.</p>`;
+        h += `<p class="hint">Tap this before you tee off. You get one round this weekend, and it has to be entered and ticked as signed by midnight that day, or it doesn't count.${twosOn() ? (twosOf(c.id, open.n, S.myGid) ? " You're in the 2's this round." : " It'll ask if you're in the 2's club.") : ''}</p>`;
       } else {
         const status = done ? `${val} · signed by ${markerName(card)}` : late ? "Not finished by midnight, so it doesn't count" : !sc.filled ? 'No scores yet' : !sc.complete ? `Thru ${sc.filled} of ${sc.rows.length} holes` : sc.nr ? 'No return (picked up)' : `${val} · not ticked as signed yet`;
         const timing = cardStarted(card) ? (late ? `Started ${whenText(card.startedAt)} · locked at midnight` : `Started ${whenText(card.startedAt)} · enter by ${deadlineText(card)}`) : '';
@@ -801,6 +801,8 @@ function nudgeHtml(){
   const e = entryOf(c.id, S.myGid); const line = roundLine(c);
   if (!e && stillToPlay(c)) return `<div class="nudge"><span><b>You haven't entered ${esc(c.name)} yet</b>${line ? `<small>${esc(line)}</small>` : ''}</span><button class="btn small primary" data-act="selfEnter" data-cid="${esc(c.id)}">Enter now</button></div>`;
   if (e && payState(e) === 'unpaid') return `<div class="nudge"><span><b>Your ${euro(compFee(c))} entry isn't paid yet</b><small>Pay through Revolut, then tap I've paid.</small></span><button class="btn small primary" data-act="pay" data-id="${esc(c.id + '/' + S.myGid)}">Pay now</button></div>`;
+  if (twosOn()) { const t = Object.values(D.twos).find(x => x.golferId === S.myGid && twosPayState(x) === 'unpaid' && D.comps[x.compId] && (twosItem(x.compId, x.round) || {}).state === 'open');
+    if (t) return `<div class="nudge"><span><b>Your ${euro(twosFee())} for the 2's isn't paid yet</b><small>Round ${t.round}. Your 2 only counts once it's paid.</small></span><button class="btn small primary" data-act="twosPay" data-id="${esc(t.compId + '/' + t.round + '_' + S.myGid)}">Pay ${euro(twosFee())}</button></div>`; }
   return '';
 }
 // Organiser's list of things waiting on them: join requests and payments golfers say they've made.
@@ -1169,7 +1171,7 @@ function viewAdmin(){
       <p class="hint">For card payments from people without Revolut, turn on Revtag discoverability in your Revolut app's privacy settings. Revolut also limits how much you can receive by card through your link each week (the limit is shown in your Revolut app). Payments from other Revolut users have no limit.</p></div></section>
     <section><div class="sec-head"><h2>Prize money</h2></div><div class="panel"><div class="grid2"><label class="field"><span>Winner %</span>${n('s-p1', k.prize[0] != null ? k.prize[0] : 60)}</label><label class="field"><span>Runner-up %</span>${n('s-p2', k.prize[1] != null ? k.prize[1] : 40)}</label></div>
       <p class="hint">${kittyPct > 0 ? `The other ${kittyPct}% of each pot stays in the kitty.` : kittyPct < 0 ? 'These add up to more than 100%.' : 'The whole pot goes to the top two.'}</p></div></section>
-    <section><div class="sec-head"><h2>2's club</h2></div><div class="panel"><label class="check" style="margin-bottom:10px"><input type="checkbox" id="s-twosOn" ${k.twosOn ? 'checked' : ''}><span><b>Run the 2's club</b><small>Golfers can opt in each round when they tap Start my round.</small></span></label>
+    <section><div class="sec-head"><h2>2's club</h2></div><div class="panel"><label class="check" style="margin-bottom:10px"><input type="checkbox" id="s-twosOn" ${k.twosOn ? 'checked' : ''}><span><b>Run the 2's club</b><small>Golfers join each round from Home before they tee off, or when they tap Start my round.</small></span></label>
       <div class="grid2"><label class="field"><span>Cost a round (€)</span>${n('s-twosFee', k.twosFee, 'min="1" step="1"')}</label></div>
       <p class="hint">Paid on Revolut like the entry, and only paid golfers can win. A gross 2 on any hole wins, each 2 is a share of the pot, and a hole-in-one takes the whole pot. Shares are rounded down to the euro, with the leftover kept in the pot. With no 2s the pot rolls over to the next weekend.</p></div></section>
     <section><div class="sec-head"><h2>League points</h2></div><div class="panel"><div class="grid5"><label class="field"><span>1st</span>${n('s-pt1', k.points[0])}</label><label class="field"><span>2nd</span>${n('s-pt2', k.points[1])}</label><label class="field"><span>3rd</span>${n('s-pt3', k.points[2])}</label><label class="field"><span>4th</span>${n('s-pt4', k.points[3])}</label><label class="field"><span>Others</span>${n('s-pte', k.entryPoint)}</label></div><p class="hint">Given each weekend round, on that round's leaderboard, and each golfer's best rounds count (the same number as "Best cards count" below). "Others" is the point for every other signed card.</p></div></section>
@@ -1228,9 +1230,14 @@ function renderSheet(){
 }
 function sheetStart(){
   const c = D.comps[S.sheet.cid]; if (!c) return null; const n = S.sheet.round; const x = twosItem(c.id, n); const fee = twosFee();
-  return `<h3>Start your round?</h3><p class="sub">This is your round ${n} card for ${esc(c.name)}. You only get one this weekend. Enter your scores and tick it as signed by midnight tonight, or the round won't count.</p>
-    <label class="check twos-opt"><input type="checkbox" id="twosIn"><span><b>I'm in the 2's club this round · ${euro(fee)}</b><small>Pot now ${euro(x ? x.pot : 0)}${x && x.carryIn > 0.004 ? `, including ${euro(x.carryIn)} rolled over` : ''}. A gross 2 on any hole wins it, and an ace takes the lot. Pay your ${euro(fee)} for it to count.</small></span></label>
-    <div class="confirm-actions"><button class="btn" data-act="closeSheet">Cancel</button><button class="btn primary" data-act="startGo">Start my round</button></div>`;
+  const mine = twosOf(c.id, n, S.myGid); const ps = twosPayState(mine);
+  let h = `<h3>Start your round?</h3><p class="sub">This is your round ${n} card for ${esc(c.name)}. You only get one this weekend. Enter your scores and tick it as signed by midnight tonight, or the round won't count.</p>`;
+  const pot = `Pot now ${euro(x ? x.pot : 0)}${x && x.carryIn > 0.004 ? `, including ${euro(x.carryIn)} rolled over` : ''}.`;
+  if (mine) return h + `<div class="twos-ask in"><span class="twos-badge sm" aria-hidden="true">2</span><span><b>You're in the 2's club this round</b><small>${pot} ${ps === 'paid' ? 'Your €' + fee + ' is paid.' : ps === 'claimed' ? 'The organiser is checking your payment.' : `Your ${euro(fee)} isn't paid yet. Pay on Home after your round; your 2 only counts once it's paid.`}</small></span></div>
+    <div class="confirm-actions"><button class="btn" data-act="closeSheet">Cancel</button><button class="btn primary" data-act="startGo" data-twos="0">Start my round</button></div>`;
+  return h + `<div class="twos-ask"><span class="twos-badge sm" aria-hidden="true">2</span><span><b>Are you in the 2's club this round? · ${euro(fee)}</b><small>${pot} A gross 2 on any hole wins it, and an ace takes the lot. Pay your ${euro(fee)} for it to count.</small></span></div>
+    <div class="twos-choice"><button class="btn primary" data-act="startGo" data-twos="1">Yes, I'm in · ${euro(fee)}</button><button class="btn" data-act="startGo" data-twos="0">No, just start</button></div>
+    <button class="textbtn" style="display:block;margin:10px auto 0" data-act="closeSheet">Cancel</button>`;
 }
 async function doStartRound(cid, round, twos){
   const c = D.comps[cid]; if (!c || !canStart(cid, round)) return;
@@ -1632,7 +1639,7 @@ const ACT = {
   startRound(el){ const cid = el.dataset.cid, round = Number(el.dataset.round); const c = D.comps[cid]; if (!c || !canStart(cid, round)) return;
     if (twosOn()) { openSheet({type:'start', cid, round}); return; }
     askConfirm('Start your round?', `This is your round ${round} card for ${c.name}. You only get one this weekend. Enter your scores and tick it as signed by midnight tonight, or the round won't count.`, 'Start my round', () => doStartRound(cid, round, false)); },
-  startGo(){ const sh = S.sheet; if (!sh || sh.type !== 'start') return; const twos = !!($('#twosIn') && $('#twosIn').checked); closeSheetQuiet(); doStartRound(sh.cid, sh.round, twos); },
+  startGo(el){ const sh = S.sheet; if (!sh || sh.type !== 'start') return; const twos = el.dataset.twos === '1' && !twosOf(sh.cid, sh.round, S.myGid); closeSheetQuiet(); doStartRound(sh.cid, sh.round, twos); },
   twosJoin(el){ const cid = el.dataset.cid, round = Number(el.dataset.round); if (canJoinTwos(cid, round)) joinTwos(cid, round); },
   twosPay(el){ openSheet({type:'twosPay', id: el.dataset.id}); },
   twosTable(){ S.view = 'table'; S.leagueTab = 'twos'; S.card = null; S.compId = null; S.playerId = null; top(); render(); },
@@ -1652,7 +1659,7 @@ const ACT = {
     if (x.winners.length) { lines.push(`${x.state === 'played' ? 'Pot' : 'Pot so far'}: ${euro(x.pot)}${x.carryIn > 0.004 ? ` (incl. ${euro(x.carryIn)} rolled over)` : ''}`); if (x.ace) lines.push('Hole-in-one! It takes the whole pot.'); x.winners.forEach(w => lines.push(`🎯 ${twosWho(w, true)}`)); if (x.leftover > 0.004) lines.push(`${euro(x.leftover)} left over rolls on to next weekend.`); }
     else if (x.state === 'played') lines.push(`No 2s this weekend, so the ${euro(x.pot)} rolls over. Next weekend's pot starts at ${euro(x.pot)}!`);
     else lines.push(`Pot so far: ${euro(x.pot)}${x.carryIn > 0.004 ? ` (incl. ${euro(x.carryIn)} rolled over)` : ''}. No 2s yet.`);
-    lines.push(`${euro(twosFee())} to join: tick the 2's box when you tap Start my round. ${appUrl()}`);
+    lines.push(`${euro(twosFee())} to join: tap Join on Home before you tee off, or say yes when you tap Start my round. ${appUrl()}`);
     shareText(lines.join('\n')); },
   // (start a round, and join the 2's if ticked)
   delCard(){ const {cid, round, gid} = S.card || {}; if (!S.isAdmin || !cardOf(cid, round, gid)) return;
@@ -1675,10 +1682,15 @@ const ACT = {
     if (!un.length) { toast('Everyone has paid or says they have.'); return; }
     shareText([`Pot of Gold · ${c.name}`, `Entry is ${euro(compFee(c))} for the month. Still to pay: ${un.join(', ')}.`, `Pay with Revolut: ${revUrl()} (Revolut app, or debit card, Apple Pay or Google Pay).`, `Then tap "I've paid" in the app: ${appUrl()}`].join('\n')); },
   remindAll(el){ const c = D.comps[el.dataset.id]; if (!c) return; const L = chaseLists(c); const names = list => list.map(g => g.name).join(', ');
-    if (!L.notEntered.length && !L.unpaid.length) { toast("Everyone's entered and paid."); return; }
+    const tw = twosOn() ? compRounds(c).map(r => twosItem(c.id, r.n)).find(x => x && x.state === 'open') : null;
+    const twUnpaid = tw ? tw.entrants.filter(t => twosPayState(t) === 'unpaid').map(t => D.golfers[t.golferId]).filter(Boolean).sort(byName) : [];
+    if (!L.notEntered.length && !L.unpaid.length && !twUnpaid.length && !tw) { toast("Everyone's entered and paid."); return; }
     const lines = [`⛳ Pot of Gold · ${c.name}`]; const rl = roundLine(c); if (rl) lines.push(rl); lines.push('');
     if (L.notEntered.length) lines.push(`Not entered yet: ${names(L.notEntered)}. Open the app and tap Enter ${c.name}, then pay ${euro(compFee(c))}.`);
     if (L.unpaid.length) lines.push(`Entered but not paid: ${names(L.unpaid)}. Tap Pay now on Home, pay through Revolut, then tap I've paid.`);
+    if (tw) { if (L.notEntered.length || L.unpaid.length) lines.push('');
+      lines.push(`🎯 2's club this weekend: ${euro(tw.pot)} in the pot${tw.carryIn > 0.004 ? ` (${euro(tw.carryIn)} rolled over)` : ''}. ${euro(twosFee())} to join: tap Join on Home before you tee off, or say yes when you tap Start my round.`);
+      if (twUnpaid.length) lines.push(`2's not paid yet: ${names(twUnpaid)}. A 2 only counts once it's paid.`); }
     lines.push('', appUrl()); shareText(lines.join('\n')); },
   shareTable(el){ const c = D.comps[el.dataset.id || S.compId]; if (!c) return; const lb = leaderboard(c); const fin = c.status === 'final'; const u = monthUnit(c); const best = compBest(c);
     const lines = [`Pot of Gold · ${c.name}`, fin ? 'Final results' : `Table so far · best ${best} of ${compRounds(c).length} rounds count`, ''];
@@ -1882,8 +1894,13 @@ function twosResult(x){
   return x.state === 'played' ? `No 2s · ${euro(x.pot)} rolled over` : 'No 2s yet';
 }
 function twosPayState(t){ return !t ? 'none' : t.paid ? 'paid' : t.claimed ? 'claimed' : 'unpaid'; }
-// Opting in is only allowed when starting a round (or within 10 minutes of starting it).
-function canJoinTwos(cid, round){ const card = cardOf(cid, round, S.myGid); return !!(twosOn() && S.myGid && !twosOf(cid, round, S.myGid) && cardStarted(card) && !cardLocked(card) && Date.now() - msOf(card.startedAt) < 600000); }
+// Joining the 2's: while the round is open, before teeing off (round not started yet) or within 10 minutes of starting.
+function canJoinTwos(cid, round){
+  const c = D.comps[cid]; const r = c && compRounds(c).find(x => x.n === Number(round)); const me = S.myGid;
+  if (!twosOn() || !me || !c || c.status !== 'open' || !r || roundState(r) !== 'open' || !entryOf(cid, me) || twosOf(cid, round, me)) return false;
+  const card = cardOf(cid, round, me); if (!cardStarted(card)) return true;
+  return !cardLocked(card) && Date.now() - msOf(card.startedAt) < 600000;
+}
 function twosPanelHtml(x, big){
   const me = S.myGid; const open = x.state === 'open'; const mine = me ? twosOf(x.c.id, x.r.n, me) : null; const fee = twosFee();
   const lbl = x.state === 'upcoming' ? `Round ${x.r.n} opens ${dParts(x.r.from).dow} ${dParts(x.r.from).day} ${dParts(x.r.from).mon}` : `Round ${x.r.n}${open ? ' · this weekend' : ' · ' + esc(x.c.name)}`;
@@ -1897,8 +1914,8 @@ function twosPanelHtml(x, big){
   if (me && open && !S.isAdmin) {
     const ps = twosPayState(mine); const id = `${x.c.id}/${x.r.n}_${me}`;
     if (mine) h += `<div class="twos-me ${ps}"><span>${ps === 'paid' ? "You're in · paid" : ps === 'claimed' ? "You're in · the organiser is checking your payment" : `You're in · ${euro(fee)} to pay`}</span>${ps === 'unpaid' ? `<button class="btn small primary" data-act="twosPay" data-id="${esc(id)}">Pay ${euro(fee)}</button>` : ''}</div>`;
-    else if (canJoinTwos(x.c.id, x.r.n)) h += `<div class="twos-me"><span>Forgot to tick it? You can still join for 10 minutes after starting.</span><button class="btn small primary" data-act="twosJoin" data-cid="${esc(x.c.id)}" data-round="${x.r.n}">Join · ${euro(fee)}</button></div>`;
-    else if (entryOf(x.c.id, me) && canStart(x.c.id, x.r.n)) h += `<p class="hint">To join, tick the 2's box when you tap Start my round (${euro(fee)}).</p>`;
+    else if (canJoinTwos(x.c.id, x.r.n)) h += `<div class="twos-me"><span>${cardStarted(cardOf(x.c.id, x.r.n, me)) ? "Not in the 2's? You can still join for 10 minutes after starting." : "Playing this weekend? Join the 2's before you tee off."}</span><button class="btn small primary" data-act="twosJoin" data-cid="${esc(x.c.id)}" data-round="${x.r.n}">Join · ${euro(fee)}</button></div>`;
+    else if (!entryOf(x.c.id, me)) h += `<p class="hint">Enter ${esc(x.c.name)} to play the 2's.</p>`;
     else if (cardStarted(cardOf(x.c.id, x.r.n, me))) h += `<p class="hint">You're not in the 2's this round.</p>`;
   }
   if (!big) h += `<button class="textbtn" data-act="twosTable">2's club results and rules</button>`;
@@ -1908,7 +1925,7 @@ function twosTableHtml(){
   if (!twosOn()) return `<section class="empty"><p class="hint">The 2's club isn't running. The organiser can turn it on in Admin.</p></section>`;
   const L = twosLedger(); const x = twosNow(); const fee = twosFee();
   let h = x ? twosPanelHtml(x, true) : '';
-  h += `<div class="panel twos-rules"><b>How it works</b><ul><li>${euro(fee)} a round. Tick the 2's box when you tap <b>Start my round</b>, then pay on Revolut. <b>Your ${euro(fee)} must be paid</b> for a 2 to count.</li><li>A gross 2 on any hole wins the pot, on a signed card entered by midnight.</li><li>Two or more 2s? Each 2 is a share, so two 2s get a double share.</li><li><b>A hole-in-one takes the whole pot</b>, however many 2s there are. Two aces share it.</li><li>Shares are rounded down to the euro. Anything left over stays in the pot for next weekend.</li><li>No 2s that weekend? The whole pot rolls over to the next one.</li><li>The organiser pays winners on Revolut.</li></ul></div>`;
+  h += `<div class="panel twos-rules"><b>How it works</b><ul><li>${euro(fee)} a round. Join on Home before you tee off, or say yes when you tap <b>Start my round</b>, then pay on Revolut. <b>Your ${euro(fee)} must be paid</b> for a 2 to count.</li><li>A gross 2 on any hole wins the pot, on a signed card entered by midnight.</li><li>Two or more 2s? Each 2 is a share, so two 2s get a double share.</li><li><b>A hole-in-one takes the whole pot</b>, however many 2s there are. Two aces share it.</li><li>Shares are rounded down to the euro. Anything left over stays in the pot for next weekend.</li><li>No 2s that weekend? The whole pot rolls over to the next one.</li><li>The organiser pays winners on Revolut.</li></ul></div>`;
   const done = L.filter(i => i.state === 'played' && (i.entrants.length || i.carryIn > 0.004)).reverse();
   if (done.length) h += `<div class="sec-head"><h2>Results</h2></div><ul class="list">${done.map(i => `<li><div class="row twos-row"><span class="row-date"><b>R${i.r.n}</b>${esc(dParts(i.r.from).mon)}</span><span class="row-main"><span class="row-title">${i.ace ? 'Hole-in-one! ' : ''}${i.winners.length ? esc(i.winners.map(w => gName(w.gid)).join(', ')) : 'No 2s'}</span><span class="row-sub">${i.winners.length ? i.winners.map(w => `${esc(firstName(gName(w.gid)))}: ${esc(twosDesc(w))} · <b>${euro(w.won)}</b>`).join('<br>') : `${euro(i.pot)} rolled over`}${i.winners.length && i.leftover > 0.004 ? `<br>${euro(i.leftover)} left over, rolled on` : ''}<br>${i.entrants.length} in${i.carryIn > 0.004 ? ` · ${euro(i.carryIn)} rolled in` : ''}</span></span><span class="twos-amt ${i.winners.length ? 'won' : ''}">${euro(i.pot)}</span></div></li>`).join('')}</ul>`;
   const paidOut = L.filter(i => i.state === 'played').reduce((a, i) => a + i.winners.reduce((b, w) => b + w.won, 0), 0);
