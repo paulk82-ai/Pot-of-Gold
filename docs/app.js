@@ -715,7 +715,7 @@ function viewHome(){
     h += `<section class="hero"><span class="eyebrow">Pot of Gold</span><h1 class="hero-title">No month running</h1><p class="hero-sub">${S.isAdmin ? 'Create the next month and it shows here for everyone.' : 'The organiser will post the next month here.'}</p>${S.isAdmin ? '<button class="btn primary block" data-act="newComp">New competition</button>' : ''}</section>`;
     const last = lastFinal(); return h + (last ? miniTable(last) : '');
   }
-  h += homeHero(c) + (twosOn() ? (() => { const x = twosNow(); return x ? twosPanelHtml(x) : ''; })() : '') + (S.isAdmin ? activityHtml() : '') + miniTable(c);
+  h += homeHero(c) + creditHomeNote(c) + (twosOn() ? (() => { const x = twosNow(); return x ? twosPanelHtml(x) : ''; })() : '') + (S.isAdmin ? activityHtml() : '') + miniTable(c);
   const last = lastFinal(); if (last && last.id !== c.id) h += lastMonthHtml(last);
   return h;
 }
@@ -1980,6 +1980,12 @@ function twosPayState(t){ if (!t) return 'none'; if (t.paid || twosByCredit(t)) 
 function twosMethod(t){ return t.paid ? (METHODS[t.method] || 'Paid') : twosByCredit(t) ? METHODS.credit : ''; }
 function twosIn(t){ const ps = twosPayState(t); return ps === 'paid' || ps === 'claimed'; }
 function canJoinTwos(cid, round){ const me = S.myGid; return !!(twosOn() && me && entryOf(cid, me) && !twosOf(cid, round, me) && twosWindowOpen(cid, round, me)); }
+// Home note when a golfer's monthly entry was paid from the last of their credit.
+function creditHomeNote(c){
+  const me = S.myGid; if (!me || S.isAdmin || !c || Math.abs(creditIn(me, 'comp')) < 0.004) return '';
+  const e = entryOf(c.id, me); if (!e || !e.paid || e.method !== 'credit' || compCredit(me) >= compFee(c) - 1e-9) return '';
+  return `<p class="credit-note home"><b>This is your last month's credit.</b> ${esc(c.name)} was paid from the last of it. Pay the organiser again to have next month paid automatically.</p>`;
+}
 function twosPanelHtml(x, big){
   const me = S.myGid; const open = x.state === 'open'; const mine = me ? twosOf(x.c.id, x.r.n, me) : null; const fee = twosFee();
   const lbl = x.state === 'upcoming' ? `Round ${x.r.n} opens ${dParts(x.r.from).dow} ${dParts(x.r.from).day} ${dParts(x.r.from).mon}` : `Round ${x.r.n}${open ? ' · this weekend' : ' · ' + esc(x.c.name)}`;
@@ -1992,6 +1998,8 @@ function twosPanelHtml(x, big){
   else if (x.state === 'played') h += `<p class="hint">No 2s, so the ${euro(x.pot)} rolled over.</p>`;
   if (me && open && !S.isAdmin) {
     const ps = twosPayState(mine); const id = `${x.c.id}/${x.r.n}_${me}`;
+    const cr = twosCredit(me), lastNow = mine && twosByCredit(mine) && cr < fee - 1e-9, lastNext = !mine && canJoinTwos(x.c.id, x.r.n) && cr >= fee - 1e-9 && cr < 2 * fee - 1e-9;
+    if (lastNow || lastNext) h += `<p class="credit-note"><b>This is your last week's credit for the 2's.</b> ${lastNow ? 'After this weekend' : 'After you use it'}, pay the organiser again to keep being put in automatically.</p>`;
     if (mine && ps === 'lapsed') h += `<p class="hint">You're not in the 2's this round: it wasn't paid before you teed off.</p>`;
     else if (mine) h += `<div class="twos-me ${ps}"><span>${ps === 'paid' ? (twosByCredit(mine) ? `You're in · paid from credit (${euro(twosCredit(me))} left)` : "You're in · paid") : ps === 'claimed' ? "You're in · the organiser is confirming your payment" : `Not in yet · pay ${euro(fee)} before you tee off`}</span>${ps === 'unpaid' ? `<button class="btn small primary" data-act="twosPay" data-id="${esc(id)}">Pay ${euro(fee)}</button>` : ''}</div>`;
     else if (canJoinTwos(x.c.id, x.r.n) && twosCredit(me) >= fee - 1e-9) h += `<div class="twos-me"><span>You've ${euro(twosCredit(me))} of 2's credit. You're put in automatically when you start your round.</span><button class="btn small primary" data-act="twosJoin" data-cid="${esc(x.c.id)}" data-round="${x.r.n}">Join now</button></div>`;

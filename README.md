@@ -147,6 +147,7 @@ For golfers who pay you in advance. In **Admin → Prepaid credit**, choose the 
 - **2's credit:** each round they start, they're put in the 2's automatically and marked paid, and one round's cost (€2) comes off. The Start my round screen says "You're in the 2's club, paid from your credit" with the amount left, and they can tap **Skip the 2's** to keep their credit for another weekend. €8 covers four rounds.
 - **Monthly credit:** your app enters them in each open month and marks the entry paid, taking the entry fee (€10) off. €20 covers two months. This happens whenever your app is open, including straight after you create a new month.
 - Golfers see what's left on their profile and on Home. You see everyone's balance under Admin → Prepaid credit.
+- When a golfer is on the last of their credit, their Home page says so: "This is your last week's credit for the 2's" or "This is your last month's credit", with a reminder to pay you again.
 
 ## Updates
 
