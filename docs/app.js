@@ -32,7 +32,7 @@ const FORMATS = {
 };
 const DEFAULTS = { fee:10, revtag:'paul3d7qv', points:[5,4,3,2], entryPoint:1, prize:[60,40], allowance:95, tee:'white', rounds:4, best:3, bands:[10,20], cutWin:[1,2,3], cutRun:[0.5,1,1.5], riseBy:0.5, riseAfter:2, hcpMax:54, twosOn:false, twosFee:2 };
 // Entries are paid through Revolut only: in the Revolut app, or by debit card on the Revolut payment page.
-const METHODS = {revolut:'Revolut', card:'Card (Revolut)'};
+const METHODS = {revolut:'Revolut', card:'Card (Revolut)', credit:'Paid from credit'};
 
 /* ---------- State ---------- */
 let be = null;
@@ -501,11 +501,12 @@ function stopDataOnly(){ dataUnsubs.forEach(f => { try { f(); } catch (_) {} });
 function startData(){
   stopDataOnly();
   const err = e => { console.warn(e); toast('Some data could not load. Pull to refresh or reopen the app.'); };
-  const coll = (path, key) => dataUnsubs.push(be.watch(path, docs => { D[key] = {}; docs.forEach(d => D[key][d.id] = Object.assign({}, d.data, {id:d.id})); S.loaded[key] = true; MEMO = {}; render(); }, err));
-  const group = (name, key) => dataUnsubs.push(be.watchGroup(name, docs => { D[key] = {}; docs.forEach(d => { const s = d.path.split('/'); const cid = s[1]; D[key][cid + '/' + d.id] = Object.assign({}, d.data, {id:d.id, compId:cid}); }); S.loaded[key] = true; MEMO = {}; render(); }, err));
+  const coll = (path, key) => dataUnsubs.push(be.watch(path, docs => { D[key] = {}; docs.forEach(d => D[key][d.id] = Object.assign({}, d.data, {id:d.id})); S.loaded[key] = true; MEMO = {}; render(); if (key === 'comps' || key === 'golfers') scheduleCreditSync(); }, err));
+  const group = (name, key) => dataUnsubs.push(be.watchGroup(name, docs => { D[key] = {}; docs.forEach(d => { const s = d.path.split('/'); const cid = s[1]; D[key][cid + '/' + d.id] = Object.assign({}, d.data, {id:d.id, compId:cid}); }); S.loaded[key] = true; MEMO = {}; render(); if (key === 'entries') scheduleCreditSync(); }, err));
   coll('golfers', 'golfers'); coll('comps', 'comps');
   if (S.adminRole) { const wait = setInterval(() => { if (S.loaded.golfers && S.loaded.comps && S.loaded.entries && S.loaded.cards && S.loaded.settings) { clearInterval(wait); if (!S.hcpSynced) { S.hcpSynced = true; syncHandicaps(); } } }, 800); dataUnsubs.push(() => clearInterval(wait)); }
   group('entries', 'entries'); group('cards', 'cards');
+  if (S.adminRole) { const tick = setInterval(() => { if (S.loaded.golfers && S.loaded.comps && S.loaded.entries) { clearInterval(tick); syncCredit(); } }, 900); dataUnsubs.push(() => clearInterval(tick)); }
   // The 2's club: quiet if the security rules for it haven't been added yet.
   dataUnsubs.push(be.watchGroup('twos', docs => { D.twos = {}; docs.forEach(d => { const s = d.path.split('/'); D.twos[s[1] + '/' + d.id] = Object.assign({}, d.data, {id:d.id, compId:s[1]}); }); MEMO = {}; render(); }, e => console.warn('2s club', e)));
   dataUnsubs.push(be.watch('config/settings', d => { D.settings = d ? d.data : null; S.loaded.settings = true; MEMO = {}; render(); }, err));
@@ -1059,6 +1060,7 @@ function playerStatsHtml(p, canEdit){
   const st = playerStats(p.id, S.season); const lg = league(S.season).find(r => r.id === p.id);
   let h = `<div class="pagehead" style="margin:${p.id === S.myGid && S.view === 'me' ? 28 : 0}px 0 10px"><span class="label">Stats for</span><span style="display:flex;gap:8px">${canEdit ? `<button class="btn small" data-act="editGolfer" data-id="${esc(p.id)}">Edit</button>` : ''}${seasonSelect()}</span></div>`;
   h += `<dl class="tiles"><div class="tile"><dt>League</dt><dd>${lg ? lg.pts : 0}<small>${lg ? ord(lg.pos) : ''}</small></dd></div><div class="tile"><dt>Months</dt><dd>${lg ? lg.months : 0}</dd></div><div class="tile"><dt>Wins</dt><dd>${lg ? lg.wins : 0}</dd></div><div class="tile"><dt>Runner-up</dt><dd>${lg ? lg.seconds : 0}</dd></div><div class="tile"><dt>Cards</dt><dd>${st.cards}</dd></div><div class="tile"><dt>Winnings</dt><dd>${euro(lg ? lg.won : 0)}</dd></div></dl>`;
+  if ((S.isAdmin || p.id === S.myGid) && creditText(p.id)) h += `<p class="notebox" style="margin-top:12px"><b>Prepaid credit:</b> ${esc(creditText(p.id))}</p>`;
   if (!st.holes) return h + `<section class="empty" style="margin-top:16px"><p class="hint">No scores ${S.season === 'all' ? 'yet' : 'in ' + S.season + ' yet'}.</p></section>`;
   const C = st.counts, tot = st.holes;
   const segs = [['eagle','Eagle or better','var(--gold)','eagle','3'],['birdie','Birdies','var(--birdie)','birdie','3'],['par','Pars','var(--fairway)','par','4'],['bogey','Bogeys','var(--bogey)','bogey','5'],['double','Double bogey +','var(--double)','double','6'],['pickup','Pick-ups','var(--line)','pickup','P']];
@@ -1153,6 +1155,20 @@ function notifySettingsHtml(){
     <div class="btnrow" style="margin-top:0"><button class="btn" data-act="notifyTest">Send test</button><button class="btn danger" data-act="notifyOff">Turn off</button></div>
     <p class="hint" style="margin:0">Keep the channel name to yourself: anyone who has it can see the notifications. Your own actions don't send notifications.</p></div></section>`;
 }
+function creditAdminHtml(){
+  const gs = Object.values(D.golfers).sort(byName); const withCredit = gs.filter(g => (g.credits || []).length);
+  return `<section class="setup"><div class="sec-head"><h2>Prepaid credit</h2></div><div class="panel">
+    <p class="hint" style="margin-top:0">Record money a golfer has paid you in advance. <b>2's credit</b> puts them in the 2's automatically, paid, each round they start (${euro(twosFee())} a round). <b>Monthly credit</b> enters them in each new month and marks it paid (${euro(cfg().fee)} a month).</p>
+    <form data-form="credit"><div class="grid2"><label class="field"><span>Golfer</span><select name="gid" required><option value="">Choose…</option>${gs.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}</select></label>
+      <label class="field"><span>For</span><select name="type"><option value="twos">2's club</option><option value="comp">Monthly entry</option></select></label></div>
+      <label class="field"><span>Amount paid (€)</span><input name="amount" type="number" step="1" inputmode="numeric" placeholder="e.g. 8"></label>
+      <button class="btn primary block" type="submit">Add credit</button><p class="hint">Use a minus amount to take credit off, for example after a refund.</p></form>
+    ${withCredit.length ? `<ul class="plain credit-list">${withCredit.map(g => `<li><span><b>${esc(g.name)}</b><small>${esc(creditText(g.id) || 'No credit left')}</small></span><button class="btn small" data-act="creditLog" data-id="${esc(g.id)}">History</button></li>`).join('')}</ul>` : ''}</div></section>`;
+}
+function sheetCredit(){
+  const g = D.golfers[S.sheet.id]; if (!g) return null; const log = (g.credits || []).slice().reverse();
+  return `<h3>${esc(g.name)}'s credit</h3><p class="sub">${esc(creditText(g.id) || 'No credit')}</p><ul class="plain">${log.map(x => `<li><span>${x.type === 'twos' ? "2's club" : 'Monthly entry'} · ${Number(x.amount) < 0 ? '−' : '+'}${euro(Math.abs(Number(x.amount)))}</span><small>${esc(shortDay(x.at))}</small></li>`).join('')}</ul>`;
+}
 function viewAdmin(){
   if (!S.loaded.adminCode) return '<p class="loading">Loading…</p>';
   if (!adminUnlocked() || S.changing) return viewLock();
@@ -1189,6 +1205,7 @@ function viewAdmin(){
       ${!siOk(c.siM) || !siOk(c.siL) ? '<p class="warnline">Each stroke index from 1 to 18 should appear once per card.</p>' : ''}</details></div></section>
     <button type="button" class="btn primary block" style="margin-top:14px" data-act="saveSettings">Save settings</button>
   </form>
+  ${creditAdminHtml()}
   <section class="setup"><div class="sec-head"><h2>Organisers</h2></div><div class="panel"><ul class="plain">${admins.map(e => `<li><span>${esc(e)}${e === S.user.email ? ' (you)' : ''}</span>${admins.length > 1 && e !== S.user.email ? `<button class="btn small danger" data-act="removeAdmin" data-email="${esc(e)}">Remove</button>` : ''}</li>`).join('')}</ul>
     <form data-form="addAdmin" class="inline"><input type="email" id="aa-email" name="email" placeholder="organiser@email.com" required aria-label="Organiser email"><button class="btn small" type="submit">Add</button></form><p class="hint">Organisers can manage golfers, competitions, payments and every card.</p></div></section>
   ${notifySettingsHtml()}
@@ -1212,6 +1229,7 @@ function renderSheet(){
     case 'addEntry': h = sheetAddEntry(); break;
     case 'pay': h = sheetPay(); break;
     case 'twosPay': h = sheetTwosPay(); break;
+    case 'credit': h = sheetCredit(); break;
     case 'twos': h = sheetTwos(); break;
     case 'start': h = sheetStart(); break;
     case 'payments': h = sheetPayments(); break;
@@ -1232,12 +1250,16 @@ function sheetStart(){
   const mine = twosOf(c.id, n, S.myGid); const ps = twosPayState(mine);
   let h = `<h3>Start your round?</h3><p class="sub">This is your round ${n} card for ${esc(c.name)}. You only get one this weekend. Enter your scores and tick it as signed by midnight tonight, or the round won't count.</p>`;
   const pot = `Pot now ${euro(x ? x.pot : 0)}${x && x.carryIn > 0.004 ? `, including ${euro(x.carryIn)} rolled over` : ''}.`;
-  if (mine && (ps === 'paid' || ps === 'claimed')) return h + `<div class="twos-ask in"><span class="twos-badge sm" aria-hidden="true">2</span><span><b>You're in the 2's club this round</b><small>${pot} ${ps === 'paid' ? `Your ${euro(fee)} is paid.` : 'The organiser is confirming your payment.'}</small></span></div>
+  if (mine && (ps === 'paid' || ps === 'claimed')) return h + `<div class="twos-ask in"><span class="twos-badge sm" aria-hidden="true">2</span><span><b>You're in the 2's club this round</b><small>${pot} ${ps === 'paid' ? (twosByCredit(mine) ? `Paid from your credit (${euro(twosCredit(S.myGid))} left).` : `Your ${euro(fee)} is paid.`) : 'The organiser is confirming your payment.'}</small></span></div>
     <div class="confirm-actions"><button class="btn" data-act="closeSheet">Cancel</button><button class="btn primary" data-act="startGo" data-twos="0">Start my round</button></div>`;
   if (mine && ps === 'unpaid') return h + `<div class="twos-ask"><span class="twos-badge sm" aria-hidden="true">2</span><span><b>You haven't paid for the 2's yet · ${euro(fee)}</b><small>${pot} Pay now, before you tee off, or you're not in this round.</small></span></div>
     <div class="twos-choice"><button class="btn primary" data-act="startGo" data-twos="0" data-pay="1">Start &amp; pay ${euro(fee)}</button><button class="btn" data-act="startGo" data-twos="0">Skip the 2's</button></div>
     <button class="textbtn" style="display:block;margin:10px auto 0" data-act="closeSheet">Cancel</button>`;
   if (!canJoinTwos(c.id, n)) return h + `<div class="confirm-actions"><button class="btn" data-act="closeSheet">Cancel</button><button class="btn primary" data-act="startGo" data-twos="0">Start my round</button></div>`;
+  const cr = twosCredit(S.myGid);
+  if (cr >= fee - 1e-9) return h + `<div class="twos-ask in"><span class="twos-badge sm" aria-hidden="true">2</span><span><b>You're in the 2's club, paid from your credit</b><small>${pot} ${euro(fee)} comes off your credit, leaving ${euro(cr - fee)}.</small></span></div>
+    <div class="twos-choice"><button class="btn primary" data-act="startGo" data-twos="1">Start my round</button><button class="btn" data-act="startGo" data-twos="0">Skip the 2's</button></div>
+    <button class="textbtn" style="display:block;margin:10px auto 0" data-act="closeSheet">Cancel</button>`;
   return h + `<div class="twos-ask"><span class="twos-badge sm" aria-hidden="true">2</span><span><b>Are you in the 2's club this round? · ${euro(fee)}</b><small>${pot} A gross 2 on any hole wins it, and an ace takes the lot. You pay now, before you tee off.</small></span></div>
     <div class="twos-choice"><button class="btn primary" data-act="startGo" data-twos="1">Yes, I'm in · ${euro(fee)}</button><button class="btn" data-act="startGo" data-twos="0">No, just start</button></div>
     <button class="textbtn" style="display:block;margin:10px auto 0" data-act="closeSheet">Cancel</button>`;
@@ -1251,8 +1273,9 @@ async function doStartRound(cid, round, twos, pay){
   sendNotify(`${gName(S.myGid)} started round ${round}`, `${c.name} · ${whenText(now)}`, 'golf');
   const inTwos = twos && await joinTwos(cid, round, true);
   top(); render();
-  if ((inTwos || pay) && twosOf(cid, round, S.myGid)) { openSheet({type:'twosPay', id:`${cid}/${round}_${S.myGid}`}); toast(`Round started. Pay your ${euro(twosFee())} now to be in the 2's.`); }
-  else toast('Round started. Good luck!');
+  const tw = twosOf(cid, round, S.myGid);
+  if ((inTwos || pay) && tw && twosPayState(tw) === 'unpaid') { openSheet({type:'twosPay', id:`${cid}/${round}_${S.myGid}`}); toast(`Round started. Pay your ${euro(twosFee())} now to be in the 2's.`); }
+  else toast(inTwos && twosByCredit(tw) ? `Round started. You're in the 2's from your credit (${euro(twosCredit(S.myGid))} left). Good luck!` : 'Round started. Good luck!');
 }
 function askConfirm(title, text, ok, fn, danger){ CONFIRM_FN = fn; openSheet({type:'confirm', title, text, ok, danger}); }
 function sheetAccount(){
@@ -1316,6 +1339,7 @@ function sheetPay(){
   const fee = compFee(c); const ref = payRef(c, g); const ps = payState(e); const me = e.golferId === S.myGid;
   const status = ps === 'paid' ? 'Paid · ' + (METHODS[e.method] || 'Paid') : ps === 'claimed' ? claimText(e) : 'Not paid yet';
   let h = `<h3>Entry ${euro(fee)}</h3><p class="sub">${esc(g.name)} · ${esc(c.name)} · <b>${esc(status)}</b></p>`;
+  if (ps !== 'paid' && compCredit(g.id) >= fee - 1e-9) h += `<p class="notebox">${me && !S.isAdmin ? "You've" : esc(firstName(g.name)) + ' has'} ${euro(compCredit(g.id))} of monthly credit, so this entry is paid from it automatically${me && !S.isAdmin ? '. No need to pay.' : ' when your app next opens.'}</p>`;
   if (S.isAdmin) {
     if (ps === 'claimed') h += `<p class="notebox">${esc(firstName(g.name))} says they paid${e.claimMethod && METHODS[e.claimMethod] ? ' by ' + esc(METHODS[e.claimMethod]) : ''}. Look for <b>${esc(ref)}</b> or their name in your Revolut, then mark it below.</p>`;
     h += `<span class="label">Mark as</span><div class="paygrid three">${[['revolut','Revolut app'],['card','Card (Revolut)'],['','Not paid']].map(([m,l]) => `<button class="paybtn ${(m ? (e.paid && e.method === m) : !e.paid) ? 'on' : ''}" data-act="setPay" data-m="${m}">${l}</button>`).join('')}</div>`;
@@ -1647,6 +1671,7 @@ const ACT = {
   startGo(el){ const sh = S.sheet; if (!sh || sh.type !== 'start') return; const twos = el.dataset.twos === '1' && !twosOf(sh.cid, sh.round, S.myGid); closeSheetQuiet(); doStartRound(sh.cid, sh.round, twos, el.dataset.pay === '1'); },
   twosJoin(el){ const cid = el.dataset.cid, round = Number(el.dataset.round); if (canJoinTwos(cid, round)) joinTwos(cid, round); },
   twosPay(el){ openSheet({type:'twosPay', id: el.dataset.id}); },
+  creditLog(el){ openSheet({type:'credit', id: el.dataset.id}); },
   twosTable(){ S.view = 'table'; S.leagueTab = 'twos'; S.card = null; S.compId = null; S.playerId = null; top(); render(); },
   twosOpen(el){ openSheet({type:'twos', cid: el.dataset.cid, round: Number(el.dataset.round)}); },
   twosRound(el){ if (S.sheet && S.sheet.type === 'twos') { S.sheet.round = Number(el.dataset.v); renderSheet(); } },
@@ -1778,6 +1803,10 @@ const ACT = {
   async removeAdmin(el){ const e = el.dataset.email; const list = ((D.admins && D.admins.emails) || []).filter(x => x !== e); if (!list.length) return; if (await put('config/admins', Object.assign({}, D.admins, {emails:list}))) toast('Organiser removed'); }
 };
 const FORMS = {
+  async credit(f){ if (!S.isAdmin) return; const fd = new FormData(f); const gid = String(fd.get('gid') || ''); const type = fd.get('type') === 'comp' ? 'comp' : 'twos'; const amount = Number(fd.get('amount'));
+    const g = D.golfers[gid]; if (!g) { toast('Choose a golfer'); return; } if (!isFinite(amount) || !amount || Math.abs(amount) > 500) { toast('Enter the amount they paid'); return; }
+    const data = Object.assign({}, g, {credits: (g.credits || []).concat([{type, amount, at: Date.now()}])}); delete data.id;
+    if (await put(`golfers/${gid}`, data)) { localSet(`golfers/${gid}`, data); render(); toast(`${firstName(g.name)}: ${type === 'twos' ? "2's" : 'monthly'} credit now ${euro(type === 'twos' ? twosCredit(gid) : compCredit(gid))}`); if (type === 'comp') syncCredit(); } },
   async twosAdd(f){ const sh = S.sheet; if (!sh || sh.type !== 'twos' || !S.isAdmin) return; const gids = [...f.querySelectorAll('input[name=gid]:checked')].map(i => i.value);
     if (!gids.length) { toast('Tick at least one golfer.'); return; }
     const ops = gids.map(g => ({path:`comps/${sh.cid}/twos/${sh.round}_${g}`, data: twosDoc(sh.cid, sh.round, g)}));
@@ -1817,7 +1846,7 @@ const FORMS = {
     const email = normEmail(fd.get('email')); if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { toast('That email doesn\'t look right'); return; }
     const id = S.sheet.id || newId(); const prev = D.golfers[id] || {}; const oldEmail = golferEmails()[id];
     if (email && D.members[email] && D.members[email].golferId !== id) { toast(`${email} is already used by ${gName(D.members[email].golferId)}`); return; }
-    const gdata = {name, hi: parseHi(fd.get('hi')), gender: fd.get('gender') === 'L' ? 'L' : 'M', createdAt: prev.createdAt || Date.now()};
+    const gdata = {name, hi: parseHi(fd.get('hi')), gender: fd.get('gender') === 'L' ? 'L' : 'M', createdAt: prev.createdAt || Date.now()}; if (prev.credits) gdata.credits = prev.credits;
     const savedG = D.golfers[id]; D.golfers[id] = Object.assign({}, gdata, {id}); MEMO = {}; const l = hcpLedger()[id]; if (savedG) D.golfers[id] = savedG; else delete D.golfers[id]; MEMO = {};
     gdata.hcp = l ? l.current : gdata.hi;
     const ops = [{path:`golfers/${id}`, data:gdata}];
@@ -1858,6 +1887,42 @@ function saveSettings(){
   clearTimeout(settingsTimer); settingsTimer = setTimeout(async () => { if (await put('config/settings', data)) { syncHandicaps(); toast('Settings saved'); } }, 400);
 }
 
+/* ---------- Prepaid credit: money paid in advance, recorded by the organiser on the golfer ----------
+   2's credit: the golfer is put in (and paid) each round they start, one round's fee at a time, oldest first.
+   Monthly credit: the organiser's app enters the golfer in each open month and marks it paid. */
+function creditIn(gid, type){ const g = D.golfers[gid]; return ((g && g.credits) || []).filter(x => x.type === type).reduce((a, x) => a + (Number(x.amount) || 0), 0); }
+function twosCreditUse(){
+  if (MEMO.twosCredit) return MEMO.twosCredit; const fee = twosFee(); const covered = new Set(); const left = {};
+  const claims = Object.values(D.twos).filter(t => t.claimed && t.claimMethod === 'credit' && !t.paid && D.comps[t.compId] && !D.comps[t.compId].test).sort((a, b) => (Number(a.claimedAt) || 0) - (Number(b.claimedAt) || 0));
+  claims.forEach(t => { const g = t.golferId; if (left[g] === undefined) left[g] = creditIn(g, 'twos'); if (left[g] >= fee - 1e-9) { covered.add(`${t.compId}/${t.round}_${g}`); left[g] -= fee; } });
+  return (MEMO.twosCredit = {covered, left});
+}
+function twosCredit(gid){ const L = twosCreditUse().left; return L[gid] !== undefined ? L[gid] : creditIn(gid, 'twos'); }
+function compCredit(gid){ return creditIn(gid, 'comp') - Object.values(D.entries).filter(e => e.golferId === gid && e.paid && e.method === 'credit' && D.comps[e.compId] && !D.comps[e.compId].test).reduce((a, e) => a + compFee(D.comps[e.compId]), 0); }
+function creditText(gid){
+  const t = twosCredit(gid), m = compCredit(gid), out = [];
+  if (Math.abs(creditIn(gid, 'twos')) > 0.004) out.push(`2's ${euro(t)} left${twosFee() ? ` (${Math.floor(t / twosFee() + 1e-9)} round${Math.floor(t / twosFee() + 1e-9) === 1 ? '' : 's'})` : ''}`);
+  if (Math.abs(creditIn(gid, 'comp')) > 0.004) { const f = cfg().fee; out.push(`Monthly ${euro(m)} left${f ? ` (${Math.floor(m / f + 1e-9)} month${Math.floor(m / f + 1e-9) === 1 ? '' : 's'})` : ''}`); }
+  return out.join(' · ');
+}
+// Organiser's app: enter golfers with monthly credit in each open month that still has rounds to play, and mark them paid.
+let creditBusy = false, creditTimer = null;
+function scheduleCreditSync(){ if (!S.adminRole) return; clearTimeout(creditTimer); creditTimer = setTimeout(syncCredit, 1500); }
+async function syncCredit(){
+  if (!S.adminRole || creditBusy || !S.loaded.golfers || !S.loaded.comps || !S.loaded.entries) return; creditBusy = true;
+  try {
+    const ops = []; const names = []; const left = {};
+    const comps = Object.values(D.comps).filter(c => c.status === 'open' && !c.test && compRounds(c).some(r => roundState(r) !== 'played')).sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+    Object.values(D.golfers).filter(g => Math.abs(creditIn(g.id, 'comp')) > 0.004).forEach(g => { left[g.id] = compCredit(g.id); });
+    comps.forEach(c => Object.keys(left).forEach(gid => {
+      const fee = compFee(c); const e = entryOf(c.id, gid); if (e && e.paid) return; if (left[gid] < fee - 1e-9) return;
+      const data = Object.assign({compId:c.id, golferId:gid, createdAt:Date.now(), claimed:false, claimMethod:null, claimedAt:null}, e || {}, {paid:true, method:'credit', paidAt:new Date().toISOString()}); delete data.id;
+      ops.push({path:`comps/${c.id}/entries/${gid}`, data}); left[gid] -= fee; names.push(`${firstName(gName(gid))} (${c.name})`);
+    }));
+    if (ops.length && await batch(ops)) { ops.forEach(o => localSet(o.path, o.data)); render(); toast(`Entered from credit: ${names.join(', ')}`); }
+  } finally { creditBusy = false; }
+}
+
 /* ---------- 2's club: €2 a round, opt in when you start; gross 2s share the pot; no 2s and it rolls over ---------- */
 function twosOn(){ return !!cfg().twosOn; }
 function twosFee(){ const f = Number(cfg().twosFee); return isFinite(f) && f > 0 ? f : 2; }
@@ -1877,15 +1942,15 @@ function twosLedger(){
   rounds.sort((a, b) => String(a.r.from).localeCompare(String(b.r.from)) || String(a.c.date || '').localeCompare(String(b.c.date || '')));
   rounds.forEach(({c, r}) => {
     const state = c.status === 'final' ? 'played' : roundState(r); const ts = twosFor(c.id, r.n);
-    const paid = ts.filter(t => t.paid).length; const pot = carry + paid * fee;
+    const paid = ts.filter(t => twosPayState(t) === 'paid').length; const pot = carry + paid * fee;
     const hits = ts.map(t => Object.assign({gid: t.golferId, t}, twosHits(scoreCard(c, r.n, t.golferId)))).filter(w => w.aces.length || w.twos.length);
-    const paidHits = hits.filter(w => w.t.paid); const ace = paidHits.some(w => w.aces.length);
+    const paidHits = hits.filter(w => twosPayState(w.t) === 'paid'); const ace = paidHits.some(w => w.aces.length);
     const winners = paidHits.map(w => Object.assign({}, w, {ace, holes: ace ? w.aces : w.twos})).filter(w => w.holes.length);
     const shares = winners.reduce((a, w) => a + w.holes.length, 0);
     winners.forEach(w => { w.won = shares ? Math.floor(pot * w.holes.length / shares + 1e-9) : 0; });
     winners.sort((a, b) => b.holes.length - a.holes.length || byName(D.golfers[a.gid], D.golfers[b.gid]));
     const leftover = shares ? Math.round((pot - winners.reduce((a, w) => a + w.won, 0)) * 100) / 100 : 0;
-    const unpaidHits = hits.filter(w => !w.t.paid).map(w => Object.assign({}, w, {ace: w.aces.length > 0, holes: w.aces.length ? w.aces : w.twos, ps: twosPayState(w.t)}));
+    const unpaidHits = hits.filter(w => twosPayState(w.t) !== 'paid').map(w => Object.assign({}, w, {ace: w.aces.length > 0, holes: w.aces.length ? w.aces : w.twos, ps: twosPayState(w.t)}));
     const inCount = ts.filter(twosIn).length, toConfirm = ts.filter(t => twosPayState(t) === 'claimed').length, pending = ts.filter(t => twosPayState(t) === 'unpaid').length;
     out.push({c, r, state, entrants: ts, paid, inCount, toConfirm, pending, carryIn: carry, pot, winners, shares, ace, leftover, unpaidHits, rolled: state === 'played' ? (shares ? leftover : pot) : 0});
     if (state === 'played') carry = shares ? leftover : pot;
@@ -1910,7 +1975,9 @@ function twosWindowOpen(cid, round, gid){
 }
 // paid: confirmed by the organiser · claimed: says they've paid (in, waiting to be confirmed)
 // unpaid: joined, can still pay before teeing off · lapsed: didn't pay in time, so not in
-function twosPayState(t){ return !t ? 'none' : t.paid ? 'paid' : t.claimed ? 'claimed' : twosWindowOpen(t.compId, t.round, t.golferId) ? 'unpaid' : 'lapsed'; }
+function twosByCredit(t){ return !!(t && !t.paid && t.claimed && t.claimMethod === 'credit' && twosCreditUse().covered.has(`${t.compId}/${t.round}_${t.golferId}`)); }
+function twosPayState(t){ if (!t) return 'none'; if (t.paid || twosByCredit(t)) return 'paid'; if (t.claimed && t.claimMethod !== 'credit') return 'claimed'; return twosWindowOpen(t.compId, t.round, t.golferId) ? 'unpaid' : 'lapsed'; }
+function twosMethod(t){ return t.paid ? (METHODS[t.method] || 'Paid') : twosByCredit(t) ? METHODS.credit : ''; }
 function twosIn(t){ const ps = twosPayState(t); return ps === 'paid' || ps === 'claimed'; }
 function canJoinTwos(cid, round){ const me = S.myGid; return !!(twosOn() && me && entryOf(cid, me) && !twosOf(cid, round, me) && twosWindowOpen(cid, round, me)); }
 function twosPanelHtml(x, big){
@@ -1926,7 +1993,8 @@ function twosPanelHtml(x, big){
   if (me && open && !S.isAdmin) {
     const ps = twosPayState(mine); const id = `${x.c.id}/${x.r.n}_${me}`;
     if (mine && ps === 'lapsed') h += `<p class="hint">You're not in the 2's this round: it wasn't paid before you teed off.</p>`;
-    else if (mine) h += `<div class="twos-me ${ps}"><span>${ps === 'paid' ? "You're in · paid" : ps === 'claimed' ? "You're in · the organiser is confirming your payment" : `Not in yet · pay ${euro(fee)} before you tee off`}</span>${ps === 'unpaid' ? `<button class="btn small primary" data-act="twosPay" data-id="${esc(id)}">Pay ${euro(fee)}</button>` : ''}</div>`;
+    else if (mine) h += `<div class="twos-me ${ps}"><span>${ps === 'paid' ? (twosByCredit(mine) ? `You're in · paid from credit (${euro(twosCredit(me))} left)` : "You're in · paid") : ps === 'claimed' ? "You're in · the organiser is confirming your payment" : `Not in yet · pay ${euro(fee)} before you tee off`}</span>${ps === 'unpaid' ? `<button class="btn small primary" data-act="twosPay" data-id="${esc(id)}">Pay ${euro(fee)}</button>` : ''}</div>`;
+    else if (canJoinTwos(x.c.id, x.r.n) && twosCredit(me) >= fee - 1e-9) h += `<div class="twos-me"><span>You've ${euro(twosCredit(me))} of 2's credit. You're put in automatically when you start your round.</span><button class="btn small primary" data-act="twosJoin" data-cid="${esc(x.c.id)}" data-round="${x.r.n}">Join now</button></div>`;
     else if (canJoinTwos(x.c.id, x.r.n)) h += `<div class="twos-me"><span>${cardStarted(cardOf(x.c.id, x.r.n, me)) ? "Not in the 2's? You can still join for 10 minutes after starting." : "Playing this weekend? Join the 2's before you tee off."}</span><button class="btn small primary" data-act="twosJoin" data-cid="${esc(x.c.id)}" data-round="${x.r.n}">Join &amp; pay ${euro(fee)}</button></div>`;
     else if (!entryOf(x.c.id, me)) h += `<p class="hint">Enter ${esc(x.c.name)} to play the 2's.</p>`;
     else if (cardStarted(cardOf(x.c.id, x.r.n, me))) h += `<p class="hint">You're not in the 2's this round.</p>`;
@@ -1948,7 +2016,7 @@ function twosTableHtml(){
 function sheetTwosPay(){
   const t = D.twos[S.sheet.id]; if (!t) return null; const c = D.comps[t.compId]; const g = D.golfers[t.golferId]; const k = cfg(); if (!c || !g) return null;
   const fee = twosFee(); const ref = twosRef(c, t.round, g); const ps = twosPayState(t); const me = t.golferId === S.myGid;
-  const status = ps === 'paid' ? 'Paid · ' + (METHODS[t.method] || 'Paid') : ps === 'claimed' ? claimText(t) : ps === 'lapsed' ? 'Not paid before teeing off' : 'Not paid yet';
+  const status = ps === 'paid' ? 'Paid · ' + twosMethod(t) : ps === 'claimed' ? claimText(t) : ps === 'lapsed' ? 'Not paid before teeing off' : 'Not paid yet';
   let h = `<h3>2's club ${euro(fee)}</h3><p class="sub">${esc(g.name)} · round ${t.round} · ${esc(c.name)} · <b>${esc(status)}</b></p>`;
   if (S.isAdmin) {
     if (ps === 'claimed') h += `<p class="notebox">${esc(firstName(g.name))} says they paid. Look for <b>${esc(ref)}</b> or their name in your Revolut, then mark it below.</p>`;
@@ -1977,7 +2045,7 @@ function sheetTwos(){
   const rows = x.entrants.map(t => ({t, g: D.golfers[t.golferId], ps: twosPayState(t)})).sort((a, b) => byName(a.g, b.g));
   const id = t => `${c.id}/${n}_${t.golferId}`;
   const b = (t, m, label, primary) => `<button class="btn small ${primary ? 'primary' : ''}" data-act="twosMark" data-id="${esc(id(t))}" data-m="${m}">${label}</button>`;
-  if (rows.length) h += `<ul class="grp paylist" style="margin-top:10px">${rows.map(r => `<li><span class="avatar sm">${esc(initials(r.g.name))}</span><span class="grp-main"><b>${esc(r.g.name)}</b><small>${r.ps === 'paid' ? esc(METHODS[r.t.method] || 'Paid') : r.ps === 'claimed' ? esc(claimText(r.t)) + (r.t.claimedAt ? ' ' + esc(whenText(r.t.claimedAt)) : '') + ' · ref “' + esc(twosRef(c, n, r.g)) + '”' : r.ps === 'lapsed' ? 'Not paid before teeing off · not in' : 'Joined · not paid yet'}${cardStarted(cardOf(c.id, n, r.t.golferId)) ? ' · started ' + esc(whenText(cardOf(c.id, n, r.t.golferId).startedAt)) : ''}${(x.winners.find(w => w.gid === r.t.golferId) || {}).holes ? ' · <span class="twos-hit">' + esc(twosDesc(x.winners.find(w => w.gid === r.t.golferId))) + (x.state === 'played' ? ' · ' + euro(x.winners.find(w => w.gid === r.t.golferId).won) : '') + '</span>' : ''}${x.unpaidHits.find(w => w.gid === r.t.golferId) ? ' · <span class="twos-warn">' + esc(twosDesc(x.unpaidHits.find(w => w.gid === r.t.golferId))) + (r.ps === 'claimed' ? ', counts once you confirm' : ", doesn't count (not paid)") + '</span>' : ''}</small></span><span class="pbtns">${r.ps === 'claimed' ? b(r.t, r.t.claimMethod || 'revolut', 'Got it', true) + b(r.t, '', 'Not yet') : r.ps === 'unpaid' || r.ps === 'lapsed' ? b(r.t, 'revolut', 'Revolut') + b(r.t, 'card', 'Card') : b(r.t, '', 'Undo')}<button class="btn small" data-act="twosRemove" data-id="${esc(id(r.t))}" aria-label="Take ${esc(r.g.name)} out">✕</button></span></li>`).join('')}</ul>`;
+  if (rows.length) h += `<ul class="grp paylist" style="margin-top:10px">${rows.map(r => `<li><span class="avatar sm">${esc(initials(r.g.name))}</span><span class="grp-main"><b>${esc(r.g.name)}</b><small>${r.ps === 'paid' ? esc(twosMethod(r.t)) : r.ps === 'claimed' ? esc(claimText(r.t)) + (r.t.claimedAt ? ' ' + esc(whenText(r.t.claimedAt)) : '') + ' · ref “' + esc(twosRef(c, n, r.g)) + '”' : r.ps === 'lapsed' ? 'Not paid before teeing off · not in' : 'Joined · not paid yet'}${cardStarted(cardOf(c.id, n, r.t.golferId)) ? ' · started ' + esc(whenText(cardOf(c.id, n, r.t.golferId).startedAt)) : ''}${(x.winners.find(w => w.gid === r.t.golferId) || {}).holes ? ' · <span class="twos-hit">' + esc(twosDesc(x.winners.find(w => w.gid === r.t.golferId))) + (x.state === 'played' ? ' · ' + euro(x.winners.find(w => w.gid === r.t.golferId).won) : '') + '</span>' : ''}${x.unpaidHits.find(w => w.gid === r.t.golferId) ? ' · <span class="twos-warn">' + esc(twosDesc(x.unpaidHits.find(w => w.gid === r.t.golferId))) + (r.ps === 'claimed' ? ', counts once you confirm' : ", doesn't count (not paid)") + '</span>' : ''}</small></span><span class="pbtns">${r.ps === 'claimed' ? b(r.t, r.t.claimMethod || 'revolut', 'Got it', true) + b(r.t, '', 'Not yet') : r.ps === 'unpaid' || r.ps === 'lapsed' ? b(r.t, 'revolut', 'Revolut') + b(r.t, 'card', 'Card') : twosByCredit(r.t) ? '' : b(r.t, '', 'Undo')}<button class="btn small" data-act="twosRemove" data-id="${esc(id(r.t))}" aria-label="Take ${esc(r.g.name)} out">✕</button></span></li>`).join('')}</ul>`;
   else h += `<p class="hint">Nobody in the 2's for this round yet.</p>`;
   const avail = entriesFor(c.id).map(e => D.golfers[e.golferId]).filter(g => g && !twosOf(c.id, n, g.id)).sort(byName);
   if (avail.length && c.status !== 'final') h += `<form data-form="twosAdd"><span class="label" style="margin-top:14px;display:block">Add golfers to round ${n}</span><div class="checklist">${avail.map(g => `<label class="check"><input type="checkbox" name="gid" value="${esc(g.id)}"><span>${esc(g.name)}</span></label>`).join('')}</div><button class="btn block" type="submit">Add ticked golfers</button><p class="hint">Then mark them paid once they've paid. Only paid golfers are in.</p></form>`;
@@ -1992,9 +2060,11 @@ function twosSummaryBtn(c){
 }
 function twosDoc(cid, round, gid){ return {compId:cid, golferId:gid, round, paid:false, method:null, paidAt:null, createdAt:Date.now(), claimed:false, claimMethod:null, claimedAt:null}; }
 async function joinTwos(cid, round, quiet){
-  const path = `comps/${cid}/twos/${round}_${S.myGid}`; const data = twosDoc(cid, round, S.myGid);
+  const path = `comps/${cid}/twos/${round}_${S.myGid}`; const fee = twosFee(); const useCredit = twosCredit(S.myGid) >= fee - 1e-9;
+  const data = Object.assign(twosDoc(cid, round, S.myGid), useCredit ? {claimed:true, claimMethod:'credit', claimedAt:Date.now()} : {});
   if (!(await put(path, data))) return false; localSet(path, data);
-  if (!quiet) { render(); openSheet({type:'twosPay', id:`${cid}/${round}_${S.myGid}`}); toast(`Pay your ${euro(twosFee())} now, before you tee off, to be in the 2's.`); }
+  if (useCredit) { sendNotify(`${gName(S.myGid)} is in the 2's`, `Round ${round} · paid from credit (${euro(twosCredit(S.myGid))} left)`, 'two'); if (!quiet) { render(); toast(`You're in the 2's, paid from your credit. ${euro(twosCredit(S.myGid))} left.`); } return true; }
+  if (!quiet) { render(); openSheet({type:'twosPay', id:`${cid}/${round}_${S.myGid}`}); toast(`Pay your ${euro(fee)} now, before you tee off, to be in the 2's.`); }
   return true;
 }
 async function markTwos(id, m){

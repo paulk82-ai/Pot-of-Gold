@@ -140,6 +140,14 @@ Off until you switch it on in **Admin → 2's club**. Before switching it on, pa
 - No 2s: the whole pot rolls over to the next weekend, including from the last weekend of a month into the next month. Test months are left out.
 - The **Table → 2's club** tab shows this weekend's pot, the rules and every result. From the month's 2's club button you can confirm payments, add or take out golfers, and share the result to WhatsApp. You pay the winners yourself on Revolut.
 
+## Prepaid credit
+
+For golfers who pay you in advance. In **Admin → Prepaid credit**, choose the golfer, whether it's for the **2's club** or the **Monthly entry**, and the amount they paid, then tap **Add credit**. Use a minus amount to take credit off (for example after a refund). **History** shows every change.
+
+- **2's credit:** each round they start, they're put in the 2's automatically and marked paid, and one round's cost (€2) comes off. The Start my round screen says "You're in the 2's club, paid from your credit" with the amount left, and they can tap **Skip the 2's** to keep their credit for another weekend. €8 covers four rounds.
+- **Monthly credit:** your app enters them in each open month and marks the entry paid, taking the entry fee (€10) off. €20 covers two months. This happens whenever your app is open, including straight after you create a new month.
+- Golfers see what's left on their profile and on Home. You see everyone's balance under Admin → Prepaid credit.
+
 ## Updates
 
 When a new version is put online, phones that have the app open show **A new version of the app is ready → Update now**. Otherwise they pick it up the next time the app is opened.
