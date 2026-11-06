@@ -55,6 +55,25 @@ export async function init(cfg){
         }
         throw deny();
       }
+      if (s[2] === 'twos') {
+        // 2's club: opt in for a round within 10 minutes of starting it; say you've paid. Only the organiser marks it paid.
+        const cur = store[path]; if (!data) throw deny();
+        if (!cur) {
+          const keysOk = Object.keys(data).every(k => ['compId', 'golferId', 'round', 'paid', 'method', 'paidAt', 'createdAt', 'claimed', 'claimMethod', 'claimedAt'].includes(k));
+          const card = store[`comps/${s[1]}/cards/${s[3]}`];
+          if (!keysOk || data.golferId !== g || data.compId !== s[1] || s[3] !== `${data.round}_${g}` || data.paid !== false) throw deny();
+          if (!store[`comps/${s[1]}/entries/${g}`]) throw deny('Enter this month first.');
+          if (!roundOpen(comp, data.round)) throw deny('This round is not open.');
+          if (typeof data.createdAt !== 'number' || Math.abs(data.createdAt - Date.now()) > 600000) throw deny();
+          if (!card || !(card.startedAt > Date.now() - 600000)) throw deny("Join the 2's when you start your round.");
+          return;
+        }
+        if (cur.golferId !== g || typeof data.claimed !== 'boolean') throw deny();
+        const keys = new Set(Object.keys(cur).concat(Object.keys(data)));
+        for (const k of keys) if (!['claimed', 'claimedAt', 'claimMethod'].includes(k) && JSON.stringify(cur[k]) !== JSON.stringify(data[k])) throw deny('Only the organiser can mark the 2\'s as paid.');
+        if (![null, undefined, 'revolut', 'card'].includes(data.claimMethod)) throw deny();
+        return;
+      }
       if (s[2] === 'cards') {
         if (!data) throw deny();
         const entered = x => !!store[`comps/${s[1]}/entries/${x}`]; const cur = store[path];

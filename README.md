@@ -128,6 +128,18 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 - So people without Revolut can pay by card, turn on **Revtag discoverability** in your Revolut app's privacy settings.
 - Revolut limits how much you can receive by card through your link each week; the limit is shown in your Revolut app. Payments from other Revolut users have no limit. If a lot of people pay by card in the same week, some may need to wait or pay Revolut to Revolut.
 
+## 2's club (side competition)
+
+Off until you switch it on in **Admin → 2's club**. Before switching it on, paste the latest `firestore.rules` into Firebase (Firestore Database → Rules → Publish), because the 2's club needs its own rules.
+
+- €2 a round (you can change it in Admin). Golfers tick **I'm in the 2's club this round** when they tap **Start my round**. If they forget, they can still join for 10 minutes after starting, but not later.
+- They pay on Revolut and tap **I've paid**, the same as the entry. You confirm it under the month's **2's club** button. Only paid golfers can win.
+- A gross 2 on any hole wins the pot, on a complete card ticked as signed by midnight. Each 2 is a share, so two 2s get a double share.
+- A hole-in-one takes the whole pot, however many 2s there are. Two aces share it.
+- Shares are rounded down to whole euros. What's left over stays in the pot for the next weekend.
+- No 2s: the whole pot rolls over to the next weekend, including from the last weekend of a month into the next month. Test months are left out.
+- The **Table → 2's club** tab shows this weekend's pot, the rules and every result. From the month's 2's club button you can confirm payments, add or take out golfers, and share the result to WhatsApp. You pay the winners yourself on Revolut.
+
 ## Updates
 
 When a new version is put online, phones that have the app open show **A new version of the app is ready → Update now**. Otherwise they pick it up the next time the app is opened.
