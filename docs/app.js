@@ -1914,7 +1914,7 @@ function twosPanelHtml(x, big){
   if (me && open && !S.isAdmin) {
     const ps = twosPayState(mine); const id = `${x.c.id}/${x.r.n}_${me}`;
     if (mine) h += `<div class="twos-me ${ps}"><span>${ps === 'paid' ? "You're in · paid" : ps === 'claimed' ? "You're in · the organiser is checking your payment" : `You're in · ${euro(fee)} to pay`}</span>${ps === 'unpaid' ? `<button class="btn small primary" data-act="twosPay" data-id="${esc(id)}">Pay ${euro(fee)}</button>` : ''}</div>`;
-    else if (canJoinTwos(x.c.id, x.r.n)) h += `<div class="twos-me"><span>${cardStarted(cardOf(x.c.id, x.r.n, me)) ? "Not in the 2's? You can still join for 10 minutes after starting." : "Playing this weekend? Join the 2's before you tee off."}</span><button class="btn small primary" data-act="twosJoin" data-cid="${esc(x.c.id)}" data-round="${x.r.n}">Join · ${euro(fee)}</button></div>`;
+    else if (canJoinTwos(x.c.id, x.r.n)) h += `<div class="twos-me"><span>${cardStarted(cardOf(x.c.id, x.r.n, me)) ? "Not in the 2's? You can still join for 10 minutes after starting." : "Playing this weekend? Join the 2's before you tee off."}</span><button class="btn small primary" data-act="twosJoin" data-cid="${esc(x.c.id)}" data-round="${x.r.n}">Join &amp; pay ${euro(fee)}</button></div>`;
     else if (!entryOf(x.c.id, me)) h += `<p class="hint">Enter ${esc(x.c.name)} to play the 2's.</p>`;
     else if (cardStarted(cardOf(x.c.id, x.r.n, me))) h += `<p class="hint">You're not in the 2's this round.</p>`;
   }
@@ -1979,7 +1979,7 @@ function twosDoc(cid, round, gid){ return {compId:cid, golferId:gid, round, paid
 async function joinTwos(cid, round, quiet){
   const path = `comps/${cid}/twos/${round}_${S.myGid}`; const data = twosDoc(cid, round, S.myGid);
   if (!(await put(path, data))) return false; localSet(path, data);
-  if (!quiet) { render(); toast(`You're in the 2's. Pay ${euro(twosFee())} when you can.`); }
+  if (!quiet) { render(); openSheet({type:'twosPay', id:`${cid}/${round}_${S.myGid}`}); toast(`You're in the 2's. Pay your ${euro(twosFee())} now so a 2 counts.`); }
   sendNotify(`${gName(S.myGid)} is in the 2's`, `Round ${round} · ${euro(twosFee())} not paid yet`, 'two');
   return true;
 }
