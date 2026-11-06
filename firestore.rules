@@ -92,8 +92,9 @@ service cloud.firestore {
           && request.resource.data.get('claimMethod', null) in [null, 'revolut', 'card'];
       }
 
-      // 2's club: one per golfer per round (id = "<round>_<golferId>"). A golfer joins while the round is
-      // open, before starting it or within 10 minutes of starting, and can say they've paid; only organisers mark it paid.
+      // 2's club: one per golfer per round (id = "<round>_<golferId>"). Nobody is in without paying, and it's paid
+      // before teeing off: a golfer joins and says they've paid while the round is open, before starting it or within
+      // 10 minutes of starting. Only organisers mark it paid.
       match /twos/{tid} {
         function startedNow(n) {
           let p = /databases/$(database)/documents/comps/$(cid)/cards/$(string(n) + '_' + myGid());
@@ -113,6 +114,7 @@ service cloud.firestore {
           && math.abs(request.resource.data.createdAt - request.time.toMillis()) < 600000
           && startedNow(request.resource.data.round);
         allow update: if isMember() && resource.data.golferId == myGid() && isOpen()
+          && roundOpen(resource.data.round) && startedNow(resource.data.round)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['claimed', 'claimMethod', 'claimedAt'])
           && request.resource.data.claimed is bool
           && request.resource.data.get('claimMethod', null) in [null, 'revolut', 'card'];

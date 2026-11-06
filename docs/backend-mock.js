@@ -69,6 +69,9 @@ export async function init(cfg){
           return;
         }
         if (cur.golferId !== g || typeof data.claimed !== 'boolean') throw deny();
+        // Saying you've paid is only allowed before teeing off (round open, not started or started under 10 minutes ago).
+        const card = store[`comps/${s[1]}/cards/${s[3]}`];
+        if (!roundOpen(comp, cur.round) || (card && !(card.startedAt > Date.now() - 600000))) throw deny("Too late: the 2's has to be paid before you tee off.");
         const keys = new Set(Object.keys(cur).concat(Object.keys(data)));
         for (const k of keys) if (!['claimed', 'claimedAt', 'claimMethod'].includes(k) && JSON.stringify(cur[k]) !== JSON.stringify(data[k])) throw deny('Only the organiser can mark the 2\'s as paid.');
         if (![null, undefined, 'revolut', 'card'].includes(data.claimMethod)) throw deny();
