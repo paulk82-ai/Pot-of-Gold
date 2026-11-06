@@ -420,6 +420,9 @@ details.course[open] summary::after{content:"Hide"}
   .twos-badge.sm{width:34px;height:34px;font-size:18px}
   .twos-choice{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .credit-list{margin-top:12px}
+  .srcpick{display:grid;gap:10px;margin-top:6px}
+  .srcpick .btn{display:flex;align-items:center;justify-content:center;gap:10px;min-height:56px;font-size:17px}
+  .srcpick svg{width:22px;height:22px}
   .credit-note{margin:12px 0 0;padding:10px 12px;border-radius:10px;background:var(--warn-bg);border-left:3px solid var(--warn);font-size:13px;line-height:1.45}
   .credit-note b{color:var(--warn)}
   .credit-note.home{margin:14px 0 0}
@@ -671,6 +674,8 @@ form.inline{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <input type="file" id="scanFile" class="vh" accept="image/*" tabindex="-1" aria-hidden="true">
 <input type="file" id="photoFile" class="vh" accept="image/*" tabindex="-1" aria-hidden="true">
+<input type="file" id="scanCam" class="vh" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
+<input type="file" id="photoCam" class="vh" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
 <noscript><p style="padding:20px">This app needs JavaScript turned on.</p></noscript>
 <script src="config.js"></script>
 <script type="module" src="app.js"></script>

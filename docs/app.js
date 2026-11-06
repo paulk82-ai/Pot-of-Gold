@@ -531,7 +531,8 @@ const ICONS = {
   back:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>',
   camera:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 8h3.5l2-3h6l2 3h3.5v11h-17z"/><circle cx="12" cy="13" r="3.5"/></svg>',
   group:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 19c.8-3.3 3.2-5 6-5s5.2 1.7 6 5"/><path d="M15.5 14.2c2.2.1 4 1.6 4.5 4.3"/></svg>',
-  share:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3L10 14"/><path d="M21 3l-7 18-4-7-7-4z"/></svg>'
+  share:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3L10 14"/><path d="M21 3l-7 18-4-7-7-4z"/></svg>',
+  image:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M4 18l5-5 4 4 2.5-2.5L20 19"/></svg>'
 };
 function doRender(){
   const ae = document.activeElement; const main = $('#main');
@@ -1230,6 +1231,7 @@ function renderSheet(){
     case 'pay': h = sheetPay(); break;
     case 'twosPay': h = sheetTwosPay(); break;
     case 'credit': h = sheetCredit(); break;
+    case 'pickSrc': h = sheetPickSrc(); break;
     case 'twos': h = sheetTwos(); break;
     case 'start': h = sheetStart(); break;
     case 'payments': h = sheetPayments(); break;
@@ -1452,7 +1454,13 @@ async function imageToBase64(file){
   }
 }
 function parseJSON(text){ try { return JSON.parse(text); } catch (_) {} const m = /```(?:json)?\s*([\s\S]*?)```/.exec(text); if (m) { try { return JSON.parse(m[1]); } catch (_) {} } const a = text.indexOf('{'), b = text.lastIndexOf('}'); if (a >= 0 && b > a) { try { return JSON.parse(text.slice(a, b+1)); } catch (_) {} } return null; }
-function pickScanPhoto(ctx){ SCAN_PENDING = ctx; const f = $('#scanFile'); f.value = ''; f.click(); }
+// Card photos: ask whether to take a photo now or choose one from the gallery.
+function pickScanPhoto(ctx){ SCAN_PENDING = ctx; openSheet({type:'pickSrc', kind:'scan'}); }
+function sheetPickSrc(){
+  const scan = S.sheet.kind === 'scan';
+  return `<h3>${scan ? 'Scan a card' : 'Photo of your card'}</h3><p class="sub">${scan ? 'Lay the card flat in good light, with every score in the picture.' : 'A clear photo of the signed card, flat and in good light.'}</p>
+    <div class="srcpick"><button class="btn primary" data-act="pickSrc" data-src="cam">${ICONS.camera || ''}Take a photo</button><button class="btn" data-act="pickSrc" data-src="lib">${ICONS.image || ''}Choose from gallery</button></div>`;
+}
 function startScan(files){
   const ctx = SCAN_PENDING; SCAN_PENDING = null; if (!ctx || !files || !files.length) return;
   const file = files[0]; let thumbs = []; try { thumbs = [URL.createObjectURL(file)]; } catch (_) {}
@@ -1659,7 +1667,9 @@ const ACT = {
   async checkOk(){ const {cid, round, gid} = S.card || {}; const card = cardOf(cid, round, gid); if (!S.isAdmin || !writtenOf(card)) return;
     const base = cardBase(cid, round, gid); const data = Object.assign(base, {updatedAt: card.updatedAt || Date.now(), updatedBy: card.updatedBy || S.user.uid, scanned: Object.assign(base.scanned, {ok:true})});
     const path = `comps/${cid}/cards/${round}_${gid}`; localSet(path, data); render(); if (await put(path, data)) toast('Card check cleared'); },
-  photoCard(el){ PHOTO_PENDING = {cid: el.dataset.cid, round: Number(el.dataset.round)}; const f = $('#photoFile'); if (!f) return; f.value = ''; f.click(); },
+  photoCard(el){ PHOTO_PENDING = {cid: el.dataset.cid, round: Number(el.dataset.round)}; openSheet({type:'pickSrc', kind:'photo'}); },
+  pickSrc(el){ const kind = S.sheet && S.sheet.kind; if (!kind) return; const id = (kind === 'scan' ? 'scan' : 'photo') + (el.dataset.src === 'cam' ? 'Cam' : 'File');
+    const f = $('#' + id); closeSheetQuiet(); render(); if (!f) return; f.value = ''; f.click(); },
   async sharePhoto(){ const sh = S.sheet; const f = sh && sh.file; if (!f) return; const c = D.comps[sh.ctx.cid];
     const text = `Pot of Gold · ${gName(S.myGid)} · ${c ? c.name : ''} round ${sh.ctx.round} card`;
     try { if (navigator.canShare && navigator.canShare({files:[f]})) { await navigator.share({files:[f], text}); closeSheet(); toast('Photo shared'); return; } }
@@ -2140,8 +2150,8 @@ document.addEventListener('change', ev => {
   const t = ev.target;
   if (t.id === 'season') { S.season = t.value; render(); return; }
   if (t.id === 'leagueMonth') { S.leagueMonth = t.value; S.boardSel = 'month'; t.blur(); render(); return; }
-  if (t.id === 'scanFile') { startScan(t.files); return; }
-  if (t.id === 'photoFile') { const ctx = PHOTO_PENDING; PHOTO_PENDING = null; const file = t.files && t.files[0]; if (!ctx || !file) return;
+  if (t.id === 'scanFile' || t.id === 'scanCam') { startScan(t.files); return; }
+  if (t.id === 'photoFile' || t.id === 'photoCam') { const ctx = PHOTO_PENDING; PHOTO_PENDING = null; const file = t.files && t.files[0]; if (!ctx || !file) return;
     let thumbs = []; try { thumbs = [URL.createObjectURL(file)]; } catch (_) {} openSheet({type:'photo', ctx, file, thumbs}); return; }
   if (t.id === 'pinRemember') { S.pinRemember = t.checked; if (!t.checked) { try { localStorage.removeItem('rgc-admin'); } catch (_) {} } return; }
   if ((t.id === 'markerName' || t.id === 'signedChk') && S.card) { const {cid, round, gid} = S.card;
