@@ -92,7 +92,8 @@ service cloud.firestore {
           && request.resource.data.get('claimMethod', null) in [null, 'revolut', 'card'];
       }
 
-      // 2's club: one per golfer per round (id = "<round>_<golferId>"). Nobody is in without paying, and it's paid
+      // 2's club: one per golfer per round (id = "<round>_<golferId>"). Open to any golfer on the list, whether or not
+      // they're in the month (a 2's-only player's card is marked twosOnly and never counts for the month). Nobody is in without paying, and it's paid
       // before teeing off: a golfer joins and says they've paid while the round is open, before starting it or within
       // 10 minutes of starting. Only organisers mark it paid.
       match /twos/{tid} {
@@ -109,7 +110,7 @@ service cloud.firestore {
           && request.resource.data.round is int
           && tid == string(request.resource.data.round) + '_' + myGid()
           && request.resource.data.paid == false
-          && entered(myGid()) && roundOpen(request.resource.data.round)
+          && roundOpen(request.resource.data.round)
           && request.resource.data.createdAt is int
           && math.abs(request.resource.data.createdAt - request.time.toMillis()) < 600000
           && startedNow(request.resource.data.round);
@@ -129,20 +130,23 @@ service cloud.firestore {
           let me = myGid();
           let golfer = get(/databases/$(database)/documents/golfers/$(c.golferId)).data;
           let now = request.time.toMillis();
-          return c.keys().hasOnly(['compId', 'golferId', 'round', 'marker', 'signed', 'scores', 'hi', 'shots', 'updatedAt', 'updatedBy', 'scanned', 'startedAt', 'deadline'])
+          let inTwos = existsAfter(/databases/$(database)/documents/comps/$(cid)/twos/$(cardId));
+          return c.keys().hasOnly(['compId', 'golferId', 'round', 'marker', 'signed', 'scores', 'hi', 'shots', 'updatedAt', 'updatedBy', 'scanned', 'startedAt', 'deadline', 'twosOnly'])
             && c.compId == cid && c.round is int && c.scores is map
             && cardId == string(c.round) + '_' + c.golferId
-            && c.golferId == me && entered(me)
+            && c.golferId == me && (entered(me) || inTwos)
             && c.marker is string && c.marker.size() <= 60 && c.signed is bool
             && c.startedAt is int && c.deadline is int
             && isOpen() && roundOpen(c.round)
             && (resource == null
                   ? (c.shots == null && c.hi == golfer.get('hcp', golfer.get('hi', null))
+                     && c.get('twosOnly', false) == !entered(me)
                      && math.abs(c.startedAt - now) < 600000
                      && c.deadline > now && c.deadline <= now + 86400000)
                   : (resource.data.golferId == c.golferId && resource.data.round == c.round
                      && c.shots == resource.data.get('shots', null) && c.hi == resource.data.get('hi', null)
                      && c.startedAt == resource.data.get('startedAt', null) && c.deadline == resource.data.get('deadline', null)
+                     && c.get('twosOnly', false) == resource.data.get('twosOnly', false)
                      && now < resource.data.deadline));
         }
         allow read: if canRead();

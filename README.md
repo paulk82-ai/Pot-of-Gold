@@ -131,7 +131,9 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 
 ## 2's club (side competition)
 
-Off until you switch it on in **Admin → 2's club**. Before switching it on, paste the latest `firestore.rules` into Firebase (Firestore Database → Rules → Publish), because the 2's club needs its own rules.
+Off until you switch it on in **Admin → 2's club**.
+
+**Open to everyone on the golfer list, weekend by weekend.** Golfers who aren't in that month's competition see "Not in November? You can play the 2's on its own this weekend" on Home. They tap **Join & pay €2**, then **Start my round** and enter or scan their card as normal. Their card is marked **2's only**: it counts for the 2's but never for the monthly table, league points, prizes or handicaps, even if they enter the month later. You see them tagged **2's only** on the 2's club sheet, with a **Card** button to check their card. Before switching it on, paste the latest `firestore.rules` into Firebase (Firestore Database → Rules → Publish), because the 2's club needs its own rules.
 
 - €2 a round (you can change it in Admin). Golfers can tap **Join** in the 2's panel on Home any time the round is open before they tee off. When they tap **Start my round**, the app knows if they're already in; if not, it asks **Are you in the 2's club this round?** with **Yes, I'm in** or **No, just start**. They can still join and pay for 10 minutes after starting, but not later.
 - **Nobody is in without paying, and it's paid before teeing off.** Joining takes them straight to Revolut; they're in once they tap **I've paid**, and you confirm it under the month's **2's club** button. Anyone who hasn't paid within 10 minutes of starting their round is not in that weekend and can't pay later. A 2 counts once you've confirmed the payment. You can still mark someone paid yourself if you know they paid in time.
