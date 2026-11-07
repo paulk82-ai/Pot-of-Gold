@@ -129,6 +129,10 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 - So people without Revolut can pay by card, turn on **Revtag discoverability** in your Revolut app's privacy settings.
 - Revolut limits how much you can receive by card through your link each week; the limit is shown in your Revolut app. Payments from other Revolut users have no limit. If a lot of people pay by card in the same week, some may need to wait or pay Revolut to Revolut.
 
+## Opening the app from WhatsApp or Facebook
+
+Google won't allow signing in inside another app's built-in browser (WhatsApp, Facebook, Instagram, the Google app and so on). When the app is opened in one of those, the sign-in screen says so and offers **Open in Safari** (iPhone) or **Open in Chrome** (Android), plus **Copy link**. Signing in with email and a password works anywhere. Once someone has signed in and added the app to their Home Screen, they stay signed in and go straight in from the icon.
+
 ## 2's club (side competition)
 
 Off until you switch it on in **Admin → 2's club**.

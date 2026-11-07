@@ -595,16 +595,39 @@ function viewError(){ return `<section class="empty"><span class="eyebrow">Could
 function viewSetupNeeded(){
   return `<section class="empty"><span class="eyebrow">Almost there</span><h2>Connect the app to Firebase</h2><p class="hint">This copy of the app hasn't been linked to its Firebase project yet. Follow the setup guide, then reload.</p><a class="btn primary" href="?sample=1">Try it with sample data</a></section>`;
 }
+// Opened inside another app's browser (WhatsApp, Facebook, the Google app…)? Google won't let you sign in there.
+function inAppBrowser(){
+  const ua = navigator.userAgent || '';
+  try { if ((window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone) return null; } catch (_) {}
+  if (/WhatsApp/i.test(ua)) return 'WhatsApp';
+  if (/FBAN|FBAV|FB_IAB|FBIOS/i.test(ua)) return 'Facebook';
+  if (/Instagram/i.test(ua)) return 'Instagram';
+  if (/Messenger/i.test(ua)) return 'Messenger';
+  if (/Snapchat/i.test(ua)) return 'Snapchat';
+  if (/GSA\//.test(ua)) return 'the Google app';
+  if (/Android/.test(ua) && /; wv\)/.test(ua)) return 'another app';
+  if (/iPhone|iPad|iPod/.test(ua) && !/Safari\//.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua)) return 'another app';
+  return null;
+}
+function inAppHtml(){
+  const where = inAppBrowser(); if (!where) return '';
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent || ''); const url = location.href.split('#')[0];
+  const open = ios ? `x-safari-${url}` : `intent://${location.host}${location.pathname}${location.search}#Intent;scheme=https;package=com.android.chrome;end`;
+  return `<div class="inapp"><b>You've opened this inside ${esc(where)}</b><p>Google sign-in doesn't work here. Open the app in ${ios ? 'Safari' : 'Chrome'} instead, then add it to your Home Screen so you go straight in next time.</p>
+    <div class="inapp-btns"><a class="btn primary" href="${esc(open)}">Open in ${ios ? 'Safari' : 'Chrome'}</a><button class="btn" data-act="copy" data-text="${esc(url)}">Copy link</button></div>
+    <p class="hint">If the button doesn't work, tap ${ios ? '<b>⋯</b> or the share button' : '<b>⋮</b>'} and choose <b>Open in ${ios ? 'Safari' : 'Chrome'}</b>, or copy the link into ${ios ? 'Safari' : 'Chrome'}. Signing in with email below works here too.</p></div>`;
+}
 function viewSignin(){
   if (SAMPLE) {
     const ids = [['organiser@example.com','Organiser (admin)']].concat(sampleGolfers().map(g => [g[3], g[0]]), [['newgolfer@example.com','Someone new (not on the list yet)']]);
-    return `<section class="signin"><span class="eyebrow">Sample league</span><h1>Sign in as…</h1><p class="hint">Pick someone to see the app from their side. In the real app everyone signs in with their own Google account or email.</p>
+    return `<section class="signin"><span class="eyebrow">Sample league</span><h1>Sign in as…</h1><p class="hint">Pick someone to see the app from their side. In the real app everyone signs in with their own Google account or email.</p>${inAppHtml()}
       <ul class="list">${ids.map(([e,n]) => `<li><button class="row" data-act="sampleSignin" data-email="${esc(e)}"><span class="avatar">${esc(initials(n))}</span><span class="row-main"><span class="row-title">${esc(n)}</span><span class="row-sub">${esc(e)}</span></span><span></span></button></li>`).join('')}</ul></section>`;
   }
   const up = S.signinMode === 'signup';
   return `<section class="signin">
     <span class="eyebrow">Welcome</span><h1>${up ? 'Create your account' : 'Sign in'}</h1>
     <p class="hint">Use the email address the organiser has for you. That's how the app knows which golfer you are.</p>
+    ${inAppHtml()}
     <button class="btn block gbtn" data-act="google"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M22.5 12.3c0-.8-.1-1.5-.2-2.3H12v4.3h5.9a5 5 0 0 1-2.2 3.3v2.7h3.5c2.1-1.9 3.3-4.7 3.3-8z"/><path fill="#34A853" d="M12 23c3 0 5.4-1 7.2-2.7l-3.5-2.7c-1 .7-2.2 1.1-3.7 1.1-2.9 0-5.3-1.9-6.2-4.5H2.2v2.8A11 11 0 0 0 12 23z"/><path fill="#FBBC05" d="M5.8 14.2a6.6 6.6 0 0 1 0-4.2V7.2H2.2a11 11 0 0 0 0 9.8l3.6-2.8z"/><path fill="#EA4335" d="M12 5.4c1.6 0 3.1.6 4.2 1.7l3.1-3.1A11 11 0 0 0 2.2 7.2L5.8 10C6.7 7.3 9.1 5.4 12 5.4z"/></svg>Continue with Google</button>
     <div class="or"><span>or with email</span></div>
     <form data-form="${up ? 'signup' : 'signin'}" class="stack">
