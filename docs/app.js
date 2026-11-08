@@ -1532,7 +1532,9 @@ async function runScan(){
     sh.rows = buildScanRows(res, c, sh.ctx); sh.notes = typeof res.notes === 'string' ? res.notes.slice(0, 300) : ''; sh.phase = 'review';
   } catch (e) {
     if (ctl.aborted || S.sheet !== sh) return; console.warn(e);
-    sh.phase = 'error'; sh.err = /quota|429|exhaust/i.test(String(e && e.message)) ? 'The scanner is busy or over its free limit. Try again in a few minutes, or type the scores in.' : /app.?check|permission|403/i.test(String(e && e.message)) ? "Scanning isn't switched on for this app yet. The organiser needs to finish the Gemini setup." : "Couldn't read the card. Try a sharper photo, straight on, in good light.";
+    const em = String((e && (e.message || e.code)) || e || '');
+    sh.phase = 'error'; sh.errDetail = em.replace(/\s+/g, ' ').slice(0, 220);
+    sh.err = /quota|429|exhaust|rate.?limit|too many/i.test(em) ? "The scanner has hit its daily free limit. Type the scores in with Enter my scores for now, then add a photo of the card." : /app.?check|recaptcha|attestation|401|403|permission|api.?key|billing|not.?enabled|disabled/i.test(em) ? "The scanner couldn't be reached from this phone. Type the scores in with Enter my scores for now, then add a photo of the card." : /offline|network|failed to fetch|load failed/i.test(em) ? "You're offline. Connect and try again, or type the scores in." : /unreadable/.test(em) ? "Couldn't read the card. Try a sharper photo, straight on, in good light." : "The scanner didn't work this time. Try again, or type the scores in with Enter my scores.";
   }
   if (SCAN_CTL === ctl) SCAN_CTL = null; renderSheet();
 }
@@ -1591,9 +1593,9 @@ function sheetScan(){
   const sh = S.sheet; const c = D.comps[sh.ctx.cid]; if (!c) return null; const round = sh.ctx.round; const holes = rcfg(c, round).holes;
   let h = `<h3>Scan scorecard</h3><p class="sub">${esc(c.name)} · Round ${round}</p>`;
   if (sh.thumbs && sh.thumbs.length) h += `<div class="thumbs">${sh.thumbs.map(u => `<img src="${esc(u)}" alt="Scorecard photo">`).join('')}</div>`;
-  if (sh.phase === 'saved') return h + `<p class="notebox"><b>${esc(sh.msg)}</b></p><p class="hint" style="margin:10px 0">${sh.photoSaved ? 'The photo of the card is saved with ' + (S.isAdmin ? 'the cards' : 'your card') + '.' : sh.photoSaving ? 'Saving the photo of the card…' : ''}</p><button class="btn block" data-act="closeSheet">Done</button>`;
+  if (sh.phase === 'saved') return h + `<p class="notebox"><b>${esc(sh.msg)}</b></p><p class="hint" style="margin:10px 0">${sh.photoSaved ? 'The photo of the card is saved with ' + (S.isAdmin ? 'the cards' : 'your card') + '.' : sh.photoSaving ? 'Saving the photo of the card…' : (photoRule() ? "<b>The photo didn't save.</b> Open your card and tap Add a photo of my card." : '')}</p><button class="btn block" data-act="closeSheet">Done</button>`;
   if (sh.phase === 'reading') return h + `<div class="reading"><span class="pulse"></span><p><b>Reading the card…</b> This usually takes 10 to 30 seconds.</p></div><button class="btn block" data-act="stopScan">Stop</button>`;
-  if (sh.phase === 'error') return h + `<p class="errbox">${esc(sh.err)}</p><div class="confirm-actions"><button class="btn" data-act="closeSheet">Close</button><button class="btn primary" data-act="newScan">New photo</button></div>`;
+  if (sh.phase === 'error') return h + `<p class="errbox">${esc(sh.err)}</p>${sh.errDetail && !/^unreadable$/.test(sh.errDetail) ? `<p class="hint" style="margin:-4px 0 12px;word-break:break-word">Details for the organiser: ${esc(sh.errDetail)}</p>` : ''}<div class="confirm-actions"><button class="btn" data-act="closeSheet">Close</button><button class="btn primary" data-act="newScan">New photo</button></div>`;
   if (!sh.rows.length) return h + `<p class="errbox">No scores found on this photo.${sh.notes ? ' ' + esc(sh.notes) : ''}</p><div class="confirm-actions"><button class="btn" data-act="closeSheet">Close</button><button class="btn primary" data-act="newScan">New photo</button></div>`;
   h += `<p class="hint" style="margin-bottom:12px">Check each number against the card. Highlighted holes were hard to read. Type P for a pick-up.</p>`;
   if (sh.notes) h += `<p class="notebox">${esc(sh.notes)}</p>`;
@@ -1690,7 +1692,8 @@ async function saveCardPhoto(cid, round, gid, file, quiet){
   try { ph = await compressImage(file, lim[0], lim[1]); } catch (e) { toast("Couldn't read that photo. Try taking it again."); return false; }
   if (!ph || ph.img.length > 1000000) { toast('That photo is too big. Try taking it again.'); return false; }
   const p = photoPath(cid, round, gid); const doc = {compId:cid, golferId:gid, round:Number(round), img:ph.img, w:ph.w, h:ph.h, at:Date.now(), by:S.user.uid};
-  if (!(await put(p, doc))) return false; D.photos[p] = doc;
+  try { await be.set(p, noId(doc)); } catch (e) { console.warn(e); toast(/permission|insufficient/i.test(String(e && (e.code || e.message))) ? (cardLocked(cardOf(cid, round, gid)) ? 'This card locked at midnight, so the photo can\'t be added now.' : "The photo couldn't be saved. Let the organiser know.") : errText(e)); return false; }
+  D.photos[p] = doc;
   const card = cardOf(cid, round, gid);
   if (card) { const before = cardCounts(cid, round, gid); const cp = `comps/${cid}/cards/${round}_${gid}`;
     const data = Object.assign(cardBase(cid, round, gid), {photoAt: Date.now(), updatedAt: Date.now(), updatedBy: S.user.uid});

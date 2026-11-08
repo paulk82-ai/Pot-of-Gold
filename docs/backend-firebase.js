@@ -42,14 +42,17 @@ export async function init(cfg){
     return v;
   };
 
-  let ai = null;
-  async function model(){
-    if (ai) return ai;
-    const AI = await import(`${base}/firebase-ai.js`);
-    const inst = AI.getAI(app, { backend: new AI.GoogleAIBackend() });
-    ai = AI.getGenerativeModel(inst, { model: cfg.geminiModel || 'gemini-3.8-flash', generationConfig: { responseMimeType: 'application/json', temperature: 0 } });
-    return ai;
+  // Scanning tries the main model first. If it's over its limit (the free Flash tier allows only about 20 scans a day
+  // and 5 a minute), busy, or retired, it moves on to the next model, which has its own, much bigger allowance.
+  let aiInst = null; const models = {};
+  async function model(name){
+    if (models[name]) return models[name];
+    if (!aiInst) { const AI = await import(`${base}/firebase-ai.js`); aiInst = { AI, inst: AI.getAI(app, { backend: new AI.GoogleAIBackend() }) }; }
+    models[name] = aiInst.AI.getGenerativeModel(aiInst.inst, { model: name, generationConfig: { responseMimeType: 'application/json', temperature: 0 } });
+    return models[name];
   }
+  const scanModels = () => [...new Set([cfg.geminiModel || 'gemini-3.8-flash'].concat(cfg.geminiFallback || ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']))];
+  const tryNext = e => /quota|429|exhaust|rate.?limit|too many|overload|unavailable|503|500|not.?found|404|not supported|deprecat|retired/i.test(String((e && (e.message || e.code)) || e));
 
   return {
     kind: 'firebase',
@@ -84,9 +87,15 @@ export async function init(cfg){
     newId: () => F.doc(F.collection(db, '_ids')).id,
     stamp: date => F.Timestamp.fromDate(date),
     async scan(prompt, imageBase64, mimeType){
-      const m = await model();
-      const res = await m.generateContent([prompt, { inlineData: { data: imageBase64, mimeType } }]);
-      return res.response.text();
+      let last = null;
+      for (const name of scanModels()) {
+        try {
+          const m = await model(name);
+          const res = await m.generateContent([prompt, { inlineData: { data: imageBase64, mimeType } }]);
+          return res.response.text();
+        } catch (e) { console.warn('Scan with ' + name + ' failed', e); last = e; if (!tryNext(e)) throw e; }
+      }
+      throw last;
     }
   };
 }

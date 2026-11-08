@@ -64,6 +64,7 @@ This is easiest on a computer, but it works in a phone browser too.
    - Firebase helps you create a site key; add your app's web address (step 3 below) as an allowed domain.
    - Copy the **site key** into `recaptchaEnterpriseSiteKey` in `docs/config.js`.
 4. If Google ever renames the model, change `geminiModel` in `docs/config.js`.
+5. **Free limits.** On the free tier, the main model (`gemini-3.8-flash`) allows only about 20 scans a day and 5 a minute for the whole app. When it's used up, busy or retired, the app automatically scans with `gemini-3.5-flash-lite` (about 500 a day, 10 a minute), then `gemini-3.1-flash-lite`. Each has its own allowance, and they reset at 8am Irish time (midnight Pacific). Turning on billing (the Blaze plan) removes the low limits; a scan then costs well under a cent. If a scan fails, the message shows the details, so you can tell what went wrong.
 
 Without this step the app still works fully; golfers just type scores in instead of scanning.
 
