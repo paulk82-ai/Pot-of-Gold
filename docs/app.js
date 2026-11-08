@@ -1291,6 +1291,7 @@ function viewAdmin(){
 /* ---------- Sheets ---------- */
 function openSheet(s){ S.sheet = s; renderSheet(); document.body.classList.add('locked'); }
 function closeSheetQuiet(){
+  if (S.sheet && S.sheet.saveUrl) { try { URL.revokeObjectURL(S.sheet.saveUrl); } catch (_) {} }
   if (S.sheet && ['scan', 'send', 'upload'].includes(S.sheet.type)) { if (SCAN_CTL) { SCAN_CTL.aborted = true; SCAN_CTL = null; } (S.sheet.thumbs || []).forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} }); }
   S.sheet = null; CONFIRM_FN = null; $('#sheet').hidden = true; document.body.classList.remove('locked');
 }
@@ -1768,6 +1769,15 @@ function rangeText(hs){ const a = hs.slice().sort((x, y) => x - y); const out = 
 function checkedBy(card){ const s = card && card.scanned; return !!(s && typeof s === 'object' && s.by === 'organiser' && JSON.stringify(s.scores || {}) === JSON.stringify(card.scores || {})); }
 function sendText(ctx){ const c = D.comps[ctx.cid]; const sc = c ? scoreCard(c, ctx.round, ctx.gid) : null; const u = sc ? unitFor(sc.rc.format) : '';
   return `Pot of Gold · ${gName(ctx.gid)} · ${c ? c.name : ''} round ${ctx.round}${sc && sc.filled ? ` · ${cardValueText(sc)}${u ? ' ' + u : ''}` : ''}${sc && sc.card && markerName(sc.card) ? ` · marker ${markerName(sc.card)}` : ''}`; }
+// Phones are fussy about what they'll share: make a plain JPEG with a proper name before the golfer taps Share.
+async function prepareShare(sh){
+  try {
+    const ph = await compressImage(sh.file, 1800, 2500000); const bin = atob(ph.img.split(',')[1]); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    const nm = `Pot-of-Gold-${gName(sh.ctx.gid).replace(/[^A-Za-z0-9]+/g, '-')}-R${sh.ctx.round}.jpg`;
+    sh.shareFile = new File([u8], nm, {type: 'image/jpeg', lastModified: Date.now()});
+  } catch (e) { console.warn(e); sh.shareFile = sh.file; }
+  if (sh.phase === 'preparing') sh.phase = 'ready'; if (S.sheet === sh) renderSheet();
+}
 async function markSent(ctx){
   const {cid, round, gid} = ctx; const card = cardOf(cid, round, gid); if (!card) { toast('Tap Start my round first.'); return false; } if (card.photoAt) return true;
   const p = photoPath(cid, round, gid); const before = cardCounts(cid, round, gid);
@@ -1784,8 +1794,11 @@ function sheetSend(){
   if (sh.thumbs && sh.thumbs.length) h += `<div class="thumbs">${sh.thumbs.map(u => `<img src="${esc(u)}" alt="Photo of your card">`).join('')}</div>`;
   if (sh.phase === 'sent') { const sc = scoreCard(c, round, gid); const ok = cardCounts(c.id, round, gid);
     return h + `<p class="notebox"><b>Sent to the organiser.</b> ${ok ? 'Your card counts now.' : !sc.complete ? 'Finish entering your scores so it counts.' : !sc.marked ? "Add your marker's name and tick that it's signed so it counts." : ''}</p><button class="btn block" data-act="closeSheet">Done</button>`; }
-  if (sh.phase === 'manual') return h + `<p class="errbox">This phone can't send the photo from here.</p><p class="hint" style="margin:-4px 0 12px">Open WhatsApp and send the organiser the photo of your signed card. Then come back and tap I've sent it.</p><a class="btn block" href="https://wa.me/?text=${encodeURIComponent(sendText(sh.ctx))}" target="_blank" rel="noopener">${ICONS.share}Open WhatsApp</a><button class="btn primary block" style="margin-top:8px" data-act="sentManual">I've sent it</button>`;
-  return h + `<p style="margin:12px 0 10px">Now send it to the organiser on WhatsApp.</p><button class="btn primary block big" data-act="shareCard">${ICONS.share}Send on WhatsApp</button><p class="hint" style="margin-top:10px">Opens your phone's share menu. Pick WhatsApp, then the organiser (not the group).</p>`;
+  if (sh.phase === 'preparing') return h + `<div class="reading"><span class="pulse"></span><p><b>Getting the photo ready…</b></p></div>`;
+  if (sh.phase === 'manual') { if (!sh.saveUrl) { try { sh.saveUrl = URL.createObjectURL(sh.shareFile || sh.file); (sh.thumbs = sh.thumbs || []); } catch (_) {} }
+    return h + `<p class="errbox">Your phone's share menu didn't open.</p><p class="hint" style="margin:-4px 0 12px">Save the photo to your phone, open WhatsApp and send it to the organiser. Then come back and tap I've sent it.${sh.shareErr ? ` (${esc(sh.shareErr)})` : ''}</p>
+      ${sh.saveUrl ? `<a class="btn block" href="${esc(sh.saveUrl)}" download="${esc((sh.shareFile && sh.shareFile.name) || 'Pot-of-Gold-card.jpg')}">Save the photo</a>` : ''}<a class="btn block" style="margin-top:8px" href="https://wa.me/?text=${encodeURIComponent(sendText(sh.ctx))}" target="_blank" rel="noopener">Open WhatsApp</a><button class="btn primary block" style="margin-top:8px" data-act="sentManual">I've sent it</button><button class="textbtn" style="display:block;margin:10px auto 0" data-act="shareCard">Try the share menu again</button>`; }
+  return h + `<p style="margin:12px 0 10px">Now share it to the organiser.</p><button class="btn primary block big" data-act="shareCard">${ICONS.share}Share the photo</button><p class="hint" style="margin-top:10px">Opens your phone's share menu. Pick <b>WhatsApp</b>, then the organiser (not the group), and send.</p>`;
 }
 function uploadPrompt(c, round, gid){
   const holes = rcfg(c, round).holes; const k = cfg().course;
@@ -1998,9 +2011,10 @@ const ACT = {
   sendCard(el){ const ctx = {cid: el.dataset.cid, round: Number(el.dataset.round), gid: el.dataset.gid || S.myGid}; const card = cardOf(ctx.cid, ctx.round, ctx.gid);
     if (!card || !cardStarted(card)) { toast('Tap Start my round first.'); return; } if (cardLocked(card)) { toast('This card locked at midnight.'); return; }
     PHOTO_PENDING = Object.assign(ctx, {mode:'send'}); openSheet({type:'pickSrc', kind:'send'}); },
-  async shareCard(){ const sh = S.sheet; if (!sh || sh.type !== 'send' || !sh.file) return; const text = sendText(sh.ctx); let shared = false;
-    try { if (navigator.canShare && navigator.canShare({files:[sh.file]})) { await navigator.share({files:[sh.file], text}); shared = true; } }
-    catch (e) { if (e && e.name === 'AbortError') { toast('Not sent. Tap Send on WhatsApp to try again.'); return; } console.warn(e); }
+  async shareCard(){ const sh = S.sheet; if (!sh || sh.type !== 'send' || !sh.file || sh.phase === 'preparing') return; const f = sh.shareFile || sh.file; let shared = false;
+    // Share the photo on its own: some phones (and WhatsApp) drop the picture when text is shared with it.
+    try { const d = {files: [f]}; if (navigator.share && (!navigator.canShare || navigator.canShare(d))) { await navigator.share(d); shared = true; } else sh.shareErr = navigator.share ? "this phone can't share photos from the app" : 'sharing not available in this browser'; }
+    catch (e) { if (e && e.name === 'AbortError') { toast('Not sent. Tap Share the photo to try again.'); return; } console.warn(e); sh.shareErr = String((e && (e.name || e.message)) || e).slice(0, 80); }
     if (!shared) { sh.phase = 'manual'; renderSheet(); return; }
     if (await markSent(sh.ctx)) { sh.phase = 'sent'; if (S.sheet === sh) renderSheet(); } },
   async sentManual(){ const sh = S.sheet; if (!sh || sh.type !== 'send') return; if (await markSent(sh.ctx)) { sh.phase = 'sent'; if (S.sheet === sh) renderSheet(); } },
@@ -2590,7 +2604,7 @@ document.addEventListener('change', ev => {
   if (t.id === 'scanFile' || t.id === 'scanCam') { startScan(t.files); return; }
   if (t.id === 'photoFile' || t.id === 'photoCam') { const ctx = PHOTO_PENDING; PHOTO_PENDING = null; const file = t.files && t.files[0]; if (!ctx || !file) return;
     let thumbs = []; try { thumbs = [URL.createObjectURL(file)]; } catch (_) {}
-    if (ctx.mode === 'send') { openSheet({type:'send', ctx, file, thumbs, phase:'ready'}); return; }
+    if (ctx.mode === 'send') { openSheet({type:'send', ctx, file, thumbs, phase:'preparing'}); prepareShare(S.sheet); return; }
     if (ctx.mode === 'upload') { openSheet({type:'upload', ctx, file, thumbs, phase:'reading'}); runUpload(); return; }
     toast('Adding the photo…'); saveCardPhoto(ctx.cid, ctx.round, ctx.gid || S.myGid, file); return; }
   if (t.id === 'pinRemember') { S.pinRemember = t.checked; if (!t.checked) { try { localStorage.removeItem('rgc-admin'); } catch (_) {} } return; }
