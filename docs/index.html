@@ -365,6 +365,14 @@ details.course[open] summary::after{content:"Hide"}
 @media (prefers-reduced-motion: reduce){.pulse{animation:none}}
 .errbox{padding:12px 14px;border-radius:10px;background:var(--warn-bg);color:var(--warn);font-weight:500}
 .notebox{padding:10px 12px;border-radius:10px;background:var(--tint);font-size:13px;margin-bottom:12px}
+.sheet h3.started-h{margin:0 0 6px;text-align:center}
+.sheet .eyebrow.step-eb{display:block;margin:-28px 48px 8px 0}
+.sheet .eyebrow.step-eb+h3{margin-top:0}
+.started-ok{width:64px;height:64px;margin:-20px auto 12px;border-radius:50%;background:var(--fairway);color:var(--on-fairway);display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:700}
+.steps3{list-style:none;counter-reset:s;margin:14px 0;padding:0;display:flex;flex-direction:column;gap:12px}
+.steps3 li{counter-increment:s;display:grid;grid-template-columns:30px 1fr;column-gap:10px;row-gap:2px}
+.steps3 li::before{content:counter(s);grid-row:span 2;width:28px;height:28px;border-radius:50%;background:var(--fairway);color:var(--on-fairway);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+.steps3 li span{color:var(--muted);font-size:14px}
 .notebox.ok{background:color-mix(in srgb,var(--fairway) 14%,transparent)}
 .errbox+.uptable,.notebox+.uptable,.hint+.uptable{margin-top:10px}
 .upsum{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:2px 0 10px}

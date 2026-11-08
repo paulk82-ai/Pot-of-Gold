@@ -102,7 +102,7 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 
 1. Sign in with Google, or create an email and password account. If the organiser doesn't have that email yet, fill in **Ask to join** and wait to be let in.
 2. On **Home**, tap **Enter**, then **Pay €10** to open Revolut (the app, or a debit card, Apple Pay or Google Pay). Add the reference shown, then tap **I've paid**. The organiser confirms it.
-3. Before you tee off (Friday to Sunday), tap **Start my round** on **Home**. You get one round per weekend.
+3. Before you tee off (Friday to Sunday), tap **Start my round** on **Home**. You get one round per weekend. A page confirms you're signed in for the round; **Enter my scores** there shows the Step 3 page (enter your scores, add your marker, send your card), and its **Enter my scores** opens your card on the keypad.
 4. Play, and get your marker to sign your paper card.
 5. By midnight that day, tap **Enter my scores** and enter your scores hole by hole.
 6. Add your marker's name and tick **My marker has signed my card**.

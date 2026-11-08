@@ -1307,6 +1307,7 @@ function renderSheet(){
     case 'shots': h = sheetShots(); break;
     case 'scan': h = sheetScan(); break;
     case 'send': h = sheetSend(); break;
+    case 'started': h = sheetStarted(); break;
     case 'upload': h = sheetUpload(); break;
     case 'photoView': { const ph = D.photos[photoPath(S.sheet.cid, S.sheet.round, S.sheet.gid)]; h = ph && ph.img ? `<h3>${esc(gName(S.sheet.gid))} · round ${S.sheet.round}</h3><p class="sub">Photo added ${esc(whenText(ph.at))}</p><img class="photo-full" src="${esc(ph.img)}" alt="Photo of the signed card">` : null; break; }
     case 'account': h = sheetAccount(); break;
@@ -1348,7 +1349,20 @@ async function doStartRound(cid, round, twos, pay){
   top(); render();
   const tw = twosOf(cid, round, S.myGid);
   if ((inTwos || pay) && tw && twosPayState(tw) === 'unpaid') { openSheet({type:'twosPay', id:`${cid}/${round}_${S.myGid}`}); toast(`Round started. Pay your ${euro(twosFee())} now to be in the 2's.`); }
-  else toast(inTwos && twosByCredit(tw) ? `Round started. You're in the 2's from your credit (${euro(twosCredit(S.myGid))} left). Good luck!` : 'Round started. Good luck!');
+  else openSheet({type:'started', cid, round, phase:'in'});
+}
+// After Start my round: "You're signed in" with Enter my scores, then the Step 3 page (what to do by midnight).
+function sheetStarted(){
+  const sh = S.sheet; const c = D.comps[sh.cid]; if (!c) return null; const n = sh.round; const card = cardOf(c.id, n, S.myGid); if (!card) return null;
+  const tw = twosOf(c.id, n, S.myGid); const ps = twosPayState(tw);
+  if (sh.phase === 'step3') return `<span class="eyebrow step-eb">Step 3</span><h3>By midnight tonight</h3><p class="sub">${esc(c.name)} · Round ${n}</p>
+    <ol class="steps3"><li><b>Enter your scores</b><span>Tap Enter my scores and type them in, hole by hole.</span></li><li><b>Add your marker</b><span>Type your marker's name and tick <b>My marker has signed my card</b>.</span></li>${photoRequired(card) ? `<li><b>Send your card to the organiser</b><span>Tap <b>Send my card to the organiser</b>, take a photo of the signed card and send it on WhatsApp.</span></li>` : ''}</ol>
+    <p class="notebox">Your card only counts once ${photoRequired(card) ? "it's entered, signed and sent" : "it's entered and signed"}, by ${esc(deadlineText(card) || 'midnight')}.</p>
+    <button class="btn primary block big" data-act="startedGo">Enter my scores</button><button class="textbtn" style="display:block;margin:10px auto 0" data-act="closeSheet">Later</button>`;
+  return `<div class="started-ok" aria-hidden="true">✓</div><h3 class="started-h">You're signed in for round ${n}</h3><p class="sub" style="text-align:center">${esc(c.name)} · started ${esc(whenText(card.startedAt))}</p>
+    ${tw && (ps === 'paid' || ps === 'claimed') ? `<p class="notebox" style="text-align:center">You're in the 2's club this round${twosByCredit(tw) ? `, paid from your credit (${euro(twosCredit(S.myGid))} left)` : ''}.</p>` : ''}
+    <p style="text-align:center;margin:6px 0 16px">Good luck! Enter your card by ${esc(deadlineText(card) || 'midnight tonight')}.</p>
+    <button class="btn primary block big" data-act="startedNext">Enter my scores</button><button class="textbtn" style="display:block;margin:10px auto 0" data-act="closeSheet">Close</button>`;
 }
 function askConfirm(title, text, ok, fn, danger){ CONFIRM_FN = fn; openSheet({type:'confirm', title, text, ok, danger}); }
 function sheetAccount(){
@@ -1963,6 +1977,8 @@ const ACT = {
   async checkOk(){ const {cid, round, gid} = S.card || {}; const card = cardOf(cid, round, gid); if (!S.isAdmin || !writtenOf(card)) return;
     const base = cardBase(cid, round, gid); const data = Object.assign(base, {updatedAt: card.updatedAt || Date.now(), updatedBy: card.updatedBy || S.user.uid, scanned: Object.assign(base.scanned, {ok:true})});
     const path = `comps/${cid}/cards/${round}_${gid}`; localSet(path, data); render(); if (await put(path, data)) toast('Card check cleared'); },
+  startedNext(){ if (S.sheet && S.sheet.type === 'started') { S.sheet.phase = 'step3'; renderSheet(); } },
+  startedGo(){ const sh = S.sheet; if (!sh || sh.type !== 'started') return; closeSheetQuiet(); S.card = {cid: sh.cid, round: sh.round, gid: S.myGid}; S.cardEdit = true; S.activeHole = null; top(); render(); },
   sendCard(el){ const ctx = {cid: el.dataset.cid, round: Number(el.dataset.round), gid: el.dataset.gid || S.myGid}; const card = cardOf(ctx.cid, ctx.round, ctx.gid);
     if (!card || !cardStarted(card)) { toast('Tap Start my round first.'); return; } if (cardLocked(card)) { toast('This card locked at midnight.'); return; }
     PHOTO_PENDING = Object.assign(ctx, {mode:'send'}); openSheet({type:'pickSrc', kind:'send'}); },
