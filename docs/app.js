@@ -1530,7 +1530,7 @@ function parseJSON(text){ try { return JSON.parse(text); } catch (_) {} const m 
 function pickScanPhoto(ctx){ SCAN_PENDING = ctx; openSheet({type:'pickSrc', kind:'scan'}); }
 function sheetPickSrc(){
   const k = S.sheet.kind; const scan = k === 'scan'; const up = k === 'upload';
-  return `<h3>${scan ? 'Scan a card' : up ? 'Upload card' : 'Send your card'}</h3><p class="sub">${scan ? 'Lay the card flat in good light, with every score in the picture.' : up ? `${esc(gName(S.sheet.gid))}'s card. Choose the photo they sent you (save it from WhatsApp first), or take one.` : 'Take a photo of your signed card, flat and in good light, with every score in the picture.'}</p>
+  return `<h3>${scan ? 'Scan a card' : up ? (S.sheet.test ? 'Test a card' : 'Upload card') : 'Send your card'}</h3><p class="sub">${scan ? 'Lay the card flat in good light, with every score in the picture.' : up ? `${esc(gName(S.sheet.gid))}'s card. Choose the photo they sent you (save it from WhatsApp first), or take one.` : 'Take a photo of your signed card, flat and in good light, with every score in the picture.'}</p>
     <div class="srcpick"><button class="btn primary" data-act="pickSrc" data-src="cam">${ICONS.camera || ''}Take a photo</button><button class="btn" data-act="pickSrc" data-src="lib">${ICONS.image || ''}Choose from gallery</button></div>`;
 }
 function startScan(files){
@@ -1741,6 +1741,9 @@ function photoBlockHtml(sc, cid, round, gid, W){
    The organiser saves the photo from WhatsApp and uploads it: the scanner reads the strokes, the app works out the
    points with the app's handicap (any handicap or points written on the card are ignored), and flags each hole that
    differs from what the golfer entered. Checking saves the photo with the card and notes it as checked. */
+function rangeText(hs){ const a = hs.slice().sort((x, y) => x - y); const out = []; let i = 0;
+  while (i < a.length) { let j = i; while (j + 1 < a.length && a[j + 1] === a[j] + 1) j++; out.push(j > i ? `${a[i]}–${a[j]}` : `${a[i]}`); i = j + 1; }
+  return out.join(', '); }
 function checkedBy(card){ const s = card && card.scanned; return !!(s && typeof s === 'object' && s.by === 'organiser' && JSON.stringify(s.scores || {}) === JSON.stringify(card.scores || {})); }
 function sendText(ctx){ const c = D.comps[ctx.cid]; const sc = c ? scoreCard(c, ctx.round, ctx.gid) : null; const u = sc ? unitFor(sc.rc.format) : '';
   return `Pot of Gold · ${gName(ctx.gid)} · ${c ? c.name : ''} round ${ctx.round}${sc && sc.filled ? ` · ${cardValueText(sc)}${u ? ' ' + u : ''}` : ''}${sc && sc.card && markerName(sc.card) ? ` · marker ${markerName(sc.card)}` : ''}`; }
@@ -1767,7 +1770,7 @@ function uploadPrompt(c, round, gid){
   const holes = rcfg(c, round).holes; const k = cfg().course;
   const pars = range(1,18).map(h => `${h}: par ${k.parM[h-1]}${k.parL[h-1] !== k.parM[h-1] ? ` (ladies ${k.parL[h-1]})` : ''}`).join('; ');
   return ['Read this photo of a golf scorecard from Rathsallagh Golf Club, Co. Wicklow, and turn the handwritten gross scores into data.',
-    `We are checking the card of ${gName(gid)}. Holes played: ${holes.join(', ')}. Ignore other holes.`, `Pars: ${pars}.`, `Golfers on the club list: ${sortedGolfers().map(g => g.name).join(', ')}.`, '',
+    `We are checking the card of ${gName(gid)}. This round is holes ${holes.join(', ')}, but read every hole that has a score written on it (1 to 18).`, `Pars: ${pars}.`, `Golfers on the club list: ${sortedGolfers().map(g => g.name).join(', ')}.`, '',
     'Rules:',
     '- Read the gross strokes written for each golfer on each hole. A card holds up to four golfers.',
     '- Only read strokes. Ignore any handicap, shots received, nett scores, points and totals written on the card, and the printed yardages, par and stroke index.',
@@ -1791,7 +1794,7 @@ function startScanTick(sh){ sh.t0 = Date.now(); clearInterval(SCAN_TICK); SCAN_T
 function readingHtml(sh){ return `<div class="reading"><span class="pulse"></span><p><b>Reading the card…</b> ${sh.attempt ? `Trying the backup scanner (${sh.attempt + 1} of ${sh.attempts}).` : 'This usually takes 10 to 30 seconds.'} <span id="scanSecs" style="opacity:.6">${sh.t0 ? Math.round((Date.now() - sh.t0) / 1000) + 's' : ''}</span></p></div><button class="btn block" data-act="stopScan">Stop</button>`; }
 async function runUpload(){
   const sh = S.sheet; if (!sh || sh.type !== 'upload') return; const {cid, round, gid} = sh.ctx; const c = D.comps[cid]; if (!c) { closeSheet(); return; }
-  sh.phase = 'reading'; sh.attempt = 0; renderSheet(); const ctl = {aborted:false}; SCAN_CTL = ctl; const holes = rcfg(c, round).holes;
+  sh.phase = 'reading'; sh.attempt = 0; renderSheet(); const ctl = {aborted:false}; SCAN_CTL = ctl; const holes = range(1, 18);
   try {
     const img = await imageToBase64(sh.file); if (ctl.aborted) return;
     startScanTick(sh);
@@ -1816,14 +1819,19 @@ async function runUpload(){
 function uploadCompare(sh){
   const {cid, round, gid} = sh.ctx; const c = D.comps[cid]; const g = D.golfers[gid]; const f = sh.found[sh.pick]; const card = cardOf(cid, round, gid);
   const entered = scoreCard(c, round, gid);
-  const read = scoreCard(c, round, gid, Object.assign({}, card || {hi: snapHcp(g), shots: null}, {scores: f.scores}));
+  const rh = rcfg(c, round).holes; const inRound = {}; rh.forEach(h => { if (f.scores[h] !== undefined) inRound[h] = f.scores[h]; });
+  const extra = Object.keys(f.scores).map(Number).filter(h => !rh.includes(h)).sort((a, b) => a - b);
+  const read = scoreCard(c, round, gid, Object.assign({}, card || {hi: snapHcp(g), shots: null}, {scores: inRound}));
   const v = x => x === undefined || x === null ? '' : String(x);
-  const diff = entered.rows.filter((r, i) => v(r.g) !== v(read.rows[i].g)).map(r => r.h);
-  return {c, g, f, card, entered, read, diff, nothing: !entered.filled};
+  const diff = entered.filled ? entered.rows.filter((r, i) => v(r.g) !== v(read.rows[i].g)).map(r => r.h) : [];
+  return {c, g, f, card, entered, read, diff, extra, inRound, nothing: !entered.filled};
 }
 function sheetUpload(){
   const sh = S.sheet; const c = D.comps[sh.ctx.cid]; if (!c) return null; const {round, gid} = sh.ctx; const g = D.golfers[gid]; const fn = firstName(gName(gid));
-  let h = `<h3>Upload card</h3><p class="sub">${esc(gName(gid))} · ${esc(c.name)} · Round ${round}</p>`;
+  const test = !!sh.ctx.test;
+  let h = `<h3>${test ? 'Test a card' : 'Upload card'}</h3><p class="sub">${esc(gName(gid))} · ${esc(c.name)} · Round ${round}</p>`;
+  if (test) h += `<p class="notebox"><b>Test only.</b> Nothing is saved and no leaderboards change.${sh.phase === 'compare' || sh.phase === 'manual' ? ' Tap a round to check the same card against it.' : ''}</p>`;
+  if (test && (sh.phase === 'compare' || sh.phase === 'manual')) h += `<div class="bsel rtabs" style="margin-bottom:12px">${compRounds(c).map(r => `<button data-act="uploadRound" data-v="${r.n}" aria-pressed="${r.n === round}">R${r.n}<small>${esc(shortRange(r))}</small></button>`).join('')}</div>`;
   const big = sh.phase === 'manual' || sh.phase === 'pick';
   if (sh.thumbs && sh.thumbs.length) h += big ? `<img class="photo-full" style="margin-bottom:12px" src="${esc(sh.thumbs[0])}" alt="Photo of the card">` : `<div class="thumbs">${sh.thumbs.map(u => `<img src="${esc(u)}" alt="Photo of the card">`).join('')}</div>`;
   if (sh.phase === 'reading') return h + readingHtml(sh);
@@ -1835,31 +1843,34 @@ function sheetUpload(){
     h += `<p class="errbox">${esc(sh.err || '')} Check the photo against what ${esc(fn)} entered.</p>${sh.errDetail ? `<p class="hint" style="margin:-4px 0 12px;word-break:break-word">Details: ${esc(sh.errDetail)}</p>` : ''}`;
     if (sc.filled) h += `<p class="hint">Entered: ${esc(cardValueText(sc))} ${esc(unitFor(sc.rc.format) || '')} · ${sc.gross} strokes. Points use the app's handicap (${fmtHi(cardHi(sc.card, g))}, ${sc.total} shots).</p>` + enteredTable(sc);
     else h += `<p class="hint">${esc(fn)} hasn't entered any scores. Save the photo, then open the card and type them in.</p>`;
-    return h + `<div class="confirm-actions" style="margin-top:12px">${sc.filled ? `<button class="btn primary" data-act="uploadDo" data-m="check">Looks right, mark checked</button>` : ''}<button class="btn" data-act="uploadDo" data-m="fix">Save photo, fix scores</button></div><button class="textbtn" style="margin-top:8px" data-act="uploadRetry">Try reading it again</button>`; }
+    return h + (test ? `<button class="btn block" style="margin-top:12px" data-act="closeSheet">Done</button>` : `<div class="confirm-actions" style="margin-top:12px">${sc.filled ? `<button class="btn primary" data-act="uploadDo" data-m="check">Looks right, mark checked</button>` : ''}<button class="btn" data-act="uploadDo" data-m="fix">Save photo, fix scores</button></div>`) + `<button class="textbtn" style="margin-top:8px" data-act="uploadRetry">Try reading it again</button>`; }
   if (sh.phase === 'pick') return h + `<p class="hint" style="margin-bottom:10px">Which golfer on this card is ${esc(gName(gid))}?</p><div class="srcpick" style="flex-direction:column">${sh.found.map((f, i) => `<button class="btn" data-act="uploadPickRow" data-i="${i}">${esc(f.name || 'Unnamed')}${f.gid && f.gid !== gid ? ` (${esc(gName(f.gid))})` : ''}</button>`).join('')}</div><button class="textbtn" style="margin-top:8px" data-act="uploadManual">None of these</button>`;
   // compare
   const X = uploadCompare(sh); sh.diff = X.diff; const u = unitFor(X.entered.rc.format) || ''; const stab = X.entered.rc.format === 'stableford';
   const mark = (r, i) => { const rr = X.read.rows[i]; const d = X.diff.includes(r.h); const q = X.f.unclear.includes(r.h);
-    return `<tr class="${d ? 'differ' : ''}"><td>${r.h}</td><td>${r.par}</td><td>${rr.g === undefined ? '–' : esc(String(rr.g))}${q ? '<span class="q" title="Hard to read">?</span>' : ''}</td><td>${r.g === undefined ? '–' : esc(String(r.g))}</td><td>${(d ? rr : r).pts == null ? '–' : (d ? rr : r).pts}</td></tr>`; };
+    return `<tr class="${d ? 'differ' : ''}"><td>${r.h}</td><td>${r.par}</td><td>${rr.g === undefined ? '–' : esc(String(rr.g))}${q ? '<span class="q" title="Hard to read">?</span>' : ''}</td><td>${r.g === undefined ? '–' : esc(String(r.g))}</td><td>${(d || X.nothing ? rr : r).pts == null ? '–' : (d || X.nothing ? rr : r).pts}</td></tr>`; };
   h += `<div class="upsum"><div><span class="label">On the card</span><b>${X.read.gross} strokes${stab ? ` · ${X.read.pts} pts` : ''}</b></div><div><span class="label">${esc(fn)} entered</span><b>${X.nothing ? 'Nothing yet' : `${X.entered.gross} strokes${stab ? ` · ${X.entered.pts} pts` : ''}`}</b></div></div>`;
   h += `<p class="hint">Points use ${esc(fn)}'s handicap in the app (${fmtHi(cardHi(X.card, X.g))}, ${X.entered.total} shots). Any handicap or points written on the card are ignored.${X.f.signed ? ' A marker signature was found.' : ' <b>No marker signature was found on the card.</b>'}</p>`;
-  if (X.nothing) h += `<p class="notebox">${esc(fn)} hasn't entered scores. Add the card's scores to their card?</p>`;
+  if (X.extra.length) h += `<p class="errbox"><b>The card has ${holesText(X.extra)}, which ${X.extra.length === 1 ? "isn't" : "aren't"} part of round ${round}.</b> This round is set to holes ${esc(rangeText(X.entered.rc.holes))}. If that's wrong, change the round's holes in the month's settings.</p>`;
+  if (X.nothing) h += `<p class="notebox">${esc(fn)} hasn't entered scores for round ${round}.${test ? " Here's what this card would score." : " Add the card's scores to their card?"}</p>`;
   else if (!X.diff.length) h += `<p class="notebox ok"><b>Every hole matches</b> what ${esc(fn)} entered.</p>`;
   else h += `<p class="errbox"><b>${X.diff.length} hole${X.diff.length === 1 ? '' : 's'} differ${X.diff.length === 1 ? 's' : ''}:</b> ${holesText(X.diff)}. Check those against the photo.</p>`;
   if (X.f.unclear.length) h += `<p class="hint">? = hard to read on the photo.</p>`;
   h += `<table class="uptable"><thead><tr><th>Hole</th><th>Par</th><th>Card</th><th>Entered</th><th>Pts</th></tr></thead><tbody>${X.entered.rows.map(mark).join('')}</tbody></table>`;
+  if (test) return h + `<button class="btn block" style="margin-top:12px" data-act="closeSheet">Done</button>`;
   h += X.nothing ? `<div class="confirm-actions" style="margin-top:12px"><button class="btn" data-act="closeSheet">Cancel</button><button class="btn primary" data-act="uploadDo" data-m="useCard">Add the card's scores</button></div>`
     : !X.diff.length ? `<button class="btn primary block" style="margin-top:12px" data-act="uploadDo" data-m="check">Mark checked</button>`
     : `<div class="confirm-actions" style="margin-top:12px"><button class="btn" data-act="uploadDo" data-m="check">Keep what ${esc(fn)} entered</button><button class="btn primary" data-act="uploadDo" data-m="useCard">Use the card's scores</button></div><p class="hint" style="margin-top:8px">Pts shows the card's points on holes that differ.</p>`;
   return h + `<button class="textbtn" style="margin-top:8px" data-act="uploadDo" data-m="fix">Save the photo and fix the card myself</button>`;
 }
 async function confirmUpload(mode){
-  const sh = S.sheet; if (!sh || sh.type !== 'upload' || !S.isAdmin) return; const {cid, round, gid} = sh.ctx; const back = sh.phase;
+  const sh = S.sheet; if (!sh || sh.type !== 'upload' || !S.isAdmin || sh.ctx.test) return; const {cid, round, gid} = sh.ctx; const back = sh.phase;
   const f = sh.found && sh.pick != null ? sh.found[sh.pick] : null;
   sh.phase = 'saving'; renderSheet();
   if (!(await saveCardPhoto(cid, round, gid, sh.file, true))) { sh.phase = back; renderSheet(); return; }
   if (mode !== 'fix') {
-    const base = cardBase(cid, round, gid); const scores = mode === 'useCard' && f ? Object.assign({}, base.scores, f.scores) : base.scores;
+    const rh = rcfg(D.comps[cid], round).holes; const fromCard = {}; if (f) rh.forEach(h => { if (f.scores[h] !== undefined) fromCard[h] = f.scores[h]; });
+    const base = cardBase(cid, round, gid); const scores = mode === 'useCard' && f ? Object.assign({}, base.scores, fromCard) : base.scores;
     const data = Object.assign(base, {scores, updatedAt: Date.now(), updatedBy: S.user.uid, scanned: {at: Date.now(), by: 'organiser', ok: true, scores: JSON.parse(JSON.stringify(scores)), read: f ? f.scores : null, diff: sh.diff || []}});
     if (f && !base.marker && f.marker) data.marker = f.marker; if (f && !base.signed && f.signed && data.marker) data.signed = true;
     const cp = `comps/${cid}/cards/${round}_${gid}`; if (!(await put(cp, data))) { sh.phase = back; renderSheet(); return; } localSet(cp, data);
@@ -1883,8 +1894,8 @@ function checkCardsHtml(){
   h += `<p class="hint" style="margin-top:0">When a golfer sends you their card on WhatsApp, save the photo to your phone, then tap Upload card. The app reads the card and checks it against what they entered, using the handicap in the app.</p>`;
   const ready = list.filter(x => cardCounts(x.c.id, x.card.round, x.card.golferId)).length;
   h += list.length ? `<ul class="grp checklist">${list.map(x => `<li><span class="grp-main"><b>${esc(gName(x.card.golferId))} · R${x.card.round} · ${esc(cardValueText(x.sc))}${u(x.sc) ? ' ' + esc(u(x.sc)) : ''}</b><small>${x.sent ? 'Sent ' + esc(whenText(x.card.photoAt)) : photoRequired(x.card) ? 'Not sent yet' : 'No photo sent'}${x.card.scanned && x.card.scanned.by === 'organiser' ? ' · changed since you checked it' : ''}</small></span><button class="btn small ${x.sent ? 'primary' : ''}" data-act="uploadCard" data-cid="${esc(x.c.id)}" data-round="${x.card.round}" data-gid="${esc(x.card.golferId)}">${ICONS.camera}Upload card</button></li>`).join('')}</ul>${ready ? `<button class="btn block" style="margin-top:10px" data-act="checkAll">✓ Mark ${ready === list.length ? 'all ' : ''}${ready} card${ready === 1 ? '' : 's'} checked</button><p class="hint" style="margin-top:6px">For when you've already checked them against the photos on WhatsApp.${ready < list.length ? " Cards that don't count yet (not sent) stay on the list." : ''}</p>` : ''}` : `<p class="notebox">No cards waiting. Every signed card has been checked.</p>`;
-  if (cur) { const rs = compRounds(cur).filter(r => roundState(r) !== 'upcoming'); const gs = sortedGolfers().filter(g => entryOf(cur.id, g.id) || rs.some(r => twosOf(cur.id, r.n, g.id)));
-    if (rs.length && gs.length) h += `<p class="hint" style="margin-top:14px">Upload a card for anyone else:</p><div class="grid2"><label class="field"><span>Golfer</span><select id="up-g">${gs.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}</select></label><label class="field"><span>Round</span><select id="up-r">${rs.slice().reverse().map(r => `<option value="${r.n}">Round ${r.n} · ${esc(shortRange(r))}</option>`).join('')}</select></label></div><button class="btn block" data-act="uploadFor" data-cid="${esc(cur.id)}">${ICONS.camera}Upload a card</button>`; }
+  if (cur) { const rs = compRounds(cur); const gs = sortedGolfers(); const now = currentRound(cur);
+    if (rs.length && gs.length) h += `<p class="hint" style="margin-top:14px">Upload a card for anyone else, or test one. A test checks the photo against any round, and nothing is saved.</p><div class="grid2"><label class="field"><span>Golfer</span><select id="up-g">${gs.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}</select></label><label class="field"><span>Round</span><select id="up-r">${rs.map(r => `<option value="${r.n}" ${r.n === now ? 'selected' : ''}>Round ${r.n} · ${esc(shortRange(r))}</option>`).join('')}</select></label></div><div class="entry-tools"><button class="btn" data-act="uploadFor" data-cid="${esc(cur.id)}">${ICONS.camera}Upload a card</button><button class="btn" data-act="testFor" data-cid="${esc(cur.id)}">Test a card</button></div>`; }
   return h + `</div></section>`;
 }
 
@@ -1963,7 +1974,15 @@ const ACT = {
   async sentManual(){ const sh = S.sheet; if (!sh || sh.type !== 'send') return; if (await markSent(sh.ctx)) { sh.phase = 'sent'; if (S.sheet === sh) renderSheet(); } },
   uploadCard(el){ if (!S.isAdmin) return; const ctx = {cid: el.dataset.cid, round: Number(el.dataset.round), gid: el.dataset.gid}; if (!D.comps[ctx.cid] || !D.golfers[ctx.gid]) return;
     PHOTO_PENDING = Object.assign(ctx, {mode:'upload'}); openSheet({type:'pickSrc', kind:'upload', gid: ctx.gid}); },
-  uploadFor(el){ const g = ($('#up-g') || {}).value, r = Number(($('#up-r') || {}).value); if (!g || !r) return; ACT.uploadCard({dataset:{cid: el.dataset.cid, round: String(r), gid: g}}); },
+  uploadFor(el){ const g = ($('#up-g') || {}).value, r = Number(($('#up-r') || {}).value); if (!g || !r) return; const c = D.comps[el.dataset.cid]; const rr = c && compRounds(c).find(x => x.n === r);
+    if (rr && roundState(rr) === 'upcoming') { toast(`Round ${r} hasn't started yet. Use Test a card to try a card against it.`); return; }
+    if (c && !entryOf(c.id, g) && !twosOf(c.id, r, g)) { toast(`${gName(g)} isn't entered in ${c.name}. Add them under the month's entries first, or use Test a card.`); return; }
+    ACT.uploadCard({dataset:{cid: el.dataset.cid, round: String(r), gid: g}}); },
+  testFor(el){ const g = ($('#up-g') || {}).value, r = Number(($('#up-r') || {}).value); if (!g || !r || !S.isAdmin || !D.comps[el.dataset.cid]) return;
+    PHOTO_PENDING = {cid: el.dataset.cid, round: r, gid: g, mode: 'upload', test: true}; openSheet({type:'pickSrc', kind:'upload', gid: g, test: true}); },
+  uploadRound(el){ const sh = S.sheet; if (!sh || sh.type !== 'upload' || !sh.ctx.test) return; sh.ctx.round = Number(el.dataset.v); const f = sh.found || [];
+    if (f.length && sh.pick == null) { const mine = f.filter(x => x.gid === sh.ctx.gid); sh.pick = mine.length === 1 ? f.indexOf(mine[0]) : f.length === 1 ? 0 : null; }
+    if (sh.phase === 'compare' && sh.pick == null) sh.phase = 'pick'; renderSheet(); },
   uploadDo(el){ confirmUpload(el.dataset.m); },
   checkAll(){ if (!S.isAdmin) return; const list = cardsToCheck().filter(x => cardCounts(x.c.id, x.card.round, x.card.golferId)); if (!list.length) return; const n = list.length; const left = cardsToCheck().length - n;
     askConfirm(`Mark ${n} card${n === 1 ? '' : 's'} as checked?`, `Use this once you've checked ${n === 1 ? 'it' : 'them'} against the photos you were sent. ${n === 1 ? 'It comes' : 'They come'} off the list, and nothing on the cards changes.${left ? ` ${left} card${left === 1 ? " that doesn't" : "s that don't"} count yet stay${left === 1 ? 's' : ''} on the list.` : ''} If a golfer changes a card afterwards, it comes back on the list.`, 'Mark checked', async () => {
