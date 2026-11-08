@@ -950,6 +950,10 @@ function viewCard(){
   const sc = scoreCard(c, round, gid); const fin = c.status === 'final';
   const mine = gid === S.myGid && !S.isAdmin;
   const W = !fin && canEnter(cid, round, gid);
+  // A golfer's own card opens simple: the holes, plus Enter my scores / Scan my card. The keypad shows once they choose
+  // to enter scores (or tap a hole). Organisers always get the full card.
+  const golferMode = mine && W; const editing = !golferMode || !!S.cardEdit; const simple = golferMode && !S.cardEdit && !sc.filled;
+  const KP = W && editing;
   const rc = sc.rc; const fmt = rc.format;
   if (!rc.holes.includes(S.activeHole)) S.activeHole = rc.holes.find(h => !(sc.card && sc.card.scores && sc.card.scores[h] !== undefined)) || rc.holes[0];
   const resHead = fmt === 'stableford' ? 'Pts' : fmt === 'medal' ? 'Nett' : fmt === 'parbogey' ? '±' : 'vs Par';
@@ -974,6 +978,16 @@ function viewCard(){
   if (chk) h += checkBoxHtml(chk, sc, S.isAdmin ? 'admin' : 'card');
   const wpts = chk ? chk.w.holes || {} : {};
   if (S.isAdmin && !fin && sc.card) h += `<button class="textbtn" style="margin:-6px 0 10px" data-act="delCard">Delete this card (lets ${esc(firstName(g.name))} start the round again)</button>`;
+  if (golferMode && !S.cardEdit) h += `<div class="card-actions"><button class="btn primary big" data-act="cardEdit">${sc.filled ? 'Edit my scores' : 'Enter my scores'}</button><button class="btn big" data-act="scan" data-cid="${esc(cid)}" data-round="${round}">${ICONS.camera}Scan my card</button></div>`;
+  if (simple) {
+    const plainRow = r => `<button class="hole plain" data-act="hole" data-h="${r.h}" aria-label="Hole ${r.h}, par ${r.par}, stroke index ${r.si}: enter score"><span class="h-num">${r.h}</span><span class="h-info"><span><b>Par ${r.par}</b> · SI ${r.si}${yds ? ` · ${yds[r.h-1]} yds` : ''}</span></span><span class="h-shots">${r.shots > 0 ? `${r.shots} shot${r.shots === 1 ? '' : 's'}` : r.shots < 0 ? `gives ${-r.shots}` : ''}</span></button>`;
+    const plainSub = (label, rows) => { const y = yds ? rows.reduce((a, r) => a + (yds[r.h-1] || 0), 0) : 0; const sh = rows.reduce((a, r) => a + r.shots, 0);
+      return `<div class="subtotal"><span class="st-label">${label} · Par ${rows.reduce((a, r) => a + r.par, 0)}${y ? ` · ${y} yds` : ''}</span><span class="h-shots">${sh} shot${sh === 1 ? '' : 's'}</span></div>`; };
+    const o = sc.rows.filter(r => r.h <= 9), i = sc.rows.filter(r => r.h > 9);
+    h += `<div class="holes plainholes"><div class="hole-head"><span>Hole</span><span>Par · SI</span><span class="h-shots">Your shots</span></div>`;
+    h += o.map(plainRow).join('') + (o.length && i.length ? plainSub('Out', o) : '') + i.map(plainRow).join('') + (o.length && i.length ? plainSub('In', i) : '') + plainSub('Total', sc.rows) + '</div>';
+    return h;
+  }
   const nettRel = sc.runNett - sc.runPar;
   const cells = [['Gross', sc.gross || '–', '']];
   if (fmt === 'stableford') cells.push(['Nett', sc.filled ? sc.runNett : '–', ''], ['Thru', sc.filled, ''], ['Points', sc.pts, '']);
@@ -995,7 +1009,7 @@ function viewCard(){
     }
     const dots = r.shots > 0 ? '•'.repeat(r.shots) : r.shots < 0 ? 'gives ' + (-r.shots) : '';
     const off = chk && chk.holes.includes(r.h);
-    return `<button class="hole ${W && S.activeHole === r.h ? 'active' : ''} ${off ? 'differ' : ''}" data-act="hole" data-h="${r.h}" ${W ? '' : 'disabled'} aria-label="Hole ${r.h}, par ${r.par}, score ${val}"><span class="h-num">${r.h}</span><span class="h-info"><span><b>Par ${r.par}</b> · SI ${r.si}${yds ? ` · ${yds[r.h-1]} yds` : ''}${off ? ` · <span class="cardpts">card ${esc(String(wpts[r.h]))} pts</span>` : ''}</span><span class="dots">${dots}</span></span><span class="h-score"><span class="sc ${cls}">${val}</span></span><span class="h-res ${rc}">${esc(String(res))}</span></button>`;
+    return `<button class="hole ${KP && S.activeHole === r.h ? 'active' : ''} ${off ? 'differ' : ''}" data-act="hole" data-h="${r.h}" ${W ? '' : 'disabled'} aria-label="Hole ${r.h}, par ${r.par}, score ${val}"><span class="h-num">${r.h}</span><span class="h-info"><span><b>Par ${r.par}</b> · SI ${r.si}${yds ? ` · ${yds[r.h-1]} yds` : ''}${off ? ` · <span class="cardpts">card ${esc(String(wpts[r.h]))} pts</span>` : ''}</span><span class="dots">${dots}</span></span><span class="h-score"><span class="sc ${cls}">${val}</span></span><span class="h-res ${rc}">${esc(String(res))}</span></button>`;
   };
   const sub = (label, rows) => {
     const y = yds ? rows.reduce((a, r) => a + (yds[r.h-1] || 0), 0) : 0;
@@ -1009,9 +1023,9 @@ function viewCard(){
   h += `<div class="holes"><div class="hole-head"><span>Hole</span><span>Par · SI · Shots</span><span>Score</span><span>${resHead}</span></div>`;
   h += out.map(rowHtml).join('') + (out.length && inn.length ? sub('Out', out) : '') + inn.map(rowHtml).join('') + (out.length && inn.length ? sub('In', inn) : '') + sub('Total', sc.rows) + '</div>';
   h += `<p class="hint lockednote">Circle = birdie, double circle = eagle, square = bogey, double square = double bogey or worse. P = picked up.</p>`;
-  if (W) {
+  if (KP) {
     const r = sc.rows.find(x => x.h === S.activeHole) || sc.rows[0];
-    h += `<div class="keypad"><div class="wrap"><div class="kp-label"><b>Hole ${r.h}</b><span>Par ${r.par} · ${r.shots} shot${Math.abs(r.shots) === 1 ? '' : 's'}</span></div><div class="kp-grid">${range(1,12).map(n => `<button data-act="key" data-v="${n}" class="${n === r.par ? 'par' : ''}" aria-label="${n}">${n}</button>`).join('')}<button class="fn" data-act="key" data-v="P" aria-label="Picked up">P</button><button class="fn" data-act="key" data-v="X" aria-label="Clear hole">Clear</button></div></div></div>`;
+    h += `<div class="keypad"><div class="wrap"><div class="kp-label"><b>Hole ${r.h}</b><span>Par ${r.par} · ${r.shots} shot${Math.abs(r.shots) === 1 ? '' : 's'}</span>${golferMode ? '<button class="btn small" data-act="cardDone">Done</button>' : ''}</div><div class="kp-grid">${range(1,12).map(n => `<button data-act="key" data-v="${n}" class="${n === r.par ? 'par' : ''}" aria-label="${n}">${n}</button>`).join('')}<button class="fn" data-act="key" data-v="P" aria-label="Picked up">P</button><button class="fn" data-act="key" data-v="X" aria-label="Clear hole">Clear</button></div></div></div>`;
   }
   return h;
 }
@@ -1688,10 +1702,14 @@ const ACT = {
   closeComp(){ S.compId = null; top(); render(); },
   compTab(el){ S.compTab = el.dataset.v; render(); },
   boardSel(el){ S.compTab = 'board'; S.boardSel = el.dataset.v === 'month' ? 'month' : Number(el.dataset.v); render(); },
-  openCard(el){ const cid = el.dataset.cid, gid = el.dataset.gid; const c = D.comps[cid]; if (!c || !D.golfers[gid]) return; S.card = {cid, round: Number(el.dataset.round) || currentRound(c), gid}; S.activeHole = null; top(); render(); },
-  cardRound(el){ if (!S.card) return; S.card = Object.assign({}, S.card, {round:Number(el.dataset.v)}); S.activeHole = null; render(); },
-  closeCard(){ S.card = null; top(); render(); },
-  hole(el){ S.activeHole = +el.dataset.h; render(); },
+  openCard(el){ const cid = el.dataset.cid, gid = el.dataset.gid; const c = D.comps[cid]; if (!c || !D.golfers[gid]) return; S.card = {cid, round: Number(el.dataset.round) || currentRound(c), gid}; S.activeHole = null; S.cardEdit = false; top(); render(); },
+  cardEdit(){ const {cid, round, gid} = S.card || {}; const c = D.comps[cid]; if (!c) return; const card = cardOf(cid, round, gid); const holes = rcfg(c, round).holes;
+    S.cardEdit = true; S.activeHole = holes.find(h => !(card && card.scores && card.scores[h] !== undefined)) || holes[0]; render();
+    requestAnimationFrame(() => { const a = document.querySelector('.hole.active'); if (a) a.scrollIntoView({block:'center'}); }); },
+  cardDone(){ S.cardEdit = false; top(); render(); },
+  cardRound(el){ if (!S.card) return; S.card = Object.assign({}, S.card, {round:Number(el.dataset.v)}); S.activeHole = null; S.cardEdit = false; render(); },
+  closeCard(){ S.card = null; S.cardEdit = false; top(); render(); },
+  hole(el){ S.activeHole = +el.dataset.h; S.cardEdit = true; render(); },
   key(el){
     const {cid, round, gid} = S.card || {}; const c = D.comps[cid]; if (!c || c.status === 'final' || !canEnter(cid, round, gid)) return;
     const holes = rcfg(c, round).holes; const h = S.activeHole; if (!holes.includes(h)) return;
@@ -1700,7 +1718,7 @@ const ACT = {
     const idx = holes.indexOf(h); if (v !== 'X' && idx < holes.length - 1) S.activeHole = holes[idx+1];
     saveCard(cid, round, gid, scores);
     requestAnimationFrame(() => requestAnimationFrame(() => { const a = document.querySelector('.hole.active'); if (a) a.scrollIntoView({block:'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'}); }));
-    if (v !== 'X' && idx === holes.length - 1 && Object.keys(scores).length >= holes.length) toast(markedOK(cardOf(cid, round, gid)) ? 'Card complete' : "Card complete. Add the marker's name and tick that it's signed.");
+    if (v !== 'X' && idx === holes.length - 1 && Object.keys(scores).length >= holes.length) { toast(markedOK(cardOf(cid, round, gid)) ? 'Card complete' : "Card complete. Add the marker's name and tick that it's signed."); if (gid === S.myGid && !S.isAdmin) { S.cardEdit = false; top(); render(); } }
   },
   editShots(){ openSheet({type:'shots'}); },
   async checkOk(){ const {cid, round, gid} = S.card || {}; const card = cardOf(cid, round, gid); if (!S.isAdmin || !writtenOf(card)) return;
