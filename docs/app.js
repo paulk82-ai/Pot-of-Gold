@@ -1498,15 +1498,16 @@ function scanPrompt(c, round){
     'If it is not a scorecard, reply {"golfers":[],"notes":"the reason"}.'].join('\n');
 }
 async function imageToBase64(file){
-  try {
-    const bmp = await createImageBitmap(file); const s = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
-    const cv = document.createElement('canvas'); cv.width = Math.round(bmp.width * s); cv.height = Math.round(bmp.height * s);
-    cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
-    const url = cv.toDataURL('image/jpeg', 0.88); return {data: url.split(',')[1], mime:'image/jpeg'};
-  } catch (_) {
-    const buf = await file.arrayBuffer(); let bin = ''; const b = new Uint8Array(buf); for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
-    return {data: btoa(bin), mime: file.type || 'image/jpeg'};
-  }
+  // Shrink to 2000px JPEG. Try the fast decoder, then an <img> (handles more formats and huge phone photos), and only
+  // send the file as it is if it's small enough.
+  const toJpeg = (src, w, h) => { const k = Math.min(1, 2000 / Math.max(w, h)); const cv = document.createElement('canvas'); cv.width = Math.max(1, Math.round(w * k)); cv.height = Math.max(1, Math.round(h * k)); cv.getContext('2d').drawImage(src, 0, 0, cv.width, cv.height); const url = cv.toDataURL('image/jpeg', 0.88); const data = url.split(',')[1] || ''; if (data.length < 1000) throw new Error('blank'); return {data, mime:'image/jpeg'}; };
+  try { const bmp = await createImageBitmap(file); try { return toJpeg(bmp, bmp.width, bmp.height); } finally { try { bmp.close(); } catch (_) {} } } catch (_) {}
+  const url = URL.createObjectURL(file);
+  try { const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; }); return toJpeg(im, im.naturalWidth, im.naturalHeight); } catch (_) {} finally { URL.revokeObjectURL(url); }
+  const mime = /^image\/(jpeg|png|webp|heic|heif)$/i.test(file.type || '') ? file.type.toLowerCase() : null;
+  if (!mime || file.size > 7e6) throw new Error(`photo: this phone couldn't open the photo (${file.type || 'unknown type'}, ${Math.round((file.size || 0) / 1e5) / 10} MB)`);
+  const buf = await file.arrayBuffer(); let bin = ''; const b = new Uint8Array(buf); for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+  return {data: btoa(bin), mime};
 }
 function parseJSON(text){ try { return JSON.parse(text); } catch (_) {} const m = /```(?:json)?\s*([\s\S]*?)```/.exec(text); if (m) { try { return JSON.parse(m[1]); } catch (_) {} } const a = text.indexOf('{'), b = text.lastIndexOf('}'); if (a >= 0 && b > a) { try { return JSON.parse(text.slice(a, b+1)); } catch (_) {} } return null; }
 // Card photos: ask whether to take a photo now or choose one from the gallery.
@@ -1527,14 +1528,15 @@ async function runScan(){
   sh.phase = 'reading'; renderSheet(); const ctl = {aborted:false}; SCAN_CTL = ctl;
   try {
     const img = await imageToBase64(sh.file); if (ctl.aborted) return;
-    const text = await be.scan(scanPrompt(c, sh.ctx.round), img.data, img.mime); if (ctl.aborted || S.sheet !== sh) return;
-    const res = parseJSON(text); if (!res || !Array.isArray(res.golfers)) throw new Error('unreadable');
+    const okReply = t => { const r = parseJSON(String(t || '')); return !!(r && Array.isArray(r.golfers)); };
+    const text = await be.scan(scanPrompt(c, sh.ctx.round), img.data, img.mime, okReply); if (ctl.aborted || S.sheet !== sh) return;
+    const res = parseJSON(text); if (!res || !Array.isArray(res.golfers)) { const er = new Error('unreadable reply ' + JSON.stringify(String(text || '').slice(0, 80))); er.unreadable = true; throw er; }
     sh.rows = buildScanRows(res, c, sh.ctx); sh.notes = typeof res.notes === 'string' ? res.notes.slice(0, 300) : ''; sh.phase = 'review';
   } catch (e) {
     if (ctl.aborted || S.sheet !== sh) return; console.warn(e);
     const em = String((e && (e.message || e.code)) || e || '');
     sh.phase = 'error'; sh.errDetail = em.replace(/\s+/g, ' ').slice(0, 220);
-    sh.err = /quota|429|exhaust|rate.?limit|too many/i.test(em) ? "The scanner has hit its daily free limit. Type the scores in with Enter my scores for now, then add a photo of the card." : /app.?check|recaptcha|attestation|401|403|permission|api.?key|billing|not.?enabled|disabled/i.test(em) ? "The scanner couldn't be reached from this phone. Type the scores in with Enter my scores for now, then add a photo of the card." : /offline|network|failed to fetch|load failed/i.test(em) ? "You're offline. Connect and try again, or type the scores in." : /unreadable/.test(em) ? "Couldn't read the card. Try a sharper photo, straight on, in good light." : "The scanner didn't work this time. Try again, or type the scores in with Enter my scores.";
+    sh.err = /quota|429|exhaust|rate.?limit|too many/i.test(em) ? "The scanner has hit its daily free limit. Type the scores in with Enter my scores for now, then add a photo of the card." : /app.?check|recaptcha|attestation|401|403|permission|api.?key|billing|not.?enabled|disabled/i.test(em) ? "The scanner couldn't be reached from this phone. Type the scores in with Enter my scores for now, then add a photo of the card." : /offline|network|failed to fetch|load failed/i.test(em) && !/unreadable/.test(em) ? "You're offline. Connect and try again, or type the scores in." : /^photo:/.test(em) ? "This phone couldn't open that photo. Try again with Take a photo." : (e && e.unreadable) ? "Couldn't read the card. Try a sharper photo, straight on, in good light." : "The scanner didn't work this time. Try again, or type the scores in with Enter my scores.";
   }
   if (SCAN_CTL === ctl) SCAN_CTL = null; renderSheet();
 }
@@ -1595,7 +1597,7 @@ function sheetScan(){
   if (sh.thumbs && sh.thumbs.length) h += `<div class="thumbs">${sh.thumbs.map(u => `<img src="${esc(u)}" alt="Scorecard photo">`).join('')}</div>`;
   if (sh.phase === 'saved') return h + `<p class="notebox"><b>${esc(sh.msg)}</b></p><p class="hint" style="margin:10px 0">${sh.photoSaved ? 'The photo of the card is saved with ' + (S.isAdmin ? 'the cards' : 'your card') + '.' : sh.photoSaving ? 'Saving the photo of the card…' : (photoRule() ? "<b>The photo didn't save.</b> Open your card and tap Add a photo of my card." : '')}</p><button class="btn block" data-act="closeSheet">Done</button>`;
   if (sh.phase === 'reading') return h + `<div class="reading"><span class="pulse"></span><p><b>Reading the card…</b> This usually takes 10 to 30 seconds.</p></div><button class="btn block" data-act="stopScan">Stop</button>`;
-  if (sh.phase === 'error') return h + `<p class="errbox">${esc(sh.err)}</p>${sh.errDetail && !/^unreadable$/.test(sh.errDetail) ? `<p class="hint" style="margin:-4px 0 12px;word-break:break-word">Details for the organiser: ${esc(sh.errDetail)}</p>` : ''}<div class="confirm-actions"><button class="btn" data-act="closeSheet">Close</button><button class="btn primary" data-act="newScan">New photo</button></div>`;
+  if (sh.phase === 'error') return h + `<p class="errbox">${esc(sh.err)}</p>${sh.errDetail ? `<p class="hint" style="margin:-4px 0 12px;word-break:break-word">Details for the organiser: ${esc(sh.errDetail)}</p>` : ''}<div class="confirm-actions"><button class="btn" data-act="closeSheet">Close</button><button class="btn primary" data-act="newScan">New photo</button></div>`;
   if (!sh.rows.length) return h + `<p class="errbox">No scores found on this photo.${sh.notes ? ' ' + esc(sh.notes) : ''}</p><div class="confirm-actions"><button class="btn" data-act="closeSheet">Close</button><button class="btn primary" data-act="newScan">New photo</button></div>`;
   h += `<p class="hint" style="margin-bottom:12px">Check each number against the card. Highlighted holes were hard to read. Type P for a pick-up.</p>`;
   if (sh.notes) h += `<p class="notebox">${esc(sh.notes)}</p>`;

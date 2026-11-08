@@ -48,7 +48,7 @@ export async function init(cfg){
   async function model(name){
     if (models[name]) return models[name];
     if (!aiInst) { const AI = await import(`${base}/firebase-ai.js`); aiInst = { AI, inst: AI.getAI(app, { backend: new AI.GoogleAIBackend() }) }; }
-    models[name] = aiInst.AI.getGenerativeModel(aiInst.inst, { model: name, generationConfig: { responseMimeType: 'application/json', temperature: 0 } });
+    models[name] = aiInst.AI.getGenerativeModel(aiInst.inst, { model: name, generationConfig: { responseMimeType: 'application/json' } });
     return models[name];
   }
   const scanModels = () => [...new Set([cfg.geminiModel || 'gemini-3.8-flash'].concat(cfg.geminiFallback || ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']))];
@@ -86,16 +86,24 @@ export async function init(cfg){
     },
     newId: () => F.doc(F.collection(db, '_ids')).id,
     stamp: date => F.Timestamp.fromDate(date),
-    async scan(prompt, imageBase64, mimeType){
-      let last = null;
+    // check(text) says whether the reply is usable; if not, the next model has a go. Any failure moves on to the next
+    // model except ones every model would hit (offline, App Check). The final error lists what each model said.
+    async scan(prompt, imageBase64, mimeType, check){
+      const fails = [];
       for (const name of scanModels()) {
         try {
           const m = await model(name);
           const res = await m.generateContent([prompt, { inlineData: { data: imageBase64, mimeType } }]);
-          return res.response.text();
-        } catch (e) { console.warn('Scan with ' + name + ' failed', e); last = e; if (!tryNext(e)) throw e; }
+          const text = res.response.text();
+          if (!check || check(text)) return text;
+          fails.push(`${name}: unreadable reply ${JSON.stringify(String(text || '').slice(0, 80))}`);
+        } catch (e) {
+          console.warn('Scan with ' + name + ' failed', e); const msg = String((e && (e.message || e.code)) || e);
+          fails.push(`${name}: ${msg.replace(/https?:\/\/\S+/g, '').slice(0, 160)}`);
+          if (/app.?check|offline|failed to fetch|load failed|network/i.test(msg) && !tryNext(e)) break;
+        }
       }
-      throw last;
+      const err = new Error(fails.join(' | ') || 'no scan models'); if (fails.length && fails.every(f => / unreadable reply /.test(f))) err.unreadable = true; throw err;
     }
   };
 }
