@@ -42,7 +42,7 @@ const S = {
   card:null, activeHole:null, playerId:null, season:String(new Date().getFullYear()), sheet:null, loaded:{},
   adminHash:null, pin:null, changing:false, golferTab:'list', hcpSynced:false, leagueTab:'month', leagueMonth:null, pinRemember:true, courseOpen:false, adminRole:false, golferMode:false, installEvt:null, signinMode:'signin', busy:false
 };
-let MEMO = {}, CONFIRM_FN = null, unsubs = [], SCAN_CTL = null, SCAN_PENDING = null, PHOTO_PENDING = null;
+let MEMO = {}, CONFIRM_FN = null, unsubs = [], SCAN_CTL = null, SCAN_PENDING = null, PHOTO_PENDING = null, SCAN_TICK = null;
 const cardTimers = {};
 
 /* ---------- Helpers ---------- */
@@ -1529,14 +1529,16 @@ async function runScan(){
   try {
     const img = await imageToBase64(sh.file); if (ctl.aborted) return;
     const okReply = t => { const r = parseJSON(String(t || '')); return !!(r && Array.isArray(r.golfers)); };
-    const text = await be.scan(scanPrompt(c, sh.ctx.round), img.data, img.mime, okReply); if (ctl.aborted || S.sheet !== sh) return;
+    sh.t0 = Date.now(); clearInterval(SCAN_TICK); SCAN_TICK = setInterval(() => { const el = $('#scanSecs'); if (!el || S.sheet !== sh || sh.phase !== 'reading') { clearInterval(SCAN_TICK); return; } el.textContent = Math.round((Date.now() - sh.t0) / 1000) + 's'; }, 1000);
+    const onTry = (i, n) => { sh.attempt = i; sh.attempts = n; if (S.sheet === sh && i > 0) renderSheet(); };
+    const text = await be.scan(scanPrompt(c, sh.ctx.round), img.data, img.mime, okReply, onTry); if (ctl.aborted || S.sheet !== sh) return;
     const res = parseJSON(text); if (!res || !Array.isArray(res.golfers)) { const er = new Error('unreadable reply ' + JSON.stringify(String(text || '').slice(0, 80))); er.unreadable = true; throw er; }
     sh.rows = buildScanRows(res, c, sh.ctx); sh.notes = typeof res.notes === 'string' ? res.notes.slice(0, 300) : ''; sh.phase = 'review';
   } catch (e) {
     if (ctl.aborted || S.sheet !== sh) return; console.warn(e);
     const em = String((e && (e.message || e.code)) || e || '');
     sh.phase = 'error'; sh.errDetail = em.replace(/\s+/g, ' ').slice(0, 220);
-    sh.err = /quota|429|exhaust|rate.?limit|too many/i.test(em) ? "The scanner has hit its daily free limit. Type the scores in with Enter my scores for now, then add a photo of the card." : /app.?check|recaptcha|attestation|401|403|permission|api.?key|billing|not.?enabled|disabled/i.test(em) ? "The scanner couldn't be reached from this phone. Type the scores in with Enter my scores for now, then add a photo of the card." : /offline|network|failed to fetch|load failed/i.test(em) && !/unreadable/.test(em) ? "You're offline. Connect and try again, or type the scores in." : /^photo:/.test(em) ? "This phone couldn't open that photo. Try again with Take a photo." : (e && e.unreadable) ? "Couldn't read the card. Try a sharper photo, straight on, in good light." : "The scanner didn't work this time. Try again, or type the scores in with Enter my scores.";
+    sh.err = /quota|429|exhaust|rate.?limit|too many/i.test(em) ? "The scanner has hit its daily free limit. Type the scores in with Enter my scores for now, then add a photo of the card." : /app.?check|recaptcha|attestation|401|403|permission|api.?key|billing|not.?enabled|disabled/i.test(em) ? "The scanner couldn't be reached from this phone. Type the scores in with Enter my scores for now, then add a photo of the card." : /offline|network|failed to fetch|load failed/i.test(em) && !/unreadable/.test(em) ? "You're offline. Connect and try again, or type the scores in." : /^photo:/.test(em) ? "This phone couldn't open that photo. Try again with Take a photo." : /timed out|timeout/i.test(em) && !/unreadable reply/.test(em) ? "The scanner took too long to answer. Try again in a minute, or type the scores in with Enter my scores." : (e && e.unreadable) ? "Couldn't read the card. Try a sharper photo, straight on, in good light." : "The scanner didn't work this time. Try again, or type the scores in with Enter my scores.";
   }
   if (SCAN_CTL === ctl) SCAN_CTL = null; renderSheet();
 }
@@ -1596,7 +1598,7 @@ function sheetScan(){
   let h = `<h3>Scan scorecard</h3><p class="sub">${esc(c.name)} · Round ${round}</p>`;
   if (sh.thumbs && sh.thumbs.length) h += `<div class="thumbs">${sh.thumbs.map(u => `<img src="${esc(u)}" alt="Scorecard photo">`).join('')}</div>`;
   if (sh.phase === 'saved') return h + `<p class="notebox"><b>${esc(sh.msg)}</b></p><p class="hint" style="margin:10px 0">${sh.photoSaved ? 'The photo of the card is saved with ' + (S.isAdmin ? 'the cards' : 'your card') + '.' : sh.photoSaving ? 'Saving the photo of the card…' : (photoRule() ? "<b>The photo didn't save.</b> Open your card and tap Add a photo of my card." : '')}</p><button class="btn block" data-act="closeSheet">Done</button>`;
-  if (sh.phase === 'reading') return h + `<div class="reading"><span class="pulse"></span><p><b>Reading the card…</b> This usually takes 10 to 30 seconds.</p></div><button class="btn block" data-act="stopScan">Stop</button>`;
+  if (sh.phase === 'reading') return h + `<div class="reading"><span class="pulse"></span><p><b>Reading the card…</b> ${sh.attempt ? `Trying the backup scanner (${sh.attempt + 1} of ${sh.attempts}).` : 'This usually takes 10 to 30 seconds.'} <span id="scanSecs" style="opacity:.6">${sh.t0 ? Math.round((Date.now() - sh.t0) / 1000) + 's' : ''}</span></p></div><button class="btn block" data-act="stopScan">Stop</button>`;
   if (sh.phase === 'error') return h + `<p class="errbox">${esc(sh.err)}</p>${sh.errDetail ? `<p class="hint" style="margin:-4px 0 12px;word-break:break-word">Details for the organiser: ${esc(sh.errDetail)}</p>` : ''}<div class="confirm-actions"><button class="btn" data-act="closeSheet">Close</button><button class="btn primary" data-act="newScan">New photo</button></div>`;
   if (!sh.rows.length) return h + `<p class="errbox">No scores found on this photo.${sh.notes ? ' ' + esc(sh.notes) : ''}</p><div class="confirm-actions"><button class="btn" data-act="closeSheet">Close</button><button class="btn primary" data-act="newScan">New photo</button></div>`;
   h += `<p class="hint" style="margin-bottom:12px">Check each number against the card. Highlighted holes were hard to read. Type P for a pick-up.</p>`;

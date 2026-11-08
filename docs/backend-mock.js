@@ -134,7 +134,8 @@ export async function init(cfg){
     async batch(ops){ ops.forEach(o => check(o.path, o.del ? null : o.data)); ops.forEach(o => { if (o.del) delete store[o.path]; else store[o.path] = JSON.parse(JSON.stringify(o.data)); }); persist(); ops.forEach(o => fire(o.path)); },
     newId: () => Math.random().toString(36).slice(2, 12) + Date.now().toString(36).slice(-4),
     stamp: date => date.getTime(),
-    async scan(promptText){
+    async scan(promptText, _img, _mime, _check, onTry){
+      if (window.__mockSlow) { if (onTry) onTry(1, 3); await new Promise(r => setTimeout(r, window.__mockSlow)); }
       await new Promise(r => setTimeout(r, 700));
       if (window.__mockScan) return JSON.stringify(window.__mockScan(promptText));
       return JSON.stringify({ golfers: [], notes: 'Sample mode does not read real photos.' });

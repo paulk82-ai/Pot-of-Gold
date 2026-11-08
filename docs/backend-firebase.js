@@ -44,15 +44,20 @@ export async function init(cfg){
 
   // Scanning tries the main model first. If it's over its limit (the free Flash tier allows only about 20 scans a day
   // and 5 a minute), busy, or retired, it moves on to the next model, which has its own, much bigger allowance.
-  let aiInst = null; const models = {};
+  // Gemini 3 Flash thinks at MEDIUM by default, which is slow for reading a card: ask for LOW. Flash-Lite is already minimal.
+  let aiInst = null; const models = {}; const noThink = new Set();
+  const waitFor = name => /lite/.test(name) ? 30000 : 40000;
   async function model(name){
     if (models[name]) return models[name];
     if (!aiInst) { const AI = await import(`${base}/firebase-ai.js`); aiInst = { AI, inst: AI.getAI(app, { backend: new AI.GoogleAIBackend() }) }; }
-    models[name] = aiInst.AI.getGenerativeModel(aiInst.inst, { model: name, generationConfig: { responseMimeType: 'application/json' } });
+    const gc = { responseMimeType: 'application/json' };
+    if (/^gemini-[3-9][\d.]*-flash$/.test(name) && !noThink.has(name)) gc.thinkingConfig = { thinkingLevel: 'LOW' };
+    models[name] = aiInst.AI.getGenerativeModel(aiInst.inst, { model: name, generationConfig: gc }, { timeout: waitFor(name) });
     return models[name];
   }
+  const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`timed out after ${Math.round(ms / 1000)}s`)), ms + 2000))]);
   const scanModels = () => [...new Set([cfg.geminiModel || 'gemini-3.8-flash'].concat(cfg.geminiFallback || ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']))];
-  const tryNext = e => /quota|429|exhaust|rate.?limit|too many|overload|unavailable|503|500|not.?found|404|not supported|deprecat|retired/i.test(String((e && (e.message || e.code)) || e));
+  const tryNext = e => /quota|429|exhaust|rate.?limit|too many|overload|unavailable|503|500|not.?found|404|not supported|deprecat|retired|timed? ?out|timeout|abort/i.test(String((e && (e.message || e.code)) || e));
 
   return {
     kind: 'firebase',
@@ -88,12 +93,15 @@ export async function init(cfg){
     stamp: date => F.Timestamp.fromDate(date),
     // check(text) says whether the reply is usable; if not, the next model has a go. Any failure moves on to the next
     // model except ones every model would hit (offline, App Check). The final error lists what each model said.
-    async scan(prompt, imageBase64, mimeType, check){
-      const fails = [];
-      for (const name of scanModels()) {
+    async scan(prompt, imageBase64, mimeType, check, onTry){
+      const fails = []; const list = scanModels();
+      for (const [i, name] of list.entries()) {
         try {
-          const m = await model(name);
-          const res = await m.generateContent([prompt, { inlineData: { data: imageBase64, mimeType } }]);
+          if (onTry) onTry(i, list.length);
+          const ask = async () => { const m = await model(name); return withTimeout(m.generateContent([prompt, { inlineData: { data: imageBase64, mimeType } }]), waitFor(name)); };
+          let res;
+          try { res = await ask(); }
+          catch (e) { if (!/thinking/i.test(String(e && e.message)) || noThink.has(name)) throw e; noThink.add(name); delete models[name]; res = await ask(); }
           const text = res.response.text();
           if (!check || check(text)) return text;
           fails.push(`${name}: unreadable reply ${JSON.stringify(String(text || '').slice(0, 80))}`);
