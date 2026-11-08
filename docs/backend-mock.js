@@ -27,6 +27,7 @@ export async function init(cfg){
   const isAdmin = () => !!(user && user.emailVerified && store['config/admins'] && (store['config/admins'].emails || []).includes(email()));
   const myGid = () => { const m = user && user.emailVerified && store['members/' + email()]; return m ? m.golferId : null; };
   const roundOpen = (comp, n) => { const r = (comp.rounds || [])[n - 1]; if (!r) return false; const now = Date.now(); return now >= r.opens && now < r.closes; };
+  const twosEarly = (comp, n) => { const r = (comp.rounds || [])[n - 1]; return !!(r && n > 1 && Date.now() < r.opens && comp.twosClosed && comp.twosClosed[String(n - 1)]); };
   function check(path, data){
     if (!user) throw deny();
     const s = segs(path);
@@ -71,7 +72,7 @@ export async function init(cfg){
           const keysOk = Object.keys(data).every(k => ['compId', 'golferId', 'round', 'paid', 'method', 'paidAt', 'createdAt', 'claimed', 'claimMethod', 'claimedAt'].includes(k));
           const card = store[`comps/${s[1]}/cards/${s[3]}`];
           if (!keysOk || data.golferId !== g || data.compId !== s[1] || s[3] !== `${data.round}_${g}` || data.paid !== false) throw deny();
-          if (!roundOpen(comp, data.round)) throw deny('This round is not open.');
+          if (!roundOpen(comp, data.round) && !twosEarly(comp, data.round)) throw deny('This round is not open.');
           if (typeof data.createdAt !== 'number' || Math.abs(data.createdAt - Date.now()) > 600000) throw deny();
           if (card && !(card.startedAt > Date.now() - 600000)) throw deny("Join the 2's before you tee off.");
           return;
@@ -79,7 +80,7 @@ export async function init(cfg){
         if (cur.golferId !== g || typeof data.claimed !== 'boolean') throw deny();
         // Saying you've paid is only allowed before teeing off (round open, not started or started under 10 minutes ago).
         const card = store[`comps/${s[1]}/cards/${s[3]}`];
-        if (!roundOpen(comp, cur.round) || (card && !(card.startedAt > Date.now() - 600000))) throw deny("Too late: the 2's has to be paid before you tee off.");
+        if ((!roundOpen(comp, cur.round) && !twosEarly(comp, cur.round)) || (card && !(card.startedAt > Date.now() - 600000))) throw deny("Too late: the 2's has to be paid before you tee off.");
         const keys = new Set(Object.keys(cur).concat(Object.keys(data)));
         for (const k of keys) if (!['claimed', 'claimedAt', 'claimMethod'].includes(k) && JSON.stringify(cur[k]) !== JSON.stringify(data[k])) throw deny('Only the organiser can mark the 2\'s as paid.');
         if (![null, undefined, 'revolut', 'card'].includes(data.claimMethod)) throw deny();

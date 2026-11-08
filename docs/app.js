@@ -779,7 +779,7 @@ function myRoundHtml(c, open, only){
     h += `<div class="mycard"><span class="label">${label}</span><b>Not started yet</b></div>`;
     h += `<button class="btn primary block big" data-act="startRound" data-cid="${cid}" data-round="${open.n}">Start my round</button>`;
     h += only ? `<p class="hint">Tap this before you tee off. This card is just for the 2's, not the monthly competition. ${signRule('Enter it')} by midnight that day.</p>`
-      : `<p class="hint">Tap this before you tee off. You get one round this weekend. ${signRule('Enter it')} by midnight that day, or it doesn't count.${twosOn() ? (twosIn(twosOf(c.id, open.n, me)) ? " You're in the 2's this round." : " It'll ask about the 2's club.") : ''}</p>`;
+      : `<p class="hint">Tap this before you tee off. You get one round this weekend. ${signRule('Enter it')} by midnight that day, or it doesn't count.${twosOn() ? (twosIn(twosOf(c.id, open.n, me)) ? " You're in the 2's this round." : twosWindowOpen(c.id, open.n, me) ? " It'll ask about the 2's club." : '') : ''}</p>`;
   } else if (cardStarted(card) || (card && card.scores && Object.keys(card.scores).length)) {
     const status = done ? `${val} · signed by ${markerName(card)}` : late ? "Not finished by midnight, so it doesn't count" : !sc.filled ? 'No scores yet' : !sc.complete ? `Thru ${sc.filled} of ${sc.rows.length} holes` : sc.nr ? 'No return (picked up)' : needPhoto ? `${val} · send your card to the organiser` : `${val} · not ticked as signed yet`;
     const timing = cardStarted(card) ? (late ? `Started ${whenText(card.startedAt)} · locked at midnight` : `Started ${whenText(card.startedAt)} · enter by ${deadlineText(card)}`) : '';
@@ -2282,6 +2282,9 @@ function twosLedger(){
   return (MEMO.twos = out);
 }
 function twosClosedRec(c, n){ const m = c && c.twosClosed; return m && typeof m === 'object' ? (m[String(n)] || null) : null; }
+// Once the organiser closes a round's 2's, golfers can join (and pay for) the next round of the month straight away.
+function twosEarly(c, n){ if (!c || c.status !== 'open' || n <= 1) return false; const r = compRounds(c).find(x => x.n === Number(n));
+  return !!(r && roundState(r) === 'upcoming' && twosClosedRec(c, n - 1)); }
 // The organiser can close a round's 2's once it's over (or Sunday evening): it then stops taking golfers, and the
 // result is fixed. Rounds that aren't closed are settled automatically when the weekend ends, as before.
 function twosCloseDue(x){ if (!x || x.closed || x.c.status === 'final' || x.state === 'upcoming') return false;
@@ -2298,7 +2301,8 @@ function twosResult(x){
 // golfer starts their round or within 10 minutes of starting it. After that they can't join or say they've paid.
 function twosWindowOpen(cid, round, gid){
   const c = D.comps[cid]; const r = c && compRounds(c).find(x => x.n === Number(round));
-  if (!c || c.status !== 'open' || !r || roundState(r) !== 'open' || twosClosedRec(c, r.n)) return false;
+  if (!c || c.status !== 'open' || !r || twosClosedRec(c, r.n)) return false;
+  if (roundState(r) !== 'open') return twosEarly(c, r.n);
   const card = cardOf(cid, round, gid); if (!cardStarted(card)) return true;
   return !cardLocked(card) && Date.now() - msOf(card.startedAt) < 600000;
 }
@@ -2316,7 +2320,7 @@ function creditHomeNote(c){
   return `<p class="credit-note home"><b>This is your last month's credit.</b> ${esc(c.name)} was paid from the last of it. Pay the organiser again to have next month paid automatically.</p>`;
 }
 function twosPanelHtml(x, big){
-  const me = S.myGid; const open = x.state === 'open'; const mine = me ? twosOf(x.c.id, x.r.n, me) : null; const fee = twosFee();
+  const me = S.myGid; const open = x.state === 'open'; const early = twosEarly(x.c, x.r.n); const mine = me ? twosOf(x.c.id, x.r.n, me) : null; const fee = twosFee();
   const lbl = x.state === 'upcoming' ? `Round ${x.r.n} opens ${dParts(x.r.from).dow} ${dParts(x.r.from).day} ${dParts(x.r.from).mon}` : `Round ${x.r.n}${open ? ' · this weekend' : ' · ' + esc(x.c.name)}`;
   let h = `<section class="twos ${big ? 'big' : ''}"><div class="twos-top"><span class="twos-badge" aria-hidden="true">2</span><div class="twos-main"><span class="label">2's club · ${lbl}</span><b class="twos-pot">${euro(x.pot)}</b>
     <small>${x.state === 'upcoming' ? `${euro(fee)} a round to join · ` : ''}${x.carryIn > 0.004 ? `${euro(x.carryIn)} rolled over` : 'Nothing rolled over'}${x.state !== 'upcoming' ? ` · ${x.state === 'played' ? x.paid : x.inCount} in` : ''}${S.isAdmin && x.toConfirm ? ` · ${x.toConfirm} to confirm` : ''}</small></div></div>`;
@@ -2327,15 +2331,16 @@ function twosPanelHtml(x, big){
   const myHit = me && x.unpaidHits.find(w => w.gid === me);
   if (myHit && !S.isAdmin) h += `<p class="twos-warn">${myHit.ps === 'claimed' ? `Your ${esc(twosDesc(myHit))} counts once the organiser confirms your ${euro(fee)}.` : `Your ${esc(twosDesc(myHit))} doesn't count: your ${euro(fee)} wasn't paid before you teed off.`}</p>`;
   else if (open) h += `<p class="hint">No 2s yet. A gross 2 on any hole wins the pot. If nobody gets one, it all rolls over to next weekend.</p>`;
+  else if (early) h += `<p class="hint">You can join next weekend's 2's now. A gross 2 on any hole wins the pot.</p>`;
   else if (x.state === 'played') h += `<p class="hint">No 2s, so the ${euro(x.pot)} rolled over.</p>`;
-  if (me && open && !S.isAdmin) {
+  if (me && (open || early) && !S.isAdmin) {
     const ps = twosPayState(mine); const id = `${x.c.id}/${x.r.n}_${me}`;
     const cr = twosCredit(me), lastNow = mine && twosByCredit(mine) && cr < fee - 1e-9, lastNext = !mine && canJoinTwos(x.c.id, x.r.n) && cr >= fee - 1e-9 && cr < 2 * fee - 1e-9;
     if (lastNow || lastNext) h += `<p class="credit-note"><b>This is your last week's credit for the 2's.</b> ${lastNow ? 'After this weekend' : 'After you use it'}, pay the organiser again to keep being put in automatically.</p>`;
     if (mine && ps === 'lapsed') h += `<p class="hint">You're not in the 2's this round: it wasn't paid before you teed off.</p>`;
     else if (mine) h += `<div class="twos-me ${ps}"><span>${ps === 'paid' ? (twosByCredit(mine) ? `You're in · paid from credit (${euro(twosCredit(me))} left)` : "You're in · paid") : ps === 'claimed' ? "You're in · the organiser is confirming your payment" : `Not in yet · pay ${euro(fee)} before you tee off`}</span>${ps === 'unpaid' ? `<button class="btn small primary" data-act="twosPay" data-id="${esc(id)}">Pay ${euro(fee)}</button>` : ''}</div>`;
-    else if (canJoinTwos(x.c.id, x.r.n) && twosCredit(me) >= fee - 1e-9) h += `<div class="twos-me"><span>You've ${euro(twosCredit(me))} of 2's credit. You're put in automatically when you start your round.</span><button class="btn small primary" data-act="twosJoin" data-cid="${esc(x.c.id)}" data-round="${x.r.n}">Join now</button></div>`;
-    else if (canJoinTwos(x.c.id, x.r.n)) h += `<div class="twos-me"><span>${cardStarted(cardOf(x.c.id, x.r.n, me)) ? "Not in the 2's? You can still join for 10 minutes after starting." : !entryOf(x.c.id, me) ? `Not in ${esc(x.c.name)}? You can play the 2's on its own this weekend.` : "Playing this weekend? Join the 2's before you tee off."}</span><button class="btn small primary" data-act="twosJoin" data-cid="${esc(x.c.id)}" data-round="${x.r.n}">Join &amp; pay ${euro(fee)}</button></div>`;
+    else if (canJoinTwos(x.c.id, x.r.n) && twosCredit(me) >= fee - 1e-9) h += `<div class="twos-me"><span>You've ${euro(twosCredit(me))} of 2's credit. You're put in automatically when you start your round${early ? ', or join now' : ''}.</span><button class="btn small primary" data-act="twosJoin" data-cid="${esc(x.c.id)}" data-round="${x.r.n}">Join now</button></div>`;
+    else if (canJoinTwos(x.c.id, x.r.n)) h += `<div class="twos-me"><span>${cardStarted(cardOf(x.c.id, x.r.n, me)) ? "Not in the 2's? You can still join for 10 minutes after starting." : !entryOf(x.c.id, me) ? `Not in ${esc(x.c.name)}? You can play the 2's on its own ${early ? 'next' : 'this'} weekend.` : early ? "Playing next weekend? Join the 2's now." : "Playing this weekend? Join the 2's before you tee off."}</span><button class="btn small primary" data-act="twosJoin" data-cid="${esc(x.c.id)}" data-round="${x.r.n}">Join &amp; pay ${euro(fee)}</button></div>`;
     else if (cardStarted(cardOf(x.c.id, x.r.n, me))) h += `<p class="hint">You're not in the 2's this round.</p>`;
   }
   if (!big) h += `<button class="textbtn" data-act="twosTable">2's club results and rules</button>`;
@@ -2396,7 +2401,8 @@ function sheetTwos(){
 }
 function twosSummaryBtn(c){
   if (!twosOn() || !S.isAdmin) return '';
-  const n = currentRound(c); const x = twosItem(c.id, n); if (!x) return '';
+  // Once this weekend's 2's is closed, the button moves on to the next round.
+  let n = currentRound(c); if (twosClosedRec(c, n) && compRounds(c).some(r => r.n === n + 1)) n = n + 1; const x = twosItem(c.id, n); if (!x) return '';
   const all = compRounds(c).flatMap(r => twosFor(c.id, r.n)); const chk = all.filter(t => twosPayState(t) === 'claimed').length, un = all.filter(t => twosPayState(t) === 'unpaid').length;  // un: joined, can still pay
   return `<button class="btn block paysum ${chk || twosCloseDue(x) ? 'alert' : ''}" data-act="twosOpen" data-cid="${esc(c.id)}" data-round="${n}">2's club · R${n} pot ${euro(x.pot)}${x.closed ? ' · closed' : twosCloseDue(x) ? ' · ready to close' : ''}${chk ? ` · ${chk} to confirm` : ''}${un ? ` · ${un} paying` : ''}</button>`;
 }

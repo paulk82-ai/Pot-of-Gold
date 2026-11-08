@@ -72,6 +72,11 @@ service cloud.firestore {
         return request.time >= r.opens && request.time < r.closes;
       }
       function entered(gid) { return exists(/databases/$(database)/documents/comps/$(cid)/entries/$(gid)); }
+      // The 2's for a round opens early once the organiser has closed the round before it.
+      function twosEarly(n) {
+        return n > 1 && n <= comp().rounds.size() && request.time < comp().rounds[n - 1].opens
+          && comp().get('twosClosed', {}).get(string(n - 1), null) != null;
+      }
 
       allow read: if canRead();
       allow write: if isAdmin();
@@ -94,8 +99,8 @@ service cloud.firestore {
 
       // 2's club: one per golfer per round (id = "<round>_<golferId>"). Open to any golfer on the list, whether or not
       // they're in the month (a 2's-only player's card is marked twosOnly and never counts for the month). Nobody is in without paying, and it's paid
-      // before teeing off: a golfer joins and says they've paid while the round is open, before starting it or within
-      // 10 minutes of starting. Only organisers mark it paid.
+      // before teeing off: a golfer joins and says they've paid while the round is open (or early, once the organiser
+      // has closed the round before), before starting it or within 10 minutes of starting. Only organisers mark it paid.
       match /twos/{tid} {
         function startedNow(n) {
           let p = /databases/$(database)/documents/comps/$(cid)/cards/$(string(n) + '_' + myGid());
@@ -110,12 +115,12 @@ service cloud.firestore {
           && request.resource.data.round is int
           && tid == string(request.resource.data.round) + '_' + myGid()
           && request.resource.data.paid == false
-          && roundOpen(request.resource.data.round)
+          && (roundOpen(request.resource.data.round) || twosEarly(request.resource.data.round))
           && request.resource.data.createdAt is int
           && math.abs(request.resource.data.createdAt - request.time.toMillis()) < 600000
           && startedNow(request.resource.data.round);
         allow update: if isMember() && resource.data.golferId == myGid() && isOpen()
-          && roundOpen(resource.data.round) && startedNow(resource.data.round)
+          && (roundOpen(resource.data.round) || twosEarly(resource.data.round)) && startedNow(resource.data.round)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['claimed', 'claimMethod', 'claimedAt'])
           && request.resource.data.claimed is bool
           && request.resource.data.get('claimMethod', null) in [null, 'revolut', 'card'];
