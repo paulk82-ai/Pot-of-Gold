@@ -16,11 +16,11 @@ An installable phone app for the Pot of Gold, a monthly golf competition played 
 - Entries are paid through Revolut only (no cash): in the Revolut app, or by debit card, Apple Pay or Google Pay on the Revolut page for anyone without Revolut. The golfer taps **I've paid**, and the organiser confirms it under **Payments**. Only confirmed payments go into the pot.
 - Golfers with fewer than 3 counting cards are ranked on what they have, below anyone with 3.
 - Before teeing off, each player taps **Start my round** in the app. That's their one round for the weekend, and the start time is recorded.
-- After the round they get the paper card signed by their marker (anyone, not just players in the competition), then enter or scan it, add the marker's name and tick **My marker has signed my card**, all by **midnight that day**. Complete, signed cards count.
-- At midnight the card locks. If it isn't complete and ticked as signed by then, that round doesn't count and can't be re-entered.
-- Players send the organiser a photo of their signed card. After a scan the app offers **Send photo to the organiser**, and the card has a **Send a photo of my card** button for cards typed in. Both open the phone's share menu (WhatsApp).
+- After the round they get the paper card signed by their marker (anyone, not just players in the competition), then enter or scan it, add the marker's name, tick **My marker has signed my card** and add a photo of the signed card, all by **midnight that day**. Complete, signed cards with a photo count.
+- At midnight the card locks. If it isn't complete, ticked as signed and photographed by then, that round doesn't count and can't be re-entered.
+- **A photo of the signed card is required.** The photo is saved with the card in the app, so nothing needs to go on WhatsApp. Scanning a card saves the photo automatically. For cards typed in, Home and the card show **Add a photo of my signed card**. Until the photo is in, the card shows *No photo of the card yet* and doesn't count (for the month or the 2's), and the organiser isn't told the card is in. The organiser can see each photo on the card (tap it for full size), add one for a golfer, or tap **Photo not needed** to let a card count without one. Cards the organiser enters, and cards started before the rule came in (Sunday 8 November 2026, 9am), don't need one. It can be switched off in **Admin → Cards**.
 - Scanned cards are only accepted for golfers whose names match the golfer list and who are entered that month. Unrecognised names are turned away.
-- Tapping **Scan a card** (or the button for sending a photo of the card) asks **Take a photo**, which opens the camera, or **Choose from gallery**, which opens the phone's photos.
+- Tapping **Scan a card** (or **Add a photo of my signed card**) asks **Take a photo**, which opens the camera, or **Choose from gallery**, which opens the phone's photos.
 - The app always works out the points itself from the strokes on each hole. When a card is scanned, any points and totals written on the paper card are read too and checked against the app's sums. If they differ, the scan, the card and the round leaderboard say so, and the organiser's notification carries a warning. The app explains whether a hole looks misread, the card was added up wrong, or the marker used different shots. The organiser can tap **Looked at it, clear this** once checked.
 - League points are given **each weekend round**, from that round's leaderboard: 1st 5, 2nd 4, 3rd 3, 4th 2, and 1 for every other signed card. Each golfer's best 3 rounds of points count each month (the same number as the month's best cards), so up to 15 a month. On a round's leaderboard, points in brackets are outside that golfer's best 3. Golfers tied on a round (after countback) each get that place's points. Points show on the league table straight away and are provisional until the month is finalised. You can change them in Admin.
 - The **Table** tab has **This month** (any month, with live provisional standings while it's open, and each round's results) and **Year** (the Order of Merit for the year, plus a points-by-month grid).
@@ -103,8 +103,8 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 3. Before you tee off (Friday to Sunday), tap **Start my round** on **Home**. You get one round per weekend.
 4. Play, and get your marker to sign your paper card.
 5. By midnight that day, tap **Enter my card** and enter your scores hole by hole, or tap **Scan my card** and photograph it, then check the numbers.
-6. Add your marker's name and tick **My marker has signed my card**. Your card counts from then.
-7. Send the organiser a photo of your signed card: tap **Send photo to the organiser** after scanning, or **Send a photo of my card** on your card, and pick the organiser in WhatsApp.
+6. Add your marker's name and tick **My marker has signed my card**.
+7. Add a photo of your signed card: scanning adds it for you, otherwise tap **Add a photo of my signed card**. Your card counts once the photo is in.
 
 ## What the organiser can do
 

@@ -30,13 +30,13 @@ const FORMATS = {
   gross:{name:'Stroke play (gross)', short:'Gross', better:'low'},
   parbogey:{name:'v Par', short:'v Par', better:'high'}
 };
-const DEFAULTS = { fee:10, revtag:'paul3d7qv', points:[5,4,3,2], entryPoint:1, prize:[60,40], allowance:95, tee:'white', rounds:4, best:3, bands:[10,20], cutWin:[1,2,3], cutRun:[0.5,1,1.5], riseBy:0.5, riseAfter:2, hcpMax:54, twosOn:false, twosFee:2 };
+const DEFAULTS = { fee:10, revtag:'paul3d7qv', points:[5,4,3,2], entryPoint:1, prize:[60,40], allowance:95, tee:'white', rounds:4, best:3, bands:[10,20], cutWin:[1,2,3], cutRun:[0.5,1,1.5], riseBy:0.5, riseAfter:2, hcpMax:54, twosOn:false, twosFee:2, photoRequired:true };
 // Entries are paid through Revolut only: in the Revolut app, or by debit card on the Revolut payment page.
 const METHODS = {revolut:'Revolut', card:'Card (Revolut)', credit:'Paid from credit'};
 
 /* ---------- State ---------- */
 let be = null;
-const D = { golfers:{}, comps:{}, entries:{}, cards:{}, twos:{}, members:{}, requests:{}, settings:null, admins:undefined, adminCode:undefined, member:undefined, myReq:undefined };
+const D = { golfers:{}, comps:{}, entries:{}, cards:{}, twos:{}, photos:{}, members:{}, requests:{}, settings:null, admins:undefined, adminCode:undefined, member:undefined, myReq:undefined };
 const S = {
   phase:'boot', user:null, myGid:null, isAdmin:false, view:'home', compId:null, compTab:'entries', boardSel:'month',
   card:null, activeHole:null, playerId:null, season:String(new Date().getFullYear()), sheet:null, loaded:{},
@@ -169,6 +169,7 @@ function cardBase(cid, round, gid){
   if (prev.startedAt) { out.startedAt = prev.startedAt; out.deadline = prev.deadline; }
   // A card started by a golfer who isn't in the month is for the 2's only, and never counts for the month.
   if (prev.twosOnly || (!prev.compId && !entryOf(cid, gid))) out.twosOnly = true;
+  if (prev.photoAt) out.photoAt = prev.photoAt; if (prev.photoOk) out.photoOk = true;
   return out;
 }
 function scoreCard(comp, round, gid, over){
@@ -191,8 +192,8 @@ function scoreCard(comp, round, gid, over){
   const stroke = rc.format === 'medal' || rc.format === 'gross';
   const marked = markedOK(card);
   const nr = stroke && pickups > 0;
-  const twosOnly = !!(card && card.twosOnly);
-  return {comp, rc, round, gid, golfer:g, card, rows, total, gross, runNett, runPar, pts, pb, filled, complete, nr, pickups, parSum, marked, twosOnly, valid: complete && !nr && marked && !twosOnly};
+  const twosOnly = !!(card && card.twosOnly); const pOk = photoOk(card);
+  return {comp, rc, round, gid, golfer:g, card, rows, total, gross, runNett, runPar, pts, pb, filled, complete, nr, pickups, parSum, marked, twosOnly, photoOk: pOk, valid: complete && !nr && marked && !twosOnly && pOk};
 }
 // Card check: a scanned card also has the points and totals written on the paper card read off it,
 // which are compared with the app's own sums. The organiser can clear a check once they've looked at it.
@@ -252,7 +253,8 @@ function cardStatus(sc){ const c = sc.card; const late = cardLocked(c);
   if (!c || (!sc.filled && !cardStarted(c))) return 'No card';
   if (!sc.filled) return late ? 'Missed: nothing entered by midnight' : `Started ${whenText(c.startedAt)}`;
   if (!sc.complete) return (late ? 'Missed: ' : '') + 'Thru ' + sc.filled; if (sc.nr) return 'NR';
-  if (!sc.marked) return late ? 'Missed: not signed by midnight' : 'Not signed'; return ''; }
+  if (!sc.marked) return late ? 'Missed: not signed by midnight' : 'Not signed';
+  if (!sc.photoOk) return late ? 'Missed: no photo of the card by midnight' : 'No photo of the card yet'; return ''; }
 function cardValueText(sc){
   const c = sc.rc;
   if (c.format === 'medal') return String(sc.runNett);
@@ -295,7 +297,7 @@ function leaderboard(comp){
   const rows = entriesFor(comp.id).map(e => {
     const cards = rs.map(r => scoreCard(comp, r.n, e.golferId));
     // Mixed formats: a complete, marked card counts in Stableford points even if it was a no return in its own round.
-    const ok = sc => !sc.twosOnly && (mm.mixed ? (sc.complete && sc.marked) : sc.valid);
+    const ok = sc => !sc.twosOnly && (mm.mixed ? (sc.complete && sc.marked && sc.photoOk) : sc.valid);
     cards.forEach(sc => { sc.counts = ok(sc); });
     const valid = cards.filter(ok).map(sc => ({sc, v: metric(mf, sc.rows)}));
     valid.sort((a,b) => hi ? b.v - a.v : a.v - b.v);
@@ -688,7 +690,7 @@ function sendNotify(title, msg, tags, force){
   const url = `https://ntfy.sh/${encodeURIComponent(topic)}?title=${encodeURIComponent(title)}${tags ? '&tags=' + encodeURIComponent(tags) : ''}`;
   try { fetch(url, {method:'POST', body:msg, mode:'no-cors', keepalive:true}).catch(() => {}); } catch (_) {}
 }
-function cardCounts(cid, round, gid){ const c = D.comps[cid]; if (!c) return false; const sc = scoreCard(c, round, gid); return !!(sc.valid || (sc.twosOnly && sc.complete && sc.marked)); }
+function cardCounts(cid, round, gid){ const c = D.comps[cid]; if (!c) return false; const sc = scoreCard(c, round, gid); return !!(sc.valid || (sc.twosOnly && sc.complete && sc.marked && sc.photoOk)); }
 // Tell the organiser when a golfer's card has just started counting (complete and ticked as signed).
 function notifyIfDone(cid, round, gid, before){
   if (before || !cardCounts(cid, round, gid)) return;
@@ -771,21 +773,22 @@ function homeHero(c){
 }
 function myRoundHtml(c, open, only){
   const me = S.myGid; const cid = esc(c.id); let h = '';
-  const sc = scoreCard(c, open.n, me); const done = sc.complete && sc.marked; const u = unitFor(sc.rc.format); const card = sc.card;
+  const sc = scoreCard(c, open.n, me); const done = sc.complete && sc.marked && sc.photoOk; const needPhoto = sc.complete && sc.marked && !sc.photoOk; const u = unitFor(sc.rc.format); const card = sc.card;
   const val = `${cardValueText(sc)}${u ? ' ' + u : ''}`; const late = cardLocked(card); const label = only ? `Your 2's card · round ${open.n}` : `Your round ${open.n} card`;
   if (canStart(c.id, open.n)) {
     h += `<div class="mycard"><span class="label">${label}</span><b>Not started yet</b></div>`;
     h += `<button class="btn primary block big" data-act="startRound" data-cid="${cid}" data-round="${open.n}">Start my round</button>`;
-    h += only ? `<p class="hint">Tap this before you tee off. This card is just for the 2's, not the monthly competition. Enter it and tick it as signed by midnight that day.</p>`
-      : `<p class="hint">Tap this before you tee off. You get one round this weekend, and it has to be entered and ticked as signed by midnight that day, or it doesn't count.${twosOn() ? (twosIn(twosOf(c.id, open.n, me)) ? " You're in the 2's this round." : " It'll ask about the 2's club.") : ''}</p>`;
+    h += only ? `<p class="hint">Tap this before you tee off. This card is just for the 2's, not the monthly competition. ${signRule('Enter it')} by midnight that day.</p>`
+      : `<p class="hint">Tap this before you tee off. You get one round this weekend. ${signRule('Enter it')} by midnight that day, or it doesn't count.${twosOn() ? (twosIn(twosOf(c.id, open.n, me)) ? " You're in the 2's this round." : " It'll ask about the 2's club.") : ''}</p>`;
   } else if (cardStarted(card) || (card && card.scores && Object.keys(card.scores).length)) {
-    const status = done ? `${val} · signed by ${markerName(card)}` : late ? "Not finished by midnight, so it doesn't count" : !sc.filled ? 'No scores yet' : !sc.complete ? `Thru ${sc.filled} of ${sc.rows.length} holes` : sc.nr ? 'No return (picked up)' : `${val} · not ticked as signed yet`;
+    const status = done ? `${val} · signed by ${markerName(card)}` : late ? "Not finished by midnight, so it doesn't count" : !sc.filled ? 'No scores yet' : !sc.complete ? `Thru ${sc.filled} of ${sc.rows.length} holes` : sc.nr ? 'No return (picked up)' : needPhoto ? `${val} · add a photo of your signed card` : `${val} · not ticked as signed yet`;
     const timing = cardStarted(card) ? (late ? `Started ${whenText(card.startedAt)} · locked at midnight` : `Started ${whenText(card.startedAt)} · enter by ${deadlineText(card)}`) : '';
     h += `<div class="mycard ${done ? 'ok' : late || sc.complete ? 'warn' : ''}"><span class="label">${label}</span><b>${esc(status)}</b>${timing ? `<small>${esc(timing)}</small>` : ''}${done ? `<span class="okmark">${only ? 'In' : 'Counts'}</span>` : ''}</div>`;
     if (late) h += `<button class="btn block" data-act="openCard" data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}">View my card</button>`;
     else {
-      h += `<div class="hero-actions"><button class="btn primary big" data-act="openCard" data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}">${sc.filled ? 'Open my card' : 'Enter my card'}</button><button class="btn big" data-act="scan" data-cid="${cid}" data-round="${open.n}">${ICONS.camera}Scan my card</button></div>`;
-      if (!done) h += `<p class="hint">Get your card signed by your marker, then enter or scan it by ${esc(deadlineText(card) || 'midnight')}. Add the marker's name, tick that it's signed, and send the organiser a photo of the card.</p>`;
+      if (needPhoto) h += `<button class="btn primary block big" data-act="photoCard" data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}">${ICONS.camera}Add a photo of my signed card</button>`;
+      h += `<div class="hero-actions"><button class="btn ${needPhoto ? '' : 'primary'} big" data-act="openCard" data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}">${sc.filled ? 'Open my card' : 'Enter my card'}</button><button class="btn big" data-act="scan" data-cid="${cid}" data-round="${open.n}">${ICONS.camera}Scan my card</button></div>`;
+      if (!done) h += `<p class="hint">Get your card signed by your marker, then enter or scan it by ${esc(deadlineText(card) || 'midnight')}. Add the marker's name, tick that it's signed${photoRequired(card) ? ', and add a photo of the signed card (scanning adds it for you)' : ''}.</p>`;
     }
   } else if (!only) {
     h += `<div class="mycard warn"><span class="label">${label}</span><b>Not started</b></div>`;
@@ -894,7 +897,7 @@ function payNote(c){
 function roundCells(c, row){
   const mixed = monthMode(c).mixed; const val = sc => mixed ? String(sc.pts) : cardValueText(sc);
   return compRounds(c).map(r => { const sc = row.cards.find(x => x.round === r.n); let v = '–', cls = '';
-    if (sc && sc.filled) { if (sc.counts) { v = val(sc); if (!row.countedNs.has(r.n)) { v = '(' + v + ')'; cls = 'dropped'; } } else { v = sc.complete && !sc.marked && (mixed || !sc.nr) ? val(sc) + '*' : (!mixed && sc.nr) ? 'NR' : '…'; cls = 'pending'; } }
+    if (sc && sc.filled) { if (sc.counts) { v = val(sc); if (!row.countedNs.has(r.n)) { v = '(' + v + ')'; cls = 'dropped'; } } else { v = sc.complete && (!sc.marked || !sc.photoOk) && (mixed || !sc.nr) ? val(sc) + '*' : (!mixed && sc.nr) ? 'NR' : '…'; cls = 'pending'; } }
     return `<span class="rc ${cls}"><i>R${r.n}</i>${esc(v)}</span>`; }).join('');
 }
 function entriesHtml(c, lb){
@@ -903,7 +906,7 @@ function entriesHtml(c, lb){
   let h = '';
   if (A && !fin) h += `<div class="entry-tools"><button class="btn primary" data-act="scan" data-round="${cur}">${ICONS.camera}Scan a card</button><button class="btn" data-act="addEntry">+ Add entries</button></div>`;
   if (!all.length) return h + `<div class="empty" style="margin-top:12px"><p class="hint">No entries yet.</p></div>`;
-  h += `<p class="hint entry-hint">Tap a golfer to see their cards. A * means the card isn't ticked as signed by a marker yet, so it doesn't count. Brackets show a dropped round.</p>`;
+  h += `<p class="hint entry-hint">Tap a golfer to see their cards. A * means the card isn't ticked as signed by a marker yet${photoRule() ? ' or has no photo of the card' : ''}, so it doesn't count. Brackets show a dropped round.</p>`;
   h += '<ul class="list">' + all.map(r => {
     const e = r.entry; const ps = payState(e); const own = r.gid === S.myGid;
     const label = ps === 'paid' ? (A ? METHODS[e.method] || 'Paid' : 'Paid') : ps === 'claimed' ? (A ? 'Check' : 'Checking') : 'Unpaid';
@@ -970,10 +973,10 @@ function viewCard(){
     <label class="signchk"><input type="checkbox" id="signedChk" ${isSigned(sc.card) ? 'checked' : ''}><span>${mine ? 'My marker has signed my card' : 'The marker has signed this card'}</span></label>`;
   if (cardStarted(sc.card)) mk += `<small class="timing">Started ${esc(whenText(sc.card.startedAt))} · ${cardLocked(sc.card) ? 'locked at midnight' : 'enter by ' + esc(deadlineText(sc.card))}</small>`;
   h += mk + '</div>';
-  if (mine && !fin && canStart(cid, round)) h += `<div class="startbox"><p><b>Start your round before you tee off.</b> You get one round this weekend. Enter it and tick it as signed by midnight that day, or it doesn't count.</p><button class="btn primary block big" data-act="startRound" data-cid="${esc(cid)}" data-round="${round}">Start my round</button></div>`;
-  else if (mine && W && !sc.marked) h += `<p class="hint" style="margin:-4px 0 12px">Your card counts once all ${rc.holes.length} holes are in and it's ticked as signed, by ${esc(deadlineText(sc.card))}. Then send the organiser a photo of your signed card.</p>`;
+  if (mine && !fin && canStart(cid, round)) h += `<div class="startbox"><p><b>Start your round before you tee off.</b> You get one round this weekend. ${signRule('Enter it')} by midnight that day, or it doesn't count.</p><button class="btn primary block big" data-act="startRound" data-cid="${esc(cid)}" data-round="${round}">Start my round</button></div>`;
+  else if (mine && W && !sc.valid) h += `<p class="hint" style="margin:-4px 0 12px">Your card counts once all ${rc.holes.length} holes are in, it's ticked as signed${photoRequired(sc.card) ? ' and it has a photo of the signed card' : ''}, by ${esc(deadlineText(sc.card))}.</p>`;
   else if (!W && !fin && !S.isAdmin && mine) h += `<p class="hint" style="margin:-4px 0 12px">${cardLocked(sc.card) ? (sc.valid ? 'Locked at midnight. This card counts.' : "Locked at midnight. It wasn't entered and signed in time, so it doesn't count.") : !entryOf(cid, S.myGid) ? 'Enter this month to add your card.' : 'This round is closed. Cards can be entered Friday to Sunday.'}</p>`;
-  if (gid === S.myGid && !S.isAdmin && cardStarted(sc.card)) h += `<button class="btn block" style="margin:-4px 0 14px" data-act="photoCard" data-cid="${esc(cid)}" data-round="${round}">${ICONS.camera}Send a photo of my card to the organiser</button>`;
+  if ((S.isAdmin || gid === S.myGid) && sc.card) { watchPhoto(cid, round, gid); h += photoBlockHtml(sc, cid, round, gid, W); }
   const chk = (S.isAdmin || gid === S.myGid) ? cardCheck(sc) : null;
   if (chk) h += checkBoxHtml(chk, sc, S.isAdmin ? 'admin' : 'card');
   const wpts = chk ? chk.w.holes || {} : {};
@@ -1236,6 +1239,7 @@ function viewAdmin(){
       <p class="hint">For card payments from people without Revolut, turn on Revtag discoverability in your Revolut app's privacy settings. Revolut also limits how much you can receive by card through your link each week (the limit is shown in your Revolut app). Payments from other Revolut users have no limit.</p></div></section>
     <section><div class="sec-head"><h2>Prize money</h2></div><div class="panel"><div class="grid2"><label class="field"><span>Winner %</span>${n('s-p1', k.prize[0] != null ? k.prize[0] : 60)}</label><label class="field"><span>Runner-up %</span>${n('s-p2', k.prize[1] != null ? k.prize[1] : 40)}</label></div>
       <p class="hint">${kittyPct > 0 ? `The other ${kittyPct}% of each pot stays in the kitty.` : kittyPct < 0 ? 'These add up to more than 100%.' : 'The whole pot goes to the top two.'}</p></div></section>
+    <section><div class="sec-head"><h2>Cards</h2></div><div class="panel"><label class="check" style="margin:0"><input type="checkbox" id="s-photoReq" ${k.photoRequired !== false ? 'checked' : ''}><span><b>A photo of the signed card is needed</b><small>A golfer's card only counts once they've added a photo of it in the app, by midnight. Scanning the card adds it automatically. Cards you enter yourself don't need one.</small></span></label></div></section>
     <section><div class="sec-head"><h2>2's club</h2></div><div class="panel"><label class="check" style="margin-bottom:10px"><input type="checkbox" id="s-twosOn" ${k.twosOn ? 'checked' : ''}><span><b>Run the 2's club</b><small>Golfers join and pay each round before they tee off, from Home or when they tap Start my round.</small></span></label>
       <div class="grid2"><label class="field"><span>Cost a round (€)</span>${n('s-twosFee', k.twosFee, 'min="1" step="1"')}</label></div>
       <p class="hint">Paid on Revolut before teeing off, and only paid golfers are in. A gross 2 on any hole wins, each 2 is a share of the pot, and a hole-in-one takes the whole pot. Shares are rounded down to the euro, with the leftover kept in the pot. With no 2s the pot rolls over to the next weekend.</p></div></section>
@@ -1266,7 +1270,7 @@ function viewAdmin(){
 /* ---------- Sheets ---------- */
 function openSheet(s){ S.sheet = s; renderSheet(); document.body.classList.add('locked'); }
 function closeSheetQuiet(){
-  if (S.sheet && (S.sheet.type === 'scan' || S.sheet.type === 'photo')) { if (SCAN_CTL) { SCAN_CTL.aborted = true; SCAN_CTL = null; } (S.sheet.thumbs || []).forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} }); }
+  if (S.sheet && S.sheet.type === 'scan') { if (SCAN_CTL) { SCAN_CTL.aborted = true; SCAN_CTL = null; } (S.sheet.thumbs || []).forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} }); }
   S.sheet = null; CONFIRM_FN = null; $('#sheet').hidden = true; document.body.classList.remove('locked');
 }
 function closeSheet(){ closeSheetQuiet(); render(); }
@@ -1288,7 +1292,7 @@ function renderSheet(){
     case 'golfer': h = sheetGolfer(); break;
     case 'shots': h = sheetShots(); break;
     case 'scan': h = sheetScan(); break;
-    case 'photo': h = sheetPhoto(); break;
+    case 'photoView': { const ph = D.photos[photoPath(S.sheet.cid, S.sheet.round, S.sheet.gid)]; h = ph && ph.img ? `<h3>${esc(gName(S.sheet.gid))} · round ${S.sheet.round}</h3><p class="sub">Photo added ${esc(whenText(ph.at))}</p><img class="photo-full" src="${esc(ph.img)}" alt="Photo of the signed card">` : null; break; }
     case 'account': h = sheetAccount(); break;
     case 'confirm': h = `<h3>${esc(S.sheet.title)}</h3><p class="sub">${esc(S.sheet.text)}</p><div class="confirm-actions"><button class="btn" data-act="closeSheet">Cancel</button><button class="btn ${S.sheet.danger ? 'danger-fill' : 'primary'}" data-act="confirmOk">${esc(S.sheet.ok)}</button></div>`; break;
   }
@@ -1300,7 +1304,7 @@ function sheetStart(){
   const c = D.comps[S.sheet.cid]; if (!c) return null; const n = S.sheet.round; const x = twosItem(c.id, n); const fee = twosFee();
   const mine = twosOf(c.id, n, S.myGid); const ps = twosPayState(mine);
   const only = !entryOf(c.id, S.myGid);
-  let h = `<h3>Start your round?</h3><p class="sub">${only ? `This is your 2's card for round ${n}. It's only for the 2's, not the monthly competition.` : `This is your round ${n} card for ${esc(c.name)}.`} You only get one this weekend. Enter your scores and tick it as signed by midnight tonight, or the round won't count.</p>`;
+  let h = `<h3>Start your round?</h3><p class="sub">${only ? `This is your 2's card for round ${n}. It's only for the 2's, not the monthly competition.` : `This is your round ${n} card for ${esc(c.name)}.`} You only get one this weekend. ${signRule('Enter your scores')} by midnight tonight, or the round won't count.</p>`;
   const pot = `Pot now ${euro(x ? x.pot : 0)}${x && x.carryIn > 0.004 ? `, including ${euro(x.carryIn)} rolled over` : ''}.`;
   if (mine && (ps === 'paid' || ps === 'claimed')) return h + `<div class="twos-ask in"><span class="twos-badge sm" aria-hidden="true">2</span><span><b>You're in the 2's club this round</b><small>${pot} ${ps === 'paid' ? (twosByCredit(mine) ? `Paid from your credit (${euro(twosCredit(S.myGid))} left).` : `Your ${euro(fee)} is paid.`) : 'The organiser is confirming your payment.'}</small></span></div>
     <div class="confirm-actions"><button class="btn" data-act="closeSheet">Cancel</button><button class="btn primary" data-act="startGo" data-twos="0">Start my round</button></div>`;
@@ -1587,7 +1591,7 @@ function sheetScan(){
   const sh = S.sheet; const c = D.comps[sh.ctx.cid]; if (!c) return null; const round = sh.ctx.round; const holes = rcfg(c, round).holes;
   let h = `<h3>Scan scorecard</h3><p class="sub">${esc(c.name)} · Round ${round}</p>`;
   if (sh.thumbs && sh.thumbs.length) h += `<div class="thumbs">${sh.thumbs.map(u => `<img src="${esc(u)}" alt="Scorecard photo">`).join('')}</div>`;
-  if (sh.phase === 'saved') return h + `<p class="notebox"><b>${esc(sh.msg)}</b></p>` + photoShareHtml();
+  if (sh.phase === 'saved') return h + `<p class="notebox"><b>${esc(sh.msg)}</b></p><p class="hint" style="margin:10px 0">${sh.photoSaved ? 'The photo of the card is saved with ' + (S.isAdmin ? 'the cards' : 'your card') + '.' : sh.photoSaving ? 'Saving the photo of the card…' : ''}</p><button class="btn block" data-act="closeSheet">Done</button>`;
   if (sh.phase === 'reading') return h + `<div class="reading"><span class="pulse"></span><p><b>Reading the card…</b> This usually takes 10 to 30 seconds.</p></div><button class="btn block" data-act="stopScan">Stop</button>`;
   if (sh.phase === 'error') return h + `<p class="errbox">${esc(sh.err)}</p><div class="confirm-actions"><button class="btn" data-act="closeSheet">Close</button><button class="btn primary" data-act="newScan">New photo</button></div>`;
   if (!sh.rows.length) return h + `<p class="errbox">No scores found on this photo.${sh.notes ? ' ' + esc(sh.notes) : ''}</p><div class="confirm-actions"><button class="btn" data-act="closeSheet">Close</button><button class="btn primary" data-act="newScan">New photo</button></div>`;
@@ -1609,17 +1613,6 @@ function sheetScan(){
   h += `<datalist id="markerNames">${sortedGolfers().map(x => `<option value="${esc(x.name)}">`).join('')}</datalist>`;
   h += okRows.length ? `<button class="btn primary block" data-act="applyScan">Add ${okRows.length} card${okRows.length === 1 ? '' : 's'}</button><p class="hint" style="margin-top:10px">Scanned holes replace what's on each card. Blank holes are left as they are.</p>` : `<div class="confirm-actions"><button class="btn" data-act="closeSheet">Close</button><button class="btn primary" data-act="newScan">New photo</button></div>`;
   return h;
-}
-// Golfers send the organiser a photo of their signed card through the phone's share menu (WhatsApp).
-function photoShareHtml(){
-  return `<p style="margin:12px 0 10px">Now send the organiser a photo of your signed card.</p>
-    <button class="btn primary block big" data-act="sharePhoto">Send photo to the organiser</button>
-    <button class="btn block" style="margin-top:8px" data-act="closeSheet">Done</button>
-    <p class="hint" style="margin-top:10px">Opens your phone's share menu. Pick WhatsApp, then the organiser (not the group).</p>`;
-}
-function sheetPhoto(){
-  const sh = S.sheet; const c = D.comps[sh.ctx.cid]; if (!c) return null;
-  return `<h3>Card photo</h3><p class="sub">${esc(c.name)} · Round ${sh.ctx.round}</p>${sh.thumbs && sh.thumbs.length ? `<div class="thumbs">${sh.thumbs.map(u => `<img src="${esc(u)}" alt="Card photo">`).join('')}</div>` : ''}` + photoShareHtml();
 }
 async function applyScan(){
   const sh = S.sheet; const c = sh && D.comps[sh.ctx.cid]; if (!c || !sh.rows) return; const round = sh.ctx.round; const holes = rcfg(c, round).holes;
@@ -1643,7 +1636,13 @@ async function applyScan(){
   if (await batch(ops)) {
     ops.forEach(o => localSet(o.path, o.data)); ok.forEach(({r}) => notifyIfDone(c.id, round, r.gid, before[r.gid]));
     const msg = `${ok.length} card${ok.length === 1 ? '' : 's'} added.${unsigned ? ` ${unsigned === 1 ? "It doesn't" : `${unsigned} don't`} count until ticked as signed.` : ''}`;
-    if (!S.isAdmin && sh.file) { sh.phase = 'saved'; sh.msg = msg; renderSheet(); } else { closeSheet(); toast(msg); }
+    // The scanned photo is saved with the card: the golfer's own, or every golfer on it when the organiser scans.
+    const who = S.isAdmin ? ok.map(({r}) => r.gid) : ok.map(({r}) => r.gid).filter(g => g === S.myGid);
+    if (sh.file && who.length) {
+      sh.phase = 'saved'; sh.msg = msg; sh.photoSaving = true; renderSheet();
+      let all = true; for (const g of who) { if (!(await saveCardPhoto(c.id, round, g, sh.file, true))) all = false; }
+      sh.photoSaving = false; sh.photoSaved = all; if (S.sheet === sh) renderSheet();
+    } else { closeSheet(); toast(msg); }
   }
 }
 
@@ -1659,6 +1658,55 @@ function authErr(e){
   if (c.includes('network')) return "You're offline. Connect and try again.";
   if (c.includes('unauthorized-domain')) return "This web address isn't allowed to sign in yet. Add it in Firebase Authentication settings.";
   return 'Sign-in didn\'t work. Try again.';
+}
+/* ---------- Card photos: a photo of the signed card is saved with the card, and a golfer's card counts once it has one.
+   Cards started before the photo rule came in (or entered by the organiser) don't need one. ---------- */
+const PHOTO_FROM = Date.parse('2026-11-08T09:00:00Z');
+function photoRequired(card){ const k = cfg(); if (k.photoRequired === false || !card || !cardStarted(card)) return false; return msOf(card.startedAt) >= (Number(k.photoFrom) || PHOTO_FROM); }
+function photoRule(){ return cfg().photoRequired !== false; }
+function signRule(first){ return photoRule() ? `${first}, tick it as signed and add a photo of the signed card (scanning adds it)` : `${first} and tick it as signed`; }
+function photoOk(card){ return !photoRequired(card) || !!(card && (card.photoAt || card.photoOk)); }
+function photoPath(cid, round, gid){ return `comps/${cid}/photos/${round}_${gid}`; }
+const PHOTO_W = {};
+function watchPhoto(cid, round, gid){ const p = photoPath(cid, round, gid); if (PHOTO_W[p]) return; PHOTO_W[p] = be.watch(p, d => { const was = D.photos[p]; D.photos[p] = d ? d.data : null; if (!was !== !D.photos[p] || (was && D.photos[p] && was.at !== D.photos[p].at)) render(); }, () => { D.photos[p] = null; }) || (() => {}); }
+function stopPhotos(){ Object.keys(PHOTO_W).forEach(k => { try { PHOTO_W[k](); } catch (_) {} delete PHOTO_W[k]; }); }
+// Shrink a photo so it fits in one saved record (under 1 MB): long side up to 1500px, JPEG, quality lowered until it fits.
+async function compressImage(file, maxSide, maxChars){
+  const url = URL.createObjectURL(file);
+  try {
+    const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    let side = maxSide, q = 0.72, out = null;
+    for (let n = 0; n < 7; n++) {
+      const k = Math.min(1, side / Math.max(im.naturalWidth || 1, im.naturalHeight || 1)); const w = Math.max(1, Math.round(im.naturalWidth * k)), h = Math.max(1, Math.round(im.naturalHeight * k));
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h; cv.getContext('2d').drawImage(im, 0, 0, w, h);
+      out = {img: cv.toDataURL('image/jpeg', q), w, h}; if (out.img.length <= maxChars) return out;
+      q = Math.max(0.4, q - 0.1); side = Math.round(side * 0.85);
+    }
+    return out;
+  } finally { URL.revokeObjectURL(url); }
+}
+async function saveCardPhoto(cid, round, gid, file, quiet){
+  const lim = SAMPLE ? [800, 160000] : [1400, 700000]; let ph;
+  try { ph = await compressImage(file, lim[0], lim[1]); } catch (e) { toast("Couldn't read that photo. Try taking it again."); return false; }
+  if (!ph || ph.img.length > 1000000) { toast('That photo is too big. Try taking it again.'); return false; }
+  const p = photoPath(cid, round, gid); const doc = {compId:cid, golferId:gid, round:Number(round), img:ph.img, w:ph.w, h:ph.h, at:Date.now(), by:S.user.uid};
+  if (!(await put(p, doc))) return false; D.photos[p] = doc;
+  const card = cardOf(cid, round, gid);
+  if (card) { const before = cardCounts(cid, round, gid); const cp = `comps/${cid}/cards/${round}_${gid}`;
+    const data = Object.assign(cardBase(cid, round, gid), {photoAt: Date.now(), updatedAt: Date.now(), updatedBy: S.user.uid});
+    if (!(await put(cp, data))) return false; localSet(cp, data); notifyIfDone(cid, round, gid, before); }
+  render(); if (!quiet) toast(gid === S.myGid ? 'Photo added to your card' : `Photo added to ${firstName(gName(gid))}'s card`); return true;
+}
+function photoBlockHtml(sc, cid, round, gid, W){
+  const card = sc.card; if (!card) return ''; const fin = D.comps[cid] && D.comps[cid].status === 'final';
+  const photo = D.photos[photoPath(cid, round, gid)]; const need = photoRequired(card); const mineW = W && gid === S.myGid && !S.isAdmin; const canAdd = mineW || (S.isAdmin && !fin);
+  const add = label => `<button class="btn ${need && !card.photoAt ? 'primary' : ''} small" data-act="photoCard" data-cid="${esc(cid)}" data-round="${round}" data-gid="${esc(gid)}">${ICONS.camera}${label}</button>`;
+  if (photo && photo.img) return `<div class="cardphoto ok"><button class="cp-thumb" data-act="photoView" aria-label="View the photo of the card"><img src="${esc(photo.img)}" alt="Photo of the signed card"></button><div class="cp-text"><b>Photo of the card added</b><small>${esc(whenText(photo.at))}</small>${canAdd ? add('Change photo') : ''}</div></div>`;
+  if (card.photoAt) return `<div class="cardphoto ok"><div class="cp-text"><b>Photo of the card added</b><small>Loading the photo…</small></div></div>`;
+  if (card.photoOk) return `<div class="cardphoto ok"><div class="cp-text"><b>No photo needed</b><small>The organiser has okayed this card without one.</small></div></div>`;
+  if (!need) return mineW ? `<div class="cardphoto"><div class="cp-text"><b>Photo of the card</b><small>Not needed for this card, but you can add one.</small>${add('Add photo')}</div></div>` : '';
+  if (mineW) return `<div class="cardphoto need"><div class="cp-text"><b>Add a photo of your signed card</b><small>Your card doesn't count without it. Scanning your card adds it for you.</small></div><button class="btn primary block" data-act="photoCard" data-cid="${esc(cid)}" data-round="${round}" data-gid="${esc(gid)}">${ICONS.camera}Add a photo of my card</button></div>`;
+  return `<div class="cardphoto need"><div class="cp-text"><b>No photo of the card yet</b><small>${cardLocked(card) ? "It wasn't added by midnight, so this card doesn't count." : "The card won't count until there's one."}</small>${S.isAdmin && !fin ? `<div class="cp-btns">${add('Add photo')}<button class="btn small" data-act="photoWaive">Photo not needed</button></div>` : ''}</div></div>`;
 }
 function saveCard(cid, round, gid, scores){
   const data = Object.assign(cardBase(cid, round, gid), {scores, updatedAt:Date.now(), updatedBy:S.user.uid});
@@ -1702,13 +1750,13 @@ const ACT = {
   closeComp(){ S.compId = null; top(); render(); },
   compTab(el){ S.compTab = el.dataset.v; render(); },
   boardSel(el){ S.compTab = 'board'; S.boardSel = el.dataset.v === 'month' ? 'month' : Number(el.dataset.v); render(); },
-  openCard(el){ const cid = el.dataset.cid, gid = el.dataset.gid; const c = D.comps[cid]; if (!c || !D.golfers[gid]) return; S.card = {cid, round: Number(el.dataset.round) || currentRound(c), gid}; S.activeHole = null; S.cardEdit = false; top(); render(); },
+  openCard(el){ const cid = el.dataset.cid, gid = el.dataset.gid; const c = D.comps[cid]; if (!c || !D.golfers[gid]) return; stopPhotos(); S.card = {cid, round: Number(el.dataset.round) || currentRound(c), gid}; S.activeHole = null; S.cardEdit = false; top(); render(); },
   cardEdit(){ const {cid, round, gid} = S.card || {}; const c = D.comps[cid]; if (!c) return; const card = cardOf(cid, round, gid); const holes = rcfg(c, round).holes;
     S.cardEdit = true; S.activeHole = holes.find(h => !(card && card.scores && card.scores[h] !== undefined)) || holes[0]; render();
     requestAnimationFrame(() => { const a = document.querySelector('.hole.active'); if (a) a.scrollIntoView({block:'center'}); }); },
   cardDone(){ S.cardEdit = false; top(); render(); },
   cardRound(el){ if (!S.card) return; S.card = Object.assign({}, S.card, {round:Number(el.dataset.v)}); S.activeHole = null; S.cardEdit = false; render(); },
-  closeCard(){ S.card = null; S.cardEdit = false; top(); render(); },
+  closeCard(){ S.card = null; S.cardEdit = false; stopPhotos(); top(); render(); },
   hole(el){ S.activeHole = +el.dataset.h; S.cardEdit = true; render(); },
   key(el){
     const {cid, round, gid} = S.card || {}; const c = D.comps[cid]; if (!c || c.status === 'final' || !canEnter(cid, round, gid)) return;
@@ -1718,23 +1766,22 @@ const ACT = {
     const idx = holes.indexOf(h); if (v !== 'X' && idx < holes.length - 1) S.activeHole = holes[idx+1];
     saveCard(cid, round, gid, scores);
     requestAnimationFrame(() => requestAnimationFrame(() => { const a = document.querySelector('.hole.active'); if (a) a.scrollIntoView({block:'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'}); }));
-    if (v !== 'X' && idx === holes.length - 1 && Object.keys(scores).length >= holes.length) { toast(markedOK(cardOf(cid, round, gid)) ? 'Card complete' : "Card complete. Add the marker's name and tick that it's signed."); if (gid === S.myGid && !S.isAdmin) { S.cardEdit = false; top(); render(); } }
+    if (v !== 'X' && idx === holes.length - 1 && Object.keys(scores).length >= holes.length) { { const cc = cardOf(cid, round, gid); toast(markedOK(cc) ? (photoOk(cc) ? 'Card complete' : 'Card complete. Now add a photo of your signed card.') : `Card complete. Add the marker's name, tick that it's signed${photoOk(cc) ? '' : ' and add a photo of the card'}.`); } if (gid === S.myGid && !S.isAdmin) { S.cardEdit = false; top(); render(); } }
   },
   editShots(){ openSheet({type:'shots'}); },
   async checkOk(){ const {cid, round, gid} = S.card || {}; const card = cardOf(cid, round, gid); if (!S.isAdmin || !writtenOf(card)) return;
     const base = cardBase(cid, round, gid); const data = Object.assign(base, {updatedAt: card.updatedAt || Date.now(), updatedBy: card.updatedBy || S.user.uid, scanned: Object.assign(base.scanned, {ok:true})});
     const path = `comps/${cid}/cards/${round}_${gid}`; localSet(path, data); render(); if (await put(path, data)) toast('Card check cleared'); },
-  photoCard(el){ PHOTO_PENDING = {cid: el.dataset.cid, round: Number(el.dataset.round)}; openSheet({type:'pickSrc', kind:'photo'}); },
+  photoCard(el){ PHOTO_PENDING = {cid: el.dataset.cid, round: Number(el.dataset.round), gid: el.dataset.gid || S.myGid}; openSheet({type:'pickSrc', kind:'photo'}); },
+  photoView(){ const {cid, round, gid} = S.card || {}; const ph = D.photos[photoPath(cid, round, gid)]; if (ph && ph.img) openSheet({type:'photoView', cid, round, gid}); },
+  async photoWaive(){ const {cid, round, gid} = S.card || {}; if (!S.isAdmin || !cardOf(cid, round, gid)) return; const before = cardCounts(cid, round, gid);
+    const data = Object.assign(cardBase(cid, round, gid), {photoOk: true, updatedAt: Date.now(), updatedBy: S.user.uid}); const cp = `comps/${cid}/cards/${round}_${gid}`;
+    if (await put(cp, data)) { localSet(cp, data); render(); toast('Okayed without a photo'); notifyIfDone(cid, round, gid, before); } },
   pickSrc(el){ const kind = S.sheet && S.sheet.kind; if (!kind) return; const id = (kind === 'scan' ? 'scan' : 'photo') + (el.dataset.src === 'cam' ? 'Cam' : 'File');
     const f = $('#' + id); closeSheetQuiet(); render(); if (!f) return; f.value = ''; f.click(); },
-  async sharePhoto(){ const sh = S.sheet; const f = sh && sh.file; if (!f) return; const c = D.comps[sh.ctx.cid];
-    const text = `Pot of Gold · ${gName(S.myGid)} · ${c ? c.name : ''} round ${sh.ctx.round} card`;
-    try { if (navigator.canShare && navigator.canShare({files:[f]})) { await navigator.share({files:[f], text}); closeSheet(); toast('Photo shared'); return; } }
-    catch (e) { if (e && e.name === 'AbortError') return; }
-    toast("This phone can't send the photo from here. Send it from your photos in WhatsApp instead."); },
   startRound(el){ const cid = el.dataset.cid, round = Number(el.dataset.round); const c = D.comps[cid]; if (!c || !canStart(cid, round)) return;
     if (twosOn()) { openSheet({type:'start', cid, round}); return; }
-    askConfirm('Start your round?', `This is your round ${round} card for ${c.name}. You only get one this weekend. Enter your scores and tick it as signed by midnight tonight, or the round won't count.`, 'Start my round', () => doStartRound(cid, round, false)); },
+    askConfirm('Start your round?', `This is your round ${round} card for ${c.name}. You only get one this weekend. ${signRule('Enter your scores')} by midnight tonight, or the round won't count.`, 'Start my round', () => doStartRound(cid, round, false)); },
   startGo(el){ const sh = S.sheet; if (!sh || sh.type !== 'start') return; const twos = el.dataset.twos === '1' && !twosOf(sh.cid, sh.round, S.myGid); closeSheetQuiet(); doStartRound(sh.cid, sh.round, twos, el.dataset.pay === '1'); },
   twosJoin(el){ const cid = el.dataset.cid, round = Number(el.dataset.round); if (canJoinTwos(cid, round)) joinTwos(cid, round); },
   twosPay(el){ openSheet({type:'twosPay', id: el.dataset.id}); },
@@ -1815,8 +1862,9 @@ const ACT = {
   finalise(){
     const c = D.comps[S.compId]; if (!c) return; const lb = leaderboard(c); const unpaid = entriesFor(c.id).filter(e => !e.paid).length;
     const unmarked = lb.all.reduce((a,r) => a + r.cards.filter(sc => sc.complete && !sc.marked).length, 0);
+    const nophoto = lb.all.reduce((a,r) => a + r.cards.filter(sc => sc.complete && sc.marked && !sc.photoOk).length, 0);
     const changes = previewHcp(c.id, 'final');
-    const bits = ['Scores lock and the league points become final.']; if (changes.length) bits.push('Handicaps: ' + changes.map(x => `${gName(x.gid)} ${fmtHi(x.from)} → ${fmtHi(x.to)}`).join(', ') + '.'); if (unmarked) bits.push(`${unmarked} complete card${unmarked === 1 ? " isn't" : "s aren't"} ticked as signed by a marker and won't count.`); if (unpaid) bits.push(`${unpaid} entr${unpaid === 1 ? 'y is' : 'ies are'} unpaid.`); bits.push('You can reopen it later.');
+    const bits = ['Scores lock and the league points become final.']; if (changes.length) bits.push('Handicaps: ' + changes.map(x => `${gName(x.gid)} ${fmtHi(x.from)} → ${fmtHi(x.to)}`).join(', ') + '.'); if (unmarked) bits.push(`${unmarked} complete card${unmarked === 1 ? " isn't" : "s aren't"} ticked as signed by a marker and won't count.`); if (nophoto) bits.push(`${nophoto} signed card${nophoto === 1 ? ' has' : 's have'} no photo of the card and won't count.`); if (unpaid) bits.push(`${unpaid} entr${unpaid === 1 ? 'y is' : 'ies are'} unpaid.`); bits.push('You can reopen it later.');
     askConfirm('Finalise the month?', bits.join(' '), 'Finalise', async () => { const data = Object.assign({}, c, {status:'final', finalisedAt:Date.now()}); delete data.id;
       if (await put(`comps/${c.id}`, data)) { localSet(`comps/${c.id}`, data); await syncHandicaps(); S.compTab = 'board'; S.boardSel = 'month'; toast(changes.length ? `Results finalised. ${changes.length} handicap${changes.length === 1 ? '' : 's'} updated.` : 'Results finalised'); } });
   },
@@ -1949,7 +1997,8 @@ function saveSettings(){
   const course = {parM:[], siM:[], parL:[], siL:[]};
   range(1,18).forEach(h => { course.parM.push(n('c-pm-'+h, k.course.parM[h-1])); course.siM.push(n('c-sm-'+h, k.course.siM[h-1])); course.parL.push(n('c-pl-'+h, k.course.parL[h-1])); course.siL.push(n('c-sl-'+h, k.course.siL[h-1])); });
   const rev = String((g('s-rev') || {}).value || '').trim().replace(/^https?:\/\/(www\.)?revolut\.me\//i, '').replace(/^@/, '').replace(/\/.*$/, '');
-  const data = { fee:n('s-fee', k.fee), revtag:rev, prize:[n('s-p1', k.prize[0]), n('s-p2', k.prize[1] != null ? k.prize[1] : 0)], points:[n('s-pt1', k.points[0]), n('s-pt2', k.points[1]), n('s-pt3', k.points[2]), n('s-pt4', k.points[3])], entryPoint:n('s-pte', k.entryPoint), rounds: Math.max(1, Math.min(5, n('s-rounds', k.rounds))), best: Math.max(1, Math.min(5, n('s-best', k.best))), allowance:n('s-allow', k.allowance), tee:(g('s-tee') || {}).value || k.tee, course, bands: (() => { const a = n('s-b1', k.bands[0]), b = n('s-b2', k.bands[1]); return a < b ? [a, b] : k.bands; })(), cutWin:[n('s-w1', k.cutWin[0]), n('s-w2', k.cutWin[1]), n('s-w3', k.cutWin[2])], cutRun:[n('s-r1', k.cutRun[0]), n('s-r2', k.cutRun[1]), n('s-r3', k.cutRun[2])], riseBy:n('s-rb', k.riseBy), riseAfter:Math.max(1, Math.round(n('s-ra', k.riseAfter))), hcpMax:n('s-hm', k.hcpMax), twosOn: g('s-twosOn') ? g('s-twosOn').checked : !!k.twosOn, twosFee: Math.max(1, n('s-twosFee', k.twosFee)) };
+  const data = { fee:n('s-fee', k.fee), revtag:rev, prize:[n('s-p1', k.prize[0]), n('s-p2', k.prize[1] != null ? k.prize[1] : 0)], points:[n('s-pt1', k.points[0]), n('s-pt2', k.points[1]), n('s-pt3', k.points[2]), n('s-pt4', k.points[3])], entryPoint:n('s-pte', k.entryPoint), rounds: Math.max(1, Math.min(5, n('s-rounds', k.rounds))), best: Math.max(1, Math.min(5, n('s-best', k.best))), allowance:n('s-allow', k.allowance), tee:(g('s-tee') || {}).value || k.tee, course, bands: (() => { const a = n('s-b1', k.bands[0]), b = n('s-b2', k.bands[1]); return a < b ? [a, b] : k.bands; })(), cutWin:[n('s-w1', k.cutWin[0]), n('s-w2', k.cutWin[1]), n('s-w3', k.cutWin[2])], cutRun:[n('s-r1', k.cutRun[0]), n('s-r2', k.cutRun[1]), n('s-r3', k.cutRun[2])], riseBy:n('s-rb', k.riseBy), riseAfter:Math.max(1, Math.round(n('s-ra', k.riseAfter))), hcpMax:n('s-hm', k.hcpMax), twosOn: g('s-twosOn') ? g('s-twosOn').checked : !!k.twosOn, twosFee: Math.max(1, n('s-twosFee', k.twosFee)),
+    photoRequired: g('s-photoReq') ? g('s-photoReq').checked : k.photoRequired !== false, photoFrom: (g('s-photoReq') && g('s-photoReq').checked && k.photoRequired === false) ? Date.now() : (k.photoFrom || null) };
   D.settings = data; MEMO = {};
   clearTimeout(settingsTimer); settingsTimer = setTimeout(async () => { if (await put('config/settings', data)) { syncHandicaps(); toast('Settings saved'); } }, 400);
 }
@@ -1996,7 +2045,7 @@ function twosFee(){ const f = Number(cfg().twosFee); return isFinite(f) && f > 0
 function twosOf(cid, round, gid){ return D.twos[`${cid}/${round}_${gid}`] || null; }
 function twosFor(cid, round){ return Object.values(D.twos).filter(t => t.compId === cid && Number(t.round) === Number(round) && D.golfers[t.golferId]); }
 // A 2 counts on a complete card ticked as signed. A hole-in-one takes the whole pot, whatever 2s there are.
-function twosHits(sc){ const ok = sc && sc.complete && sc.marked; const rows = ok ? sc.rows.filter(r => typeof r.g === 'number' && r.g <= 2) : [];
+function twosHits(sc){ const ok = sc && sc.complete && sc.marked && sc.photoOk; const rows = ok ? sc.rows.filter(r => typeof r.g === 'number' && r.g <= 2) : [];
   return {aces: rows.filter(r => r.g === 1).map(r => r.h), twos: rows.filter(r => r.g === 2).map(r => r.h)}; }
 function twosRef(c, n, g){ return `2s R${n} ${dParts(c.date).mon} - ${g ? g.name : ''}`; }
 // Every round in date order: the pot is this round's paid €2s plus anything rolled over from rounds with no 2s.
@@ -2196,6 +2245,8 @@ function sampleData(){
     });
     wins.forEach(([i, count]) => { const card = ins[i]; if (!card) return; if (count === 'ace') card.scores[par3[1]] = 1; else par3.slice(0, count).forEach(h => { card.scores[h] = 2; }); card.signed = true; });
   }));
+  // The sample cards were "played" before the photo rule; cards you start in the sample need a photo, like the real thing.
+  st['config/settings'].photoFrom = Math.max(Date.now(), ...Object.keys(st).filter(k => /^comps\/[^/]+\/cards\//.test(k)).map(k => st[k].startedAt || 0)) + 1;
   return st;
 }
 
@@ -2208,7 +2259,7 @@ document.addEventListener('change', ev => {
   if (t.id === 'leagueMonth') { S.leagueMonth = t.value; S.boardSel = 'month'; t.blur(); render(); return; }
   if (t.id === 'scanFile' || t.id === 'scanCam') { startScan(t.files); return; }
   if (t.id === 'photoFile' || t.id === 'photoCam') { const ctx = PHOTO_PENDING; PHOTO_PENDING = null; const file = t.files && t.files[0]; if (!ctx || !file) return;
-    let thumbs = []; try { thumbs = [URL.createObjectURL(file)]; } catch (_) {} openSheet({type:'photo', ctx, file, thumbs}); return; }
+    toast('Adding the photo…'); saveCardPhoto(ctx.cid, ctx.round, ctx.gid || S.myGid, file); return; }
   if (t.id === 'pinRemember') { S.pinRemember = t.checked; if (!t.checked) { try { localStorage.removeItem('rgc-admin'); } catch (_) {} } return; }
   if ((t.id === 'markerName' || t.id === 'signedChk') && S.card) { const {cid, round, gid} = S.card;
     const name = String(($('#markerName') || {}).value || '').trim().slice(0, 60); const chk = $('#signedChk'); let signed = !!(chk && chk.checked);

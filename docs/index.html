@@ -420,6 +420,18 @@ details.course[open] summary::after{content:"Hide"}
   .twos-badge.sm{width:34px;height:34px;font-size:18px}
   .twos-choice{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .credit-list{margin-top:12px}
+  .cardphoto{display:flex;gap:14px;align-items:center;margin:0 0 14px;padding:12px 14px;border-radius:12px;background:var(--card);border:1px solid var(--line)}
+  .cardphoto.need{flex-direction:column;align-items:stretch;background:var(--warn-bg);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
+  .cardphoto.need b{color:var(--warn)}
+  .cardphoto.ok b::before{content:"✓ ";color:var(--fairway)}
+  .cp-thumb{flex:none;width:76px;height:76px;padding:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;cursor:zoom-in}
+  .cp-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .cp-text{display:flex;flex-direction:column;gap:3px;min-width:0;align-items:flex-start}
+  .cp-text small{color:var(--muted);font-size:13px;line-height:1.4}
+  .cp-text .btn{margin-top:6px}
+  .cp-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+  .cardphoto .btn svg{width:18px;height:18px;margin-right:6px;vertical-align:-3px}
+  .photo-full{display:block;width:100%;height:auto;border-radius:8px;border:1px solid var(--line)}
   .card-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 14px}
   .card-actions .btn{display:flex;align-items:center;justify-content:center;gap:8px}
   .card-actions svg{width:20px;height:20px}

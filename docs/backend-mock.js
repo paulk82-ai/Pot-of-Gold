@@ -55,6 +55,15 @@ export async function init(cfg){
         }
         throw deny();
       }
+      if (s[2] === 'photos') {
+        // A photo of the golfer's own signed card, while their card is still open.
+        if (!data) throw deny();
+        const card = store[`comps/${s[1]}/cards/${s[3]}`];
+        if (Object.keys(data).some(k => !['compId', 'golferId', 'round', 'img', 'w', 'h', 'at', 'by'].includes(k))) throw deny();
+        if (data.golferId !== g || data.compId !== s[1] || s[3] !== `${data.round}_${g}` || typeof data.img !== 'string' || data.img.length >= 1000000) throw deny();
+        if (!card || !(card.deadline > Date.now())) throw deny('This card locked at midnight.');
+        return;
+      }
       if (s[2] === 'twos') {
         // 2's club: join a round before starting it or within 10 minutes of starting; say you've paid. Only the organiser marks it paid.
         const cur = store[path]; if (!data) throw deny();
@@ -85,7 +94,9 @@ export async function init(cfg){
         if (s[3] !== `${data.round}_${data.golferId}`) throw deny();
         if (!roundOpen(comp, data.round)) throw deny('This round is not open.');
         if (typeof data.marker !== 'string' || data.marker.length > 60 || typeof data.signed !== 'boolean') throw deny();
-        if (Object.keys(data).some(k => !['compId', 'golferId', 'round', 'marker', 'signed', 'scores', 'hi', 'shots', 'updatedAt', 'updatedBy', 'scanned', 'startedAt', 'deadline', 'twosOnly'].includes(k))) throw deny();
+        if (Object.keys(data).some(k => !['compId', 'golferId', 'round', 'marker', 'signed', 'scores', 'hi', 'shots', 'updatedAt', 'updatedBy', 'scanned', 'startedAt', 'deadline', 'twosOnly', 'photoAt', 'photoOk'].includes(k))) throw deny();
+        if (data.photoAt && !store[`comps/${s[1]}/photos/${s[3]}`]) throw deny('Add the photo first.');
+        if (!!data.photoOk !== !!(cur && cur.photoOk)) throw deny();
         if (cur && JSON.stringify(cur.shots == null ? null : cur.shots) !== JSON.stringify(data.shots == null ? null : data.shots)) throw deny();
         // Started before teeing off, and locked at the deadline (midnight that day).
         const now = Date.now();

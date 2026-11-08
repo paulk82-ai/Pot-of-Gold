@@ -121,6 +121,22 @@ service cloud.firestore {
           && request.resource.data.get('claimMethod', null) in [null, 'revolut', 'card'];
       }
 
+      // Photos of signed cards: one per golfer per round (id = "<round>_<golferId>"), the image itself (under 1 MB).
+      // A golfer adds their own while their card is still open (before its midnight deadline); organisers can do anything.
+      match /photos/{pid} {
+        allow read: if isAdmin() || (isMember() && pid.split('_')[1] == myGid());
+        allow write: if isAdmin();
+        allow create, update: if isMember() && isOpen()
+          && request.resource.data.keys().hasOnly(['compId', 'golferId', 'round', 'img', 'w', 'h', 'at', 'by'])
+          && request.resource.data.compId == cid
+          && request.resource.data.golferId == myGid()
+          && request.resource.data.round is int
+          && pid == string(request.resource.data.round) + '_' + myGid()
+          && request.resource.data.img is string && request.resource.data.img.size() < 1000000
+          && exists(/databases/$(database)/documents/comps/$(cid)/cards/$(pid))
+          && get(/databases/$(database)/documents/comps/$(cid)/cards/$(pid)).data.get('deadline', 0) > request.time.toMillis();
+      }
+
       // Cards: one per golfer per round (id = "<round>_<golferId>").
       // The player starts their card before teeing off (startedAt), and has until the deadline
       // (midnight that day) to enter it, add their marker's name and tick that the paper card is signed.
@@ -131,11 +147,13 @@ service cloud.firestore {
           let golfer = get(/databases/$(database)/documents/golfers/$(c.golferId)).data;
           let now = request.time.toMillis();
           let inTwos = existsAfter(/databases/$(database)/documents/comps/$(cid)/twos/$(cardId));
-          return c.keys().hasOnly(['compId', 'golferId', 'round', 'marker', 'signed', 'scores', 'hi', 'shots', 'updatedAt', 'updatedBy', 'scanned', 'startedAt', 'deadline', 'twosOnly'])
+          return c.keys().hasOnly(['compId', 'golferId', 'round', 'marker', 'signed', 'scores', 'hi', 'shots', 'updatedAt', 'updatedBy', 'scanned', 'startedAt', 'deadline', 'twosOnly', 'photoAt', 'photoOk'])
             && c.compId == cid && c.round is int && c.scores is map
             && cardId == string(c.round) + '_' + c.golferId
             && c.golferId == me && (entered(me) || inTwos)
             && c.marker is string && c.marker.size() <= 60 && c.signed is bool
+            && (!('photoAt' in c) || existsAfter(/databases/$(database)/documents/comps/$(cid)/photos/$(cardId)))
+            && c.get('photoOk', false) == (resource == null ? false : resource.data.get('photoOk', false))
             && c.startedAt is int && c.deadline is int
             && isOpen() && roundOpen(c.round)
             && (resource == null
