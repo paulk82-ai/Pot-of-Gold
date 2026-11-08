@@ -851,6 +851,7 @@ function todoHtml(open){
   if (reqs) items.push(`<li><span class="grp-main"><b>${reqs} ${reqs === 1 ? 'person is' : 'people are'} asking to join</b><small>Add them to the golfer list so they can sign in</small></span><button class="btn small primary" data-act="joinList">Review</button></li>`);
   open.forEach(c => { const chk = entriesFor(c.id).filter(e => payState(e) === 'claimed').length;
     if (chk) items.push(`<li><span class="grp-main"><b>${chk} payment${chk === 1 ? '' : 's'} to check</b><small>${esc(c.name)} · check your Revolut, then confirm</small></span><button class="btn small primary" data-act="payments" data-id="${esc(c.id)}">Check</button></li>`); });
+  if (twosOn()) twosLedger().filter(twosCloseDue).forEach(x => items.push(`<li><span class="grp-main"><b>Close the 2's for round ${x.r.n}</b><small>${esc(x.c.name)} · ${esc(twosResult(x))}</small></span><button class="btn small primary" data-act="twosOpen" data-cid="${esc(x.c.id)}" data-round="${x.r.n}">Close</button></li>`));
   const tc = cardsToCheck().filter(x => x.sent).length;
   if (tc) items.push(`<li><span class="grp-main"><b>${tc} card${tc === 1 ? '' : 's'} to check</b><small>Sent on WhatsApp · upload ${tc === 1 ? 'it' : 'them'} to check against what was entered</small></span><button class="btn small primary" data-act="tab" data-v="admin">Check</button></li>`);
   const cur = currentComp();
@@ -1971,6 +1972,22 @@ const ACT = {
   creditLog(el){ openSheet({type:'credit', id: el.dataset.id}); },
   twosTable(){ S.view = 'table'; S.leagueTab = 'twos'; S.card = null; S.compId = null; S.playerId = null; top(); render(); },
   twosOpen(el){ openSheet({type:'twos', cid: el.dataset.cid, round: Number(el.dataset.round)}); },
+  twosClose(el){ const c = D.comps[el.dataset.cid]; const n = Number(el.dataset.round); const x = c && twosItem(c.id, n); if (!x || x.closed || !S.isAdmin) return;
+    const out = x.entrants.filter(t => twosIn(t)).filter(t => { const card = cardOf(c.id, n, t.golferId); return !cardCounts(c.id, n, t.golferId) && !(cardStarted(card) && cardLocked(card)); }).length;
+    const bits = [x.winners.length ? `${x.ace ? 'Hole-in-one! ' : ''}${x.winners.map(w => twosWho(w, true)).join(', ')}.${x.leftover > 0.004 ? ` ${euro(x.leftover)} left over rolls on.` : ''}` : `No 2s, so the ${euro(x.pot)} rolls over to the next round.`];
+    if (x.toConfirm) bits.push(`${x.toConfirm} payment${x.toConfirm === 1 ? ' is' : 's are'} still to confirm. ${x.toConfirm === 1 ? 'That golfer is' : 'Those golfers are'} left out unless you confirm first.`);
+    if (out) bits.push(`${out} golfer${out === 1 ? " in the 2's hasn't" : "s in the 2's haven't"} finished their card yet.`);
+    bits.push("Nobody can join or pay for this round after it's closed, and the result is fixed. You can reopen it.");
+    askConfirm(`Close the 2's for round ${n}?`, bits.join(' '), "Close the 2's", async () => {
+      const L = twosItem(c.id, n); if (!L) return; const cur = D.comps[c.id];
+      const rec = {closedAt: Date.now(), by: S.user.uid, pot: L.pot, carryIn: L.carryIn, paid: L.paid, ace: !!L.ace, leftover: L.shares ? L.leftover : 0, rolled: L.shares ? L.leftover : L.pot, winners: L.winners.map(w => ({gid: w.gid, holes: w.holes, ace: !!w.ace, won: w.won}))};
+      const data = Object.assign({}, cur, {twosClosed: Object.assign({}, cur.twosClosed || {}, {[String(n)]: rec})}); delete data.id;
+      if (await put(`comps/${c.id}`, data)) { localSet(`comps/${c.id}`, data); MEMO = {}; openSheet({type:'twos', cid: c.id, round: n}); toast(`2's closed for round ${n}. Share the result with the group.`); } }); },
+  twosReopen(el){ const c = D.comps[el.dataset.cid]; const n = Number(el.dataset.round); if (!c || !twosClosedRec(c, n) || !S.isAdmin) return;
+    askConfirm(`Reopen round ${n} of the 2's?`, "The result goes back to being worked out from the cards and payments, and golfers can join again while the round is still open.", 'Reopen', async () => {
+      const cur = D.comps[c.id]; const m = Object.assign({}, cur.twosClosed || {}); delete m[String(n)];
+      const data = Object.assign({}, cur, {twosClosed: m}); delete data.id;
+      if (await put(`comps/${c.id}`, data)) { localSet(`comps/${c.id}`, data); MEMO = {}; openSheet({type:'twos', cid: c.id, round: n}); toast(`Round ${n} reopened`); } }); },
   twosRound(el){ if (S.sheet && S.sheet.type === 'twos') { S.sheet.round = Number(el.dataset.v); renderSheet(); } },
   twosMark(el){ if (S.isAdmin) markTwos(el.dataset.id, el.dataset.m); },
   twosRemove(el){ const t = D.twos[el.dataset.id]; if (!t || !S.isAdmin) return; const sh = S.sheet;
@@ -2251,11 +2268,24 @@ function twosLedger(){
     const leftover = shares ? Math.round((pot - winners.reduce((a, w) => a + w.won, 0)) * 100) / 100 : 0;
     const unpaidHits = hits.filter(w => twosPayState(w.t) !== 'paid').map(w => Object.assign({}, w, {ace: w.aces.length > 0, holes: w.aces.length ? w.aces : w.twos, ps: twosPayState(w.t)}));
     const inCount = ts.filter(twosIn).length, toConfirm = ts.filter(t => twosPayState(t) === 'claimed').length, pending = ts.filter(t => twosPayState(t) === 'unpaid').length;
-    out.push({c, r, state, entrants: ts, paid, inCount, toConfirm, pending, carryIn: carry, pot, winners, shares, ace, leftover, unpaidHits, rolled: state === 'played' ? (shares ? leftover : pot) : 0});
-    if (state === 'played') carry = shares ? leftover : pot;
+    const item = {c, r, state, entrants: ts, paid, inCount, toConfirm, pending, carryIn: carry, pot, winners, shares, ace, leftover, unpaidHits, rolled: state === 'played' ? (shares ? leftover : pot) : 0};
+    // Closed by the organiser: the result is frozen as it was when closed, whatever changes later.
+    const rec = twosClosedRec(c, r.n);
+    if (rec) {
+      const fw = (rec.winners || []).map(w => ({gid: w.gid, holes: w.holes || [], ace: !!w.ace, won: Number(w.won) || 0, aces: w.ace ? (w.holes || []) : [], twos: w.ace ? [] : (w.holes || [])}));
+      const sig = ws => ws.map(w => `${w.gid}:${w.holes.length}:${w.won}`).sort().join('|');
+      Object.assign(item, {state: 'played', closed: rec, paid: Number(rec.paid) || 0, inCount: Number(rec.paid) || 0, toConfirm: 0, pending: 0, carryIn: Number(rec.carryIn) || 0, pot: Number(rec.pot) || 0, winners: fw, shares: fw.reduce((a, w) => a + w.holes.length, 0), ace: !!rec.ace, leftover: Number(rec.leftover) || 0, unpaidHits: [], rolled: Number(rec.rolled) || 0, changed: sig(fw) !== sig(winners) || Math.abs((Number(rec.pot) || 0) - pot) > 0.004});
+    }
+    out.push(item);
+    if (item.state === 'played') carry = item.rolled;
   });
   return (MEMO.twos = out);
 }
+function twosClosedRec(c, n){ const m = c && c.twosClosed; return m && typeof m === 'object' ? (m[String(n)] || null) : null; }
+// The organiser can close a round's 2's once it's over (or Sunday evening): it then stops taking golfers, and the
+// result is fixed. Rounds that aren't closed are settled automatically when the weekend ends, as before.
+function twosCloseDue(x){ if (!x || x.closed || x.c.status === 'final' || x.state === 'upcoming') return false;
+  return x.state === 'played' || (iso(new Date()) === x.r.to && new Date().getHours() >= 18); }
 function twosItem(cid, n){ return twosLedger().find(x => x.c.id === cid && x.r.n === Number(n)) || null; }
 function twosNow(){ const L = twosLedger(); return L.find(x => x.state === 'open') || L.find(x => x.state === 'upcoming') || L.slice().reverse().find(x => x.state === 'played') || null; }
 function twosDesc(w){ const what = w.ace ? (w.holes.length > 1 ? `${w.holes.length} holes-in-one` : 'hole-in-one') : (w.holes.length > 1 ? `${w.holes.length} twos` : '2'); return w.holes.length > 1 ? `${what}: ${w.holes.map(ord).join(', ')}` : `${what} on the ${ord(w.holes[0])}`; }
@@ -2268,7 +2298,7 @@ function twosResult(x){
 // golfer starts their round or within 10 minutes of starting it. After that they can't join or say they've paid.
 function twosWindowOpen(cid, round, gid){
   const c = D.comps[cid]; const r = c && compRounds(c).find(x => x.n === Number(round));
-  if (!c || c.status !== 'open' || !r || roundState(r) !== 'open') return false;
+  if (!c || c.status !== 'open' || !r || roundState(r) !== 'open' || twosClosedRec(c, r.n)) return false;
   const card = cardOf(cid, round, gid); if (!cardStarted(card)) return true;
   return !cardLocked(card) && Date.now() - msOf(card.startedAt) < 600000;
 }
@@ -2290,7 +2320,10 @@ function twosPanelHtml(x, big){
   const lbl = x.state === 'upcoming' ? `Round ${x.r.n} opens ${dParts(x.r.from).dow} ${dParts(x.r.from).day} ${dParts(x.r.from).mon}` : `Round ${x.r.n}${open ? ' · this weekend' : ' · ' + esc(x.c.name)}`;
   let h = `<section class="twos ${big ? 'big' : ''}"><div class="twos-top"><span class="twos-badge" aria-hidden="true">2</span><div class="twos-main"><span class="label">2's club · ${lbl}</span><b class="twos-pot">${euro(x.pot)}</b>
     <small>${x.state === 'upcoming' ? `${euro(fee)} a round to join · ` : ''}${x.carryIn > 0.004 ? `${euro(x.carryIn)} rolled over` : 'Nothing rolled over'}${x.state !== 'upcoming' ? ` · ${x.state === 'played' ? x.paid : x.inCount} in` : ''}${S.isAdmin && x.toConfirm ? ` · ${x.toConfirm} to confirm` : ''}</small></div></div>`;
+  if (x.closed && !big && x.r.to >= iso(new Date())) h += `<p class="hint" style="margin:0 0 6px"><b>Closed.</b> The organiser has closed the 2's for this round.</p>`;
   if (x.winners.length) h += `<p class="twos-win">${x.ace ? (x.state === 'played' ? 'Hole-in-one! Won by ' : 'Hole-in-one! It takes the pot: ') : x.state === 'played' ? 'Won by ' : 'In the 2s so far: '}${esc(twosResult(x))}</p>`;
+  if (x.state === 'upcoming') { const L = twosLedger(); const i = L.indexOf(x); const prev = i > 0 ? L.slice(0, i).reverse().find(y => y.state === 'played' && (y.entrants.length || y.closed)) : null;
+    if (prev) h += `<p class="hint" style="margin:0 0 6px">Round ${prev.r.n}${prev.c.id !== x.c.id ? ' · ' + esc(prev.c.name) : ''}: ${esc(twosResult(prev))}.</p>`; }
   const myHit = me && x.unpaidHits.find(w => w.gid === me);
   if (myHit && !S.isAdmin) h += `<p class="twos-warn">${myHit.ps === 'claimed' ? `Your ${esc(twosDesc(myHit))} counts once the organiser confirms your ${euro(fee)}.` : `Your ${esc(twosDesc(myHit))} doesn't count: your ${euro(fee)} wasn't paid before you teed off.`}</p>`;
   else if (open) h += `<p class="hint">No 2s yet. A gross 2 on any hole wins the pot. If nobody gets one, it all rolls over to next weekend.</p>`;
@@ -2348,21 +2381,24 @@ function sheetTwos(){
   h += `<div class="bsel" role="group" aria-label="Round">${rs.map(r => `<button data-act="twosRound" data-v="${r.n}" aria-pressed="${r.n === n}">R${r.n}</button>`).join('')}</div>`;
   h += `<dl class="figs four money"><div><dt>In</dt><dd>${x.state === 'played' ? x.paid : x.inCount}</dd></div><div><dt>Confirmed</dt><dd>${x.paid}</dd></div><div><dt>Rolled over</dt><dd>${euro(x.carryIn)}</dd></div><div><dt>Pot</dt><dd>${euro(x.pot)}</dd></div></dl>`;
   h += `<p class="twos-win">${esc(x.state === 'upcoming' ? 'Not started yet' : twosResult(x))}</p>`;
+  if (x.closed) h += `<p class="notebox ok"><b>Closed ${esc(whenText(x.closed.closedAt))}.</b> The result is fixed, and nobody can join or pay for this round.${x.changed ? ' <b>Cards or payments have changed since you closed it.</b> Reopen and close it again to update the result.' : ''}</p>`;
   const rows = x.entrants.map(t => ({t, g: D.golfers[t.golferId], ps: twosPayState(t)})).sort((a, b) => byName(a.g, b.g));
   const id = t => `${c.id}/${n}_${t.golferId}`;
   const b = (t, m, label, primary) => `<button class="btn small ${primary ? 'primary' : ''}" data-act="twosMark" data-id="${esc(id(t))}" data-m="${m}">${label}</button>`;
   if (rows.length) h += `<ul class="grp paylist" style="margin-top:10px">${rows.map(r => `<li><span class="avatar sm">${esc(initials(r.g.name))}</span><span class="grp-main"><b>${esc(r.g.name)}${entryOf(c.id, r.t.golferId) ? '' : ` <span class="tbadge">2's only</span>`}</b><small>${r.ps === 'paid' ? esc(twosMethod(r.t)) : r.ps === 'claimed' ? esc(claimText(r.t)) + (r.t.claimedAt ? ' ' + esc(whenText(r.t.claimedAt)) : '') + ' · ref “' + esc(twosRef(c, n, r.g)) + '”' : r.ps === 'lapsed' ? 'Not paid before teeing off · not in' : 'Joined · not paid yet'}${cardStarted(cardOf(c.id, n, r.t.golferId)) ? ' · started ' + esc(whenText(cardOf(c.id, n, r.t.golferId).startedAt)) : ''}${(x.winners.find(w => w.gid === r.t.golferId) || {}).holes ? ' · <span class="twos-hit">' + esc(twosDesc(x.winners.find(w => w.gid === r.t.golferId))) + (x.state === 'played' ? ' · ' + euro(x.winners.find(w => w.gid === r.t.golferId).won) : '') + '</span>' : ''}${x.unpaidHits.find(w => w.gid === r.t.golferId) ? ' · <span class="twos-warn">' + esc(twosDesc(x.unpaidHits.find(w => w.gid === r.t.golferId))) + (r.ps === 'claimed' ? ', counts once you confirm' : ", doesn't count (not paid)") + '</span>' : ''}</small></span><span class="pbtns">${r.ps === 'claimed' ? b(r.t, r.t.claimMethod || 'revolut', 'Got it', true) + b(r.t, '', 'Not yet') : r.ps === 'unpaid' || r.ps === 'lapsed' ? b(r.t, 'revolut', 'Revolut') + b(r.t, 'card', 'Card') : twosByCredit(r.t) ? '' : b(r.t, '', 'Undo')}${!entryOf(c.id, r.t.golferId) ? `<button class="btn small" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(r.t.golferId)}">Card</button>` : ''}<button class="btn small" data-act="twosRemove" data-id="${esc(id(r.t))}" aria-label="Take ${esc(r.g.name)} out">✕</button></span></li>`).join('')}</ul>`;
   else h += `<p class="hint">Nobody in the 2's for this round yet.</p>`;
   const avail = Object.values(D.golfers).filter(g => !twosOf(c.id, n, g.id)).sort((a, b) => (entryOf(c.id, a.id) ? 0 : 1) - (entryOf(c.id, b.id) ? 0 : 1) || byName(a, b));
-  if (avail.length && c.status !== 'final') h += `<form data-form="twosAdd"><span class="label" style="margin-top:14px;display:block">Add golfers to round ${n}</span><div class="checklist">${avail.map(g => `<label class="check"><input type="checkbox" name="gid" value="${esc(g.id)}"><span>${esc(g.name)}${entryOf(c.id, g.id) ? '' : " <small>(2's only)</small>"}</span></label>`).join('')}</div><button class="btn block" type="submit">Add ticked golfers</button><p class="hint">Then mark them paid once they've paid. Only paid golfers are in.</p></form>`;
+  if (avail.length && c.status !== 'final' && !x.closed) h += `<form data-form="twosAdd"><span class="label" style="margin-top:14px;display:block">Add golfers to round ${n}</span><div class="checklist">${avail.map(g => `<label class="check"><input type="checkbox" name="gid" value="${esc(g.id)}"><span>${esc(g.name)}${entryOf(c.id, g.id) ? '' : " <small>(2's only)</small>"}</span></label>`).join('')}</div><button class="btn block" type="submit">Add ticked golfers</button><p class="hint">Then mark them paid once they've paid. Only paid golfers are in.</p></form>`;
   if (x.state !== 'upcoming') h += `<button class="btn block" style="margin-top:10px" data-act="twosShare">${ICONS.share}Share the 2's result</button>`;
+  if (!x.closed && x.state !== 'upcoming' && c.status !== 'final') h += `<button class="btn primary block" style="margin-top:8px" data-act="twosClose" data-cid="${esc(c.id)}" data-round="${n}">Close the 2's for round ${n}</button>`;
+  if (x.closed && c.status !== 'final') h += `<button class="textbtn" style="margin-top:8px" data-act="twosReopen" data-cid="${esc(c.id)}" data-round="${n}">Reopen round ${n}</button>`;
   return h;
 }
 function twosSummaryBtn(c){
   if (!twosOn() || !S.isAdmin) return '';
   const n = currentRound(c); const x = twosItem(c.id, n); if (!x) return '';
   const all = compRounds(c).flatMap(r => twosFor(c.id, r.n)); const chk = all.filter(t => twosPayState(t) === 'claimed').length, un = all.filter(t => twosPayState(t) === 'unpaid').length;  // un: joined, can still pay
-  return `<button class="btn block paysum ${chk ? 'alert' : ''}" data-act="twosOpen" data-cid="${esc(c.id)}" data-round="${n}">2's club · R${n} pot ${euro(x.pot)}${chk ? ` · ${chk} to confirm` : ''}${un ? ` · ${un} paying` : ''}</button>`;
+  return `<button class="btn block paysum ${chk || twosCloseDue(x) ? 'alert' : ''}" data-act="twosOpen" data-cid="${esc(c.id)}" data-round="${n}">2's club · R${n} pot ${euro(x.pot)}${x.closed ? ' · closed' : twosCloseDue(x) ? ' · ready to close' : ''}${chk ? ` · ${chk} to confirm` : ''}${un ? ` · ${un} paying` : ''}</button>`;
 }
 function twosDoc(cid, round, gid){ return {compId:cid, golferId:gid, round, paid:false, method:null, paidAt:null, createdAt:Date.now(), claimed:false, claimMethod:null, claimedAt:null}; }
 async function joinTwos(cid, round, quiet){

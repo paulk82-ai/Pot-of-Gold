@@ -151,6 +151,7 @@ Off until you switch it on in **Admin → 2's club**.
 - Shares are rounded down to whole euros. What's left over stays in the pot for the next weekend.
 - No 2s: the whole pot rolls over to the next weekend, including from the last weekend of a month into the next month. Test months are left out.
 - The **Table → 2's club** tab shows this weekend's pot, the rules and every result. From the month's 2's club button you can confirm payments, add or take out golfers, and share the result to WhatsApp. You pay the winners yourself on Revolut.
+- **Close the 2's** when a round is over: open the month's **2's club** button and tap **Close the 2's for round N** (it shows from the round's first day; Home's To do reminds you from Sunday 6pm). It shows the result first, and warns about payments still to confirm and cards not finished. Once closed, the result is fixed, nobody can join or pay for that round, and golfers' Home moves on to the next round, showing the last result. If cards or payments change afterwards, the sheet says so; tap **Reopen round N**, then close it again to update. Rounds you don't close are still settled automatically when the weekend ends.
 
 ## Prepaid credit
 
