@@ -254,7 +254,7 @@ function cardStatus(sc){ const c = sc.card; const late = cardLocked(c);
   if (!sc.filled) return late ? 'Missed: nothing entered by midnight' : `Started ${whenText(c.startedAt)}`;
   if (!sc.complete) return (late ? 'Missed: ' : '') + 'Thru ' + sc.filled; if (sc.nr) return 'NR';
   if (!sc.marked) return late ? 'Missed: not signed by midnight' : 'Not signed';
-  if (!sc.photoOk) return late ? 'Missed: no photo of the card by midnight' : 'No photo of the card yet'; return ''; }
+  if (!sc.photoOk) return late ? 'Missed: not sent to the organiser by midnight' : 'Not sent to the organiser yet'; return ''; }
 function cardValueText(sc){
   const c = sc.rc;
   if (c.format === 'medal') return String(sc.runNett);
@@ -781,14 +781,14 @@ function myRoundHtml(c, open, only){
     h += only ? `<p class="hint">Tap this before you tee off. This card is just for the 2's, not the monthly competition. ${signRule('Enter it')} by midnight that day.</p>`
       : `<p class="hint">Tap this before you tee off. You get one round this weekend. ${signRule('Enter it')} by midnight that day, or it doesn't count.${twosOn() ? (twosIn(twosOf(c.id, open.n, me)) ? " You're in the 2's this round." : " It'll ask about the 2's club.") : ''}</p>`;
   } else if (cardStarted(card) || (card && card.scores && Object.keys(card.scores).length)) {
-    const status = done ? `${val} · signed by ${markerName(card)}` : late ? "Not finished by midnight, so it doesn't count" : !sc.filled ? 'No scores yet' : !sc.complete ? `Thru ${sc.filled} of ${sc.rows.length} holes` : sc.nr ? 'No return (picked up)' : needPhoto ? `${val} · add a photo of your signed card` : `${val} · not ticked as signed yet`;
+    const status = done ? `${val} · signed by ${markerName(card)}` : late ? "Not finished by midnight, so it doesn't count" : !sc.filled ? 'No scores yet' : !sc.complete ? `Thru ${sc.filled} of ${sc.rows.length} holes` : sc.nr ? 'No return (picked up)' : needPhoto ? `${val} · send your card to the organiser` : `${val} · not ticked as signed yet`;
     const timing = cardStarted(card) ? (late ? `Started ${whenText(card.startedAt)} · locked at midnight` : `Started ${whenText(card.startedAt)} · enter by ${deadlineText(card)}`) : '';
     h += `<div class="mycard ${done ? 'ok' : late || sc.complete ? 'warn' : ''}"><span class="label">${label}</span><b>${esc(status)}</b>${timing ? `<small>${esc(timing)}</small>` : ''}${done ? `<span class="okmark">${only ? 'In' : 'Counts'}</span>` : ''}</div>`;
     if (late) h += `<button class="btn block" data-act="openCard" data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}">View my card</button>`;
     else {
-      if (needPhoto) h += `<button class="btn primary block big" data-act="photoCard" data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}">${ICONS.camera}Add a photo of my signed card</button>`;
-      h += `<div class="hero-actions"><button class="btn ${needPhoto ? '' : 'primary'} big" data-act="openCard" data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}">${sc.filled ? 'Open my card' : 'Enter my card'}</button><button class="btn big" data-act="scan" data-cid="${cid}" data-round="${open.n}">${ICONS.camera}Scan my card</button></div>`;
-      if (!done) h += `<p class="hint">Get your card signed by your marker, then enter or scan it by ${esc(deadlineText(card) || 'midnight')}. Add the marker's name, tick that it's signed${photoRequired(card) ? ', and add a photo of the signed card (scanning adds it for you)' : ''}.</p>`;
+      if (needPhoto) h += `<button class="btn primary block big" data-act="sendCard" data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}">${ICONS.share}Send my card to the organiser</button>`;
+      h += `<button class="btn ${needPhoto ? '' : 'primary'} block big" style="margin-top:8px" data-act="openCard" data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}">${sc.filled ? 'Open my card' : 'Enter my scores'}</button>`;
+      if (!done) h += `<p class="hint">Get your card signed by your marker, then enter your scores by ${esc(deadlineText(card) || 'midnight')}. Add the marker's name, tick that it's signed${photoRequired(card) ? ', and send a photo of the card to the organiser on WhatsApp' : ''}.</p>`;
     }
   } else if (!only) {
     h += `<div class="mycard warn"><span class="label">${label}</span><b>Not started</b></div>`;
@@ -851,6 +851,8 @@ function todoHtml(open){
   if (reqs) items.push(`<li><span class="grp-main"><b>${reqs} ${reqs === 1 ? 'person is' : 'people are'} asking to join</b><small>Add them to the golfer list so they can sign in</small></span><button class="btn small primary" data-act="joinList">Review</button></li>`);
   open.forEach(c => { const chk = entriesFor(c.id).filter(e => payState(e) === 'claimed').length;
     if (chk) items.push(`<li><span class="grp-main"><b>${chk} payment${chk === 1 ? '' : 's'} to check</b><small>${esc(c.name)} · check your Revolut, then confirm</small></span><button class="btn small primary" data-act="payments" data-id="${esc(c.id)}">Check</button></li>`); });
+  const tc = cardsToCheck().filter(x => x.sent).length;
+  if (tc) items.push(`<li><span class="grp-main"><b>${tc} card${tc === 1 ? '' : 's'} to check</b><small>Sent on WhatsApp · upload ${tc === 1 ? 'it' : 'them'} to check against what was entered</small></span><button class="btn small primary" data-act="tab" data-v="admin">Check</button></li>`);
   const cur = currentComp();
   if (cur) { const L = chaseLists(cur); const a = L.notEntered.length, b = L.unpaid.length;
     if (a || b) items.push(`<li><span class="grp-main"><b>${[a ? `${a} not entered` : '', b ? `${b} not paid` : ''].filter(Boolean).join(' · ')}</b><small>${esc(cur.name)} · send the group a reminder</small></span><button class="btn small primary" data-act="remindAll" data-id="${esc(cur.id)}">${ICONS.share}Remind</button></li>`); }
@@ -904,9 +906,9 @@ function entriesHtml(c, lb){
   const A = S.isAdmin; const fin = c.status === 'final'; const cur = currentRound(c);
   const all = lb.all.slice().sort((a,b) => byName(a.golfer, b.golfer));
   let h = '';
-  if (A && !fin) h += `<div class="entry-tools"><button class="btn primary" data-act="scan" data-round="${cur}">${ICONS.camera}Scan a card</button><button class="btn" data-act="addEntry">+ Add entries</button></div>`;
+  if (A && !fin) h += `<div class="entry-tools"><button class="btn primary" data-act="tab" data-v="admin">${ICONS.camera}Check cards</button><button class="btn" data-act="addEntry">+ Add entries</button></div>`;
   if (!all.length) return h + `<div class="empty" style="margin-top:12px"><p class="hint">No entries yet.</p></div>`;
-  h += `<p class="hint entry-hint">Tap a golfer to see their cards. A * means the card isn't ticked as signed by a marker yet${photoRule() ? ' or has no photo of the card' : ''}, so it doesn't count. Brackets show a dropped round.</p>`;
+  h += `<p class="hint entry-hint">Tap a golfer to see their cards. A * means the card isn't ticked as signed by a marker yet${photoRule() ? " or hasn't been sent to the organiser" : ''}, so it doesn't count. Brackets show a dropped round.</p>`;
   h += '<ul class="list">' + all.map(r => {
     const e = r.entry; const ps = payState(e); const own = r.gid === S.myGid;
     const label = ps === 'paid' ? (A ? METHODS[e.method] || 'Paid' : 'Paid') : ps === 'claimed' ? (A ? 'Check' : 'Checking') : 'Unpaid';
@@ -953,7 +955,7 @@ function viewCard(){
   const sc = scoreCard(c, round, gid); const fin = c.status === 'final';
   const mine = gid === S.myGid && !S.isAdmin;
   const W = !fin && canEnter(cid, round, gid);
-  // A golfer's own card opens simple: the holes, plus Enter my scores / Scan my card. The keypad shows once they choose
+  // A golfer's own card opens simple: the holes, plus Enter my scores. The keypad shows once they choose
   // to enter scores (or tap a hole). Organisers always get the full card.
   const golferMode = mine && W; const editing = !golferMode || !!S.cardEdit; const simple = golferMode && !S.cardEdit && !sc.filled;
   const KP = W && editing;
@@ -974,14 +976,14 @@ function viewCard(){
   if (cardStarted(sc.card)) mk += `<small class="timing">Started ${esc(whenText(sc.card.startedAt))} · ${cardLocked(sc.card) ? 'locked at midnight' : 'enter by ' + esc(deadlineText(sc.card))}</small>`;
   h += mk + '</div>';
   if (mine && !fin && canStart(cid, round)) h += `<div class="startbox"><p><b>Start your round before you tee off.</b> You get one round this weekend. ${signRule('Enter it')} by midnight that day, or it doesn't count.</p><button class="btn primary block big" data-act="startRound" data-cid="${esc(cid)}" data-round="${round}">Start my round</button></div>`;
-  else if (mine && W && !sc.valid) h += `<p class="hint" style="margin:-4px 0 12px">Your card counts once all ${rc.holes.length} holes are in, it's ticked as signed${photoRequired(sc.card) ? ' and it has a photo of the signed card' : ''}, by ${esc(deadlineText(sc.card))}.</p>`;
+  else if (mine && W && !sc.valid) h += `<p class="hint" style="margin:-4px 0 12px">Your card counts once all ${rc.holes.length} holes are in, it's ticked as signed${photoRequired(sc.card) ? " and you've sent it to the organiser" : ''}, by ${esc(deadlineText(sc.card))}.</p>`;
   else if (!W && !fin && !S.isAdmin && mine) h += `<p class="hint" style="margin:-4px 0 12px">${cardLocked(sc.card) ? (sc.valid ? 'Locked at midnight. This card counts.' : "Locked at midnight. It wasn't entered and signed in time, so it doesn't count.") : !entryOf(cid, S.myGid) ? 'Enter this month to add your card.' : 'This round is closed. Cards can be entered Friday to Sunday.'}</p>`;
   if ((S.isAdmin || gid === S.myGid) && sc.card) { watchPhoto(cid, round, gid); h += photoBlockHtml(sc, cid, round, gid, W); }
   const chk = (S.isAdmin || gid === S.myGid) ? cardCheck(sc) : null;
   if (chk) h += checkBoxHtml(chk, sc, S.isAdmin ? 'admin' : 'card');
   const wpts = chk ? chk.w.holes || {} : {};
   if (S.isAdmin && !fin && sc.card) h += `<button class="textbtn" style="margin:-6px 0 10px" data-act="delCard">Delete this card (lets ${esc(firstName(g.name))} start the round again)</button>`;
-  if (golferMode && !S.cardEdit) h += `<div class="card-actions"><button class="btn primary big" data-act="cardEdit">${sc.filled ? 'Edit my scores' : 'Enter my scores'}</button><button class="btn big" data-act="scan" data-cid="${esc(cid)}" data-round="${round}">${ICONS.camera}Scan my card</button></div>`;
+  if (golferMode && !S.cardEdit) h += `<div class="card-actions"><button class="btn ${sc.filled ? '' : 'primary'} block big" data-act="cardEdit">${sc.filled ? 'Edit my scores' : 'Enter my scores'}</button></div>`;
   if (simple) {
     const plainRow = r => `<button class="hole plain" data-act="hole" data-h="${r.h}" aria-label="Hole ${r.h}, par ${r.par}, stroke index ${r.si}: enter score"><span class="h-num">${r.h}</span><span class="h-info"><span><b>Par ${r.par}</b> · SI ${r.si}${yds ? ` · ${yds[r.h-1]} yds` : ''}</span></span><span class="h-shots">${r.shots > 0 ? `${r.shots} shot${r.shots === 1 ? '' : 's'}` : r.shots < 0 ? `gives ${-r.shots}` : ''}</span></button>`;
     const plainSub = (label, rows) => { const y = yds ? rows.reduce((a, r) => a + (yds[r.h-1] || 0), 0) : 0; const sh = rows.reduce((a, r) => a + r.shots, 0);
@@ -1231,7 +1233,8 @@ function viewAdmin(){
   const kittyPct = 100 - k.prize.reduce((a,b)=>a+b,0);
   const admins = (D.admins && D.admins.emails) || [];
   return `<div class="pagehead"><div><span class="eyebrow">Admin</span><h1>Settings</h1></div><button class="btn small" data-act="lockAdmin">Lock</button></div>
-  <p class="hint" style="margin:-4px 0 14px">Changes save as you go, and you'll see "Settings saved" each time. The button at the bottom saves everything again if you want to be sure.</p>
+  ${checkCardsHtml()}
+  <p class="hint" style="margin:14px 0 14px">Settings: changes save as you go, and you'll see "Settings saved" each time. The button at the bottom saves everything again if you want to be sure.</p>
   <form id="setupForm" class="setup" onsubmit="return false">
     <section><div class="sec-head" style="margin-top:0"><h2>Entry & payments</h2></div><div class="panel">
       <div class="grid2"><label class="field"><span>Entry fee (€)</span>${n('s-fee', k.fee, 'min="0" step="1"')}</label><label class="field"><span>Revolut username</span><input type="text" id="s-rev" value="${esc(k.revtag)}" placeholder="e.g. johnsmith" autocapitalize="off" autocorrect="off"></label></div>
@@ -1239,7 +1242,7 @@ function viewAdmin(){
       <p class="hint">For card payments from people without Revolut, turn on Revtag discoverability in your Revolut app's privacy settings. Revolut also limits how much you can receive by card through your link each week (the limit is shown in your Revolut app). Payments from other Revolut users have no limit.</p></div></section>
     <section><div class="sec-head"><h2>Prize money</h2></div><div class="panel"><div class="grid2"><label class="field"><span>Winner %</span>${n('s-p1', k.prize[0] != null ? k.prize[0] : 60)}</label><label class="field"><span>Runner-up %</span>${n('s-p2', k.prize[1] != null ? k.prize[1] : 40)}</label></div>
       <p class="hint">${kittyPct > 0 ? `The other ${kittyPct}% of each pot stays in the kitty.` : kittyPct < 0 ? 'These add up to more than 100%.' : 'The whole pot goes to the top two.'}</p></div></section>
-    <section><div class="sec-head"><h2>Cards</h2></div><div class="panel"><label class="check" style="margin:0"><input type="checkbox" id="s-photoReq" ${k.photoRequired !== false ? 'checked' : ''}><span><b>A photo of the signed card is needed</b><small>A golfer's card only counts once they've added a photo of it in the app, by midnight. Scanning the card adds it automatically. Cards you enter yourself don't need one.</small></span></label></div></section>
+    <section><div class="sec-head"><h2>Cards</h2></div><div class="panel"><label class="check" style="margin:0"><input type="checkbox" id="s-photoReq" ${k.photoRequired !== false ? 'checked' : ''}><span><b>Golfers must send you their card</b><small>A golfer's card only counts once they've tapped Send my card to the organiser (a photo of the signed card on WhatsApp), by midnight. Cards you enter or upload yourself don't need it.</small></span></label></div></section>
     <section><div class="sec-head"><h2>2's club</h2></div><div class="panel"><label class="check" style="margin-bottom:10px"><input type="checkbox" id="s-twosOn" ${k.twosOn ? 'checked' : ''}><span><b>Run the 2's club</b><small>Golfers join and pay each round before they tee off, from Home or when they tap Start my round.</small></span></label>
       <div class="grid2"><label class="field"><span>Cost a round (€)</span>${n('s-twosFee', k.twosFee, 'min="1" step="1"')}</label></div>
       <p class="hint">Paid on Revolut before teeing off, and only paid golfers are in. A gross 2 on any hole wins, each 2 is a share of the pot, and a hole-in-one takes the whole pot. Shares are rounded down to the euro, with the leftover kept in the pot. With no 2s the pot rolls over to the next weekend.</p></div></section>
@@ -1270,7 +1273,7 @@ function viewAdmin(){
 /* ---------- Sheets ---------- */
 function openSheet(s){ S.sheet = s; renderSheet(); document.body.classList.add('locked'); }
 function closeSheetQuiet(){
-  if (S.sheet && S.sheet.type === 'scan') { if (SCAN_CTL) { SCAN_CTL.aborted = true; SCAN_CTL = null; } (S.sheet.thumbs || []).forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} }); }
+  if (S.sheet && ['scan', 'send', 'upload'].includes(S.sheet.type)) { if (SCAN_CTL) { SCAN_CTL.aborted = true; SCAN_CTL = null; } (S.sheet.thumbs || []).forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} }); }
   S.sheet = null; CONFIRM_FN = null; $('#sheet').hidden = true; document.body.classList.remove('locked');
 }
 function closeSheet(){ closeSheetQuiet(); render(); }
@@ -1292,6 +1295,8 @@ function renderSheet(){
     case 'golfer': h = sheetGolfer(); break;
     case 'shots': h = sheetShots(); break;
     case 'scan': h = sheetScan(); break;
+    case 'send': h = sheetSend(); break;
+    case 'upload': h = sheetUpload(); break;
     case 'photoView': { const ph = D.photos[photoPath(S.sheet.cid, S.sheet.round, S.sheet.gid)]; h = ph && ph.img ? `<h3>${esc(gName(S.sheet.gid))} · round ${S.sheet.round}</h3><p class="sub">Photo added ${esc(whenText(ph.at))}</p><img class="photo-full" src="${esc(ph.img)}" alt="Photo of the signed card">` : null; break; }
     case 'account': h = sheetAccount(); break;
     case 'confirm': h = `<h3>${esc(S.sheet.title)}</h3><p class="sub">${esc(S.sheet.text)}</p><div class="confirm-actions"><button class="btn" data-act="closeSheet">Cancel</button><button class="btn ${S.sheet.danger ? 'danger-fill' : 'primary'}" data-act="confirmOk">${esc(S.sheet.ok)}</button></div>`; break;
@@ -1433,7 +1438,7 @@ function sheetGolfer(){
     <label class="field"><span>Starting handicap</span><input type="text" id="gl-hi" name="hi" inputmode="decimal" value="${p && p.hi != null ? esc(fmtHi(p.hi)) : ''}" placeholder="e.g. 14.2"></label>
     ${p ? `<p class="hint" style="margin:-6px 0 12px">Current handicap ${fmtHi(curHcp(p.id))}. Cuts and rises from finalised months are added to the starting handicap automatically.</p>` : ''}
     <div class="field"><span>Card</span><div class="radios">${radio('gender','M',"Men's", !p || p.gender !== 'L')}${radio('gender','L',"Ladies' (red)", p && p.gender === 'L')}</div></div>
-    <p class="hint" style="margin-bottom:16px">Use + for a plus handicap, e.g. +1.2. Only golfers on this list can sign in, enter or be read from a scanned card.</p>
+    <p class="hint" style="margin-bottom:16px">Use + for a plus handicap, e.g. +1.2. Only golfers on this list can sign in, enter, or be read from an uploaded card.</p>
     <button class="btn primary block" type="submit">${p ? 'Save' : 'Add golfer'}</button>
     ${p ? `<button type="button" class="btn danger block" style="margin-top:8px" data-act="delGolfer" data-id="${esc(p.id)}">Delete golfer</button>` : ''}</form>`;
 }
@@ -1513,8 +1518,8 @@ function parseJSON(text){ try { return JSON.parse(text); } catch (_) {} const m 
 // Card photos: ask whether to take a photo now or choose one from the gallery.
 function pickScanPhoto(ctx){ SCAN_PENDING = ctx; openSheet({type:'pickSrc', kind:'scan'}); }
 function sheetPickSrc(){
-  const scan = S.sheet.kind === 'scan';
-  return `<h3>${scan ? 'Scan a card' : 'Photo of your card'}</h3><p class="sub">${scan ? 'Lay the card flat in good light, with every score in the picture.' : 'A clear photo of the signed card, flat and in good light.'}</p>
+  const k = S.sheet.kind; const scan = k === 'scan'; const up = k === 'upload';
+  return `<h3>${scan ? 'Scan a card' : up ? 'Upload card' : 'Send your card'}</h3><p class="sub">${scan ? 'Lay the card flat in good light, with every score in the picture.' : up ? `${esc(gName(S.sheet.gid))}'s card. Choose the photo they sent you (save it from WhatsApp first), or take one.` : 'Take a photo of your signed card, flat and in good light, with every score in the picture.'}</p>
     <div class="srcpick"><button class="btn primary" data-act="pickSrc" data-src="cam">${ICONS.camera || ''}Take a photo</button><button class="btn" data-act="pickSrc" data-src="lib">${ICONS.image || ''}Choose from gallery</button></div>`;
 }
 function startScan(files){
@@ -1529,7 +1534,7 @@ async function runScan(){
   try {
     const img = await imageToBase64(sh.file); if (ctl.aborted) return;
     const okReply = t => { const r = parseJSON(String(t || '')); return !!(r && Array.isArray(r.golfers)); };
-    sh.t0 = Date.now(); clearInterval(SCAN_TICK); SCAN_TICK = setInterval(() => { const el = $('#scanSecs'); if (!el || S.sheet !== sh || sh.phase !== 'reading') { clearInterval(SCAN_TICK); return; } el.textContent = Math.round((Date.now() - sh.t0) / 1000) + 's'; }, 1000);
+    startScanTick(sh);
     const onTry = (i, n) => { sh.attempt = i; sh.attempts = n; if (S.sheet === sh && i > 0) renderSheet(); };
     const text = await be.scan(scanPrompt(c, sh.ctx.round), img.data, img.mime, okReply, onTry); if (ctl.aborted || S.sheet !== sh) return;
     const res = parseJSON(text); if (!res || !Array.isArray(res.golfers)) { const er = new Error('unreadable reply ' + JSON.stringify(String(text || '').slice(0, 80))); er.unreadable = true; throw er; }
@@ -1598,7 +1603,7 @@ function sheetScan(){
   let h = `<h3>Scan scorecard</h3><p class="sub">${esc(c.name)} · Round ${round}</p>`;
   if (sh.thumbs && sh.thumbs.length) h += `<div class="thumbs">${sh.thumbs.map(u => `<img src="${esc(u)}" alt="Scorecard photo">`).join('')}</div>`;
   if (sh.phase === 'saved') return h + `<p class="notebox"><b>${esc(sh.msg)}</b></p><p class="hint" style="margin:10px 0">${sh.photoSaved ? 'The photo of the card is saved with ' + (S.isAdmin ? 'the cards' : 'your card') + '.' : sh.photoSaving ? 'Saving the photo of the card…' : (photoRule() ? "<b>The photo didn't save.</b> Open your card and tap Add a photo of my card." : '')}</p><button class="btn block" data-act="closeSheet">Done</button>`;
-  if (sh.phase === 'reading') return h + `<div class="reading"><span class="pulse"></span><p><b>Reading the card…</b> ${sh.attempt ? `Trying the backup scanner (${sh.attempt + 1} of ${sh.attempts}).` : 'This usually takes 10 to 30 seconds.'} <span id="scanSecs" style="opacity:.6">${sh.t0 ? Math.round((Date.now() - sh.t0) / 1000) + 's' : ''}</span></p></div><button class="btn block" data-act="stopScan">Stop</button>`;
+  if (sh.phase === 'reading') return h + readingHtml(sh);
   if (sh.phase === 'error') return h + `<p class="errbox">${esc(sh.err)}</p>${sh.errDetail ? `<p class="hint" style="margin:-4px 0 12px;word-break:break-word">Details for the organiser: ${esc(sh.errDetail)}</p>` : ''}<div class="confirm-actions"><button class="btn" data-act="closeSheet">Close</button><button class="btn primary" data-act="newScan">New photo</button></div>`;
   if (!sh.rows.length) return h + `<p class="errbox">No scores found on this photo.${sh.notes ? ' ' + esc(sh.notes) : ''}</p><div class="confirm-actions"><button class="btn" data-act="closeSheet">Close</button><button class="btn primary" data-act="newScan">New photo</button></div>`;
   h += `<p class="hint" style="margin-bottom:12px">Check each number against the card. Highlighted holes were hard to read. Type P for a pick-up.</p>`;
@@ -1670,7 +1675,7 @@ function authErr(e){
 const PHOTO_FROM = Date.parse('2026-11-08T09:00:00Z');
 function photoRequired(card){ const k = cfg(); if (k.photoRequired === false || !card || !cardStarted(card)) return false; return msOf(card.startedAt) >= (Number(k.photoFrom) || PHOTO_FROM); }
 function photoRule(){ return cfg().photoRequired !== false; }
-function signRule(first){ return photoRule() ? `${first}, tick it as signed and add a photo of the signed card (scanning adds it)` : `${first} and tick it as signed`; }
+function signRule(first){ return photoRule() ? `${first}, tick it as signed and send a photo of the card to the organiser` : `${first} and tick it as signed`; }
 function photoOk(card){ return !photoRequired(card) || !!(card && (card.photoAt || card.photoOk)); }
 function photoPath(cid, round, gid){ return `comps/${cid}/photos/${round}_${gid}`; }
 const PHOTO_W = {};
@@ -1706,15 +1711,171 @@ async function saveCardPhoto(cid, round, gid, file, quiet){
 }
 function photoBlockHtml(sc, cid, round, gid, W){
   const card = sc.card; if (!card) return ''; const fin = D.comps[cid] && D.comps[cid].status === 'final';
-  const photo = D.photos[photoPath(cid, round, gid)]; const need = photoRequired(card); const mineW = W && gid === S.myGid && !S.isAdmin; const canAdd = mineW || (S.isAdmin && !fin);
-  const add = label => `<button class="btn ${need && !card.photoAt ? 'primary' : ''} small" data-act="photoCard" data-cid="${esc(cid)}" data-round="${round}" data-gid="${esc(gid)}">${ICONS.camera}${label}</button>`;
-  if (photo && photo.img) return `<div class="cardphoto ok"><button class="cp-thumb" data-act="photoView" aria-label="View the photo of the card"><img src="${esc(photo.img)}" alt="Photo of the signed card"></button><div class="cp-text"><b>Photo of the card added</b><small>${esc(whenText(photo.at))}</small>${canAdd ? add('Change photo') : ''}</div></div>`;
-  if (card.photoAt) return `<div class="cardphoto ok"><div class="cp-text"><b>Photo of the card added</b><small>Loading the photo…</small></div></div>`;
-  if (card.photoOk) return `<div class="cardphoto ok"><div class="cp-text"><b>No photo needed</b><small>The organiser has okayed this card without one.</small></div></div>`;
-  if (!need) return mineW ? `<div class="cardphoto"><div class="cp-text"><b>Photo of the card</b><small>Not needed for this card, but you can add one.</small>${add('Add photo')}</div></div>` : '';
-  if (mineW) return `<div class="cardphoto need"><div class="cp-text"><b>Add a photo of your signed card</b><small>Your card doesn't count without it. Scanning your card adds it for you.</small></div><button class="btn primary block" data-act="photoCard" data-cid="${esc(cid)}" data-round="${round}" data-gid="${esc(gid)}">${ICONS.camera}Add a photo of my card</button></div>`;
-  return `<div class="cardphoto need"><div class="cp-text"><b>No photo of the card yet</b><small>${cardLocked(card) ? "It wasn't added by midnight, so this card doesn't count." : "The card won't count until there's one."}</small>${S.isAdmin && !fin ? `<div class="cp-btns">${add('Add photo')}<button class="btn small" data-act="photoWaive">Photo not needed</button></div>` : ''}</div></div>`;
+  const photo = D.photos[photoPath(cid, round, gid)]; const need = photoRequired(card); const mineW = W && gid === S.myGid && !S.isAdmin; const admin = S.isAdmin && !fin;
+  const at = `data-cid="${esc(cid)}" data-round="${round}" data-gid="${esc(gid)}"`;
+  const sendBtn = (label, cls) => `<button class="btn ${cls}" data-act="sendCard" ${at}>${ICONS.share}${label}</button>`;
+  const upBtn = (label, cls) => `<button class="btn ${cls || 'small'}" data-act="uploadCard" ${at}>${ICONS.camera}${label}</button>`;
+  const chk = checkedBy(card);
+  if (photo && photo.img) return `<div class="cardphoto ok"><button class="cp-thumb" data-act="photoView" aria-label="View the photo of the card"><img src="${esc(photo.img)}" alt="Photo of the signed card"></button><div class="cp-text"><b>${chk ? 'Checked against the card' : 'Photo of the card'}</b><small>${esc(chk ? 'By the organiser · ' + whenText(card.scanned.at) : whenText(photo.at))}</small>${admin ? upBtn(chk ? 'Upload again' : 'Upload and check') : ''}</div></div>`;
+  if (card.photoAt) return `<div class="cardphoto ok"><div class="cp-text"><b>Sent to the organiser</b><small>${esc(whenText(card.photoAt))}${S.isAdmin ? ' · not checked yet' : ''}</small>${mineW ? sendBtn('Send again', 'small') : admin ? upBtn('Upload card', 'small primary') : ''}</div></div>`;
+  if (card.photoOk) return `<div class="cardphoto ok"><div class="cp-text"><b>Counts without being sent</b><small>The organiser okayed this card.</small>${admin ? upBtn('Upload card') : ''}</div></div>`;
+  if (!need) return mineW ? `<div class="cardphoto"><div class="cp-text"><b>Send your card to the organiser</b><small>A photo of the signed card, on WhatsApp.</small>${sendBtn('Send my card', 'small')}</div></div>` : admin ? `<div class="cardphoto"><div class="cp-text"><b>Photo of the card</b><small>None yet.</small>${upBtn('Upload card')}</div></div>` : '';
+  if (mineW) return `<div class="cardphoto need"><div class="cp-text"><b>Send your card to the organiser</b><small>Take a photo of your signed card and send it on WhatsApp. Your card counts once it's sent.</small></div>${sendBtn('Send my card to the organiser', 'primary block')}</div>`;
+  return `<div class="cardphoto need"><div class="cp-text"><b>Not sent to the organiser yet</b><small>${cardLocked(card) ? "It wasn't sent by midnight, so this card doesn't count." : "The card won't count until it's sent."}</small>${admin ? `<div class="cp-btns">${upBtn('Upload card')}<button class="btn small" data-act="photoWaive">Count it anyway</button></div>` : ''}</div></div>`;
 }
+
+/* ---------- Sending the card, and the organiser's Upload card ----------
+   Golfers type their scores in, tick signed, then send a photo of the card to the organiser on WhatsApp (the phone's
+   share menu). Sending is recorded on the card (photoAt, with an empty photo record), and the card counts from then.
+   The organiser saves the photo from WhatsApp and uploads it: the scanner reads the strokes, the app works out the
+   points with the app's handicap (any handicap or points written on the card are ignored), and flags each hole that
+   differs from what the golfer entered. Checking saves the photo with the card and notes it as checked. */
+function checkedBy(card){ const s = card && card.scanned; return !!(s && typeof s === 'object' && s.by === 'organiser' && JSON.stringify(s.scores || {}) === JSON.stringify(card.scores || {})); }
+function sendText(ctx){ const c = D.comps[ctx.cid]; const sc = c ? scoreCard(c, ctx.round, ctx.gid) : null; const u = sc ? unitFor(sc.rc.format) : '';
+  return `Pot of Gold · ${gName(ctx.gid)} · ${c ? c.name : ''} round ${ctx.round}${sc && sc.filled ? ` · ${cardValueText(sc)}${u ? ' ' + u : ''}` : ''}${sc && sc.card && markerName(sc.card) ? ` · marker ${markerName(sc.card)}` : ''}`; }
+async function markSent(ctx){
+  const {cid, round, gid} = ctx; const card = cardOf(cid, round, gid); if (!card) { toast('Tap Start my round first.'); return false; } if (card.photoAt) return true;
+  const p = photoPath(cid, round, gid); const before = cardCounts(cid, round, gid);
+  if (!(D.photos[p] && D.photos[p].img)) {
+    try { await be.set(p, {compId:cid, golferId:gid, round:Number(round), img:'', w:0, h:0, at:Date.now(), by:S.user.uid}); }
+    catch (e) { console.warn(e); toast(cardLocked(card) ? "This card locked at midnight, so it can't be sent now." : errText(e)); return false; }
+  }
+  const cp = `comps/${cid}/cards/${round}_${gid}`; const data = Object.assign(cardBase(cid, round, gid), {photoAt: Date.now(), updatedAt: Date.now(), updatedBy: S.user.uid});
+  if (!(await put(cp, data))) return false; localSet(cp, data); notifyIfDone(cid, round, gid, before); render(); return true;
+}
+function sheetSend(){
+  const sh = S.sheet; const c = D.comps[sh.ctx.cid]; if (!c) return null; const {round, gid} = sh.ctx;
+  let h = `<h3>Send your card</h3><p class="sub">${esc(c.name)} · Round ${round}</p>`;
+  if (sh.thumbs && sh.thumbs.length) h += `<div class="thumbs">${sh.thumbs.map(u => `<img src="${esc(u)}" alt="Photo of your card">`).join('')}</div>`;
+  if (sh.phase === 'sent') { const sc = scoreCard(c, round, gid); const ok = cardCounts(c.id, round, gid);
+    return h + `<p class="notebox"><b>Sent to the organiser.</b> ${ok ? 'Your card counts now.' : !sc.complete ? 'Finish entering your scores so it counts.' : !sc.marked ? "Add your marker's name and tick that it's signed so it counts." : ''}</p><button class="btn block" data-act="closeSheet">Done</button>`; }
+  if (sh.phase === 'manual') return h + `<p class="errbox">This phone can't send the photo from here.</p><p class="hint" style="margin:-4px 0 12px">Open WhatsApp and send the organiser the photo of your signed card. Then come back and tap I've sent it.</p><a class="btn block" href="https://wa.me/?text=${encodeURIComponent(sendText(sh.ctx))}" target="_blank" rel="noopener">${ICONS.share}Open WhatsApp</a><button class="btn primary block" style="margin-top:8px" data-act="sentManual">I've sent it</button>`;
+  return h + `<p style="margin:12px 0 10px">Now send it to the organiser on WhatsApp.</p><button class="btn primary block big" data-act="shareCard">${ICONS.share}Send on WhatsApp</button><p class="hint" style="margin-top:10px">Opens your phone's share menu. Pick WhatsApp, then the organiser (not the group).</p>`;
+}
+function uploadPrompt(c, round, gid){
+  const holes = rcfg(c, round).holes; const k = cfg().course;
+  const pars = range(1,18).map(h => `${h}: par ${k.parM[h-1]}${k.parL[h-1] !== k.parM[h-1] ? ` (ladies ${k.parL[h-1]})` : ''}`).join('; ');
+  return ['Read this photo of a golf scorecard from Rathsallagh Golf Club, Co. Wicklow, and turn the handwritten gross scores into data.',
+    `We are checking the card of ${gName(gid)}. Holes played: ${holes.join(', ')}. Ignore other holes.`, `Pars: ${pars}.`, `Golfers on the club list: ${sortedGolfers().map(g => g.name).join(', ')}.`, '',
+    'Rules:',
+    '- Read the gross strokes written for each golfer on each hole. A card holds up to four golfers.',
+    '- Only read strokes. Ignore any handicap, shots received, nett scores, points and totals written on the card, and the printed yardages, par and stroke index.',
+    '- Use "P" for a pick-up (struck through, dash, line, X, P or NR). Leave out blank holes.',
+    '- If a figure is hard to read, give your best reading and list the hole in "unclear".',
+    '- "match" is the exact name from the club list when the name on the card clearly refers to that golfer, otherwise null. Never guess a match for an unclear name.',
+    '- "marker" is the name in the marker or attesting signature box for that golfer, if one is written, otherwise null.',
+    '- "marker_signed" is true if there is a signature or initials in the marker or attesting box for that golfer, otherwise false.', '',
+    'Reply with only JSON:',
+    '{"golfers":[{"name_on_card":"as written","match":"name from list or null","marker":"name or null","marker_signed":true,"scores":{"1":5,"2":4,"3":"P"},"unclear":[7]}],"notes":""}',
+    'If it is not a scorecard, reply {"golfers":[],"notes":"the reason"}.'].join('\n');
+}
+function cleanScores(raw, holes){ raw = (raw && typeof raw === 'object') ? raw : {}; const out = {};
+  holes.forEach(h => { const v = raw[h] !== undefined ? raw[h] : raw[String(h)]; if (v === undefined || v === null || v === '') return; if (/^\s*p\s*$/i.test(String(v))) { out[h] = 'P'; return; } const n = Number(v); if (Number.isInteger(n) && n >= 1 && n <= 20) out[h] = n; });
+  return out; }
+function scanErrText(e){
+  const em = String((e && (e.message || e.code)) || e || '');
+  return /quota|429|exhaust|rate.?limit|too many/i.test(em) ? 'The scanner has hit its free limit for today.' : /app.?check|recaptcha|attestation|401|403|permission|api.?key|billing|not.?enabled|disabled/i.test(em) ? "The scanner couldn't be reached." : /offline|network|failed to fetch|load failed/i.test(em) && !/unreadable/.test(em) ? "You're offline." : /^photo:/.test(em) ? "This phone couldn't open that photo." : /timed out|timeout/i.test(em) && !/unreadable reply/.test(em) ? 'The scanner took too long to answer.' : (e && e.unreadable) ? "The scanner couldn't read the card." : "The scanner didn't work this time.";
+}
+function startScanTick(sh){ sh.t0 = Date.now(); clearInterval(SCAN_TICK); SCAN_TICK = setInterval(() => { const el = $('#scanSecs'); if (!el || S.sheet !== sh || sh.phase !== 'reading') { clearInterval(SCAN_TICK); return; } el.textContent = Math.round((Date.now() - sh.t0) / 1000) + 's'; }, 1000); }
+function readingHtml(sh){ return `<div class="reading"><span class="pulse"></span><p><b>Reading the card…</b> ${sh.attempt ? `Trying the backup scanner (${sh.attempt + 1} of ${sh.attempts}).` : 'This usually takes 10 to 30 seconds.'} <span id="scanSecs" style="opacity:.6">${sh.t0 ? Math.round((Date.now() - sh.t0) / 1000) + 's' : ''}</span></p></div><button class="btn block" data-act="stopScan">Stop</button>`; }
+async function runUpload(){
+  const sh = S.sheet; if (!sh || sh.type !== 'upload') return; const {cid, round, gid} = sh.ctx; const c = D.comps[cid]; if (!c) { closeSheet(); return; }
+  sh.phase = 'reading'; sh.attempt = 0; renderSheet(); const ctl = {aborted:false}; SCAN_CTL = ctl; const holes = rcfg(c, round).holes;
+  try {
+    const img = await imageToBase64(sh.file); if (ctl.aborted) return;
+    startScanTick(sh);
+    const okReply = t => { const r = parseJSON(String(t || '')); return !!(r && Array.isArray(r.golfers)); };
+    const onTry = (i, n) => { sh.attempt = i; sh.attempts = n; if (S.sheet === sh && i > 0) renderSheet(); };
+    const text = await be.scan(uploadPrompt(c, round, gid), img.data, img.mime, okReply, onTry); if (ctl.aborted || S.sheet !== sh) return;
+    const res = parseJSON(text); if (!res || !Array.isArray(res.golfers)) { const er = new Error('unreadable reply ' + JSON.stringify(String(text || '').slice(0, 80))); er.unreadable = true; throw er; }
+    sh.found = res.golfers.slice(0, 6).map(g => { const name = String((g && g.name_on_card) || '').slice(0, 60);
+      return {name, gid: recognise(g && typeof g.match === 'string' ? g.match : null, name), scores: cleanScores(g && g.scores, holes), marker: g && typeof g.marker === 'string' ? g.marker.trim().slice(0, 60) : '', signed: !!(g && g.marker_signed === true),
+        unclear: Array.isArray(g && g.unclear) ? g.unclear.map(Number).filter(h => holes.includes(h)) : []}; }).filter(f => Object.keys(f.scores).length);
+    sh.notes = typeof res.notes === 'string' ? res.notes.slice(0, 300) : '';
+    const mine = sh.found.filter(f => f.gid === gid);
+    sh.pick = mine.length === 1 ? sh.found.indexOf(mine[0]) : sh.found.length === 1 && !sh.found[0].gid ? 0 : null;
+    if (!sh.found.length) { sh.phase = 'manual'; sh.err = 'No scores were found on this photo.' + (sh.notes ? ' ' + sh.notes : ''); sh.errDetail = ''; }
+    else sh.phase = sh.pick != null ? 'compare' : 'pick';
+  } catch (e) {
+    if (ctl.aborted || S.sheet !== sh) return; console.warn(e);
+    sh.phase = 'manual'; sh.err = scanErrText(e); sh.errDetail = String((e && (e.message || e.code)) || e || '').replace(/\s+/g, ' ').slice(0, 220);
+  }
+  if (SCAN_CTL === ctl) SCAN_CTL = null; renderSheet();
+}
+function uploadCompare(sh){
+  const {cid, round, gid} = sh.ctx; const c = D.comps[cid]; const g = D.golfers[gid]; const f = sh.found[sh.pick]; const card = cardOf(cid, round, gid);
+  const entered = scoreCard(c, round, gid);
+  const read = scoreCard(c, round, gid, Object.assign({}, card || {hi: snapHcp(g), shots: null}, {scores: f.scores}));
+  const v = x => x === undefined || x === null ? '' : String(x);
+  const diff = entered.rows.filter((r, i) => v(r.g) !== v(read.rows[i].g)).map(r => r.h);
+  return {c, g, f, card, entered, read, diff, nothing: !entered.filled};
+}
+function sheetUpload(){
+  const sh = S.sheet; const c = D.comps[sh.ctx.cid]; if (!c) return null; const {round, gid} = sh.ctx; const g = D.golfers[gid]; const fn = firstName(gName(gid));
+  let h = `<h3>Upload card</h3><p class="sub">${esc(gName(gid))} · ${esc(c.name)} · Round ${round}</p>`;
+  const big = sh.phase === 'manual' || sh.phase === 'pick';
+  if (sh.thumbs && sh.thumbs.length) h += big ? `<img class="photo-full" style="margin-bottom:12px" src="${esc(sh.thumbs[0])}" alt="Photo of the card">` : `<div class="thumbs">${sh.thumbs.map(u => `<img src="${esc(u)}" alt="Photo of the card">`).join('')}</div>`;
+  if (sh.phase === 'reading') return h + readingHtml(sh);
+  if (sh.phase === 'saving') return h + `<div class="reading"><span class="pulse"></span><p><b>Saving…</b></p></div>`;
+  if (sh.phase === 'done') { const sc = scoreCard(c, round, gid); const ok = cardCounts(c.id, round, gid);
+    return h + `<p class="notebox"><b>${sh.mode === 'fix' ? 'Photo saved.' : 'Checked, and the photo is saved with the card.'}</b> ${ok ? `${esc(fn)}'s card counts.` : !sc.complete ? "The card isn't complete yet, so it doesn't count." : !sc.marked ? "It isn't ticked as signed, so it doesn't count yet. Open the card to add the marker and tick it." : ''}</p><button class="btn block" data-act="closeSheet">Done</button>`; }
+  const enteredTable = sc => `<table class="uptable"><thead><tr><th>Hole</th><th>Par</th><th>Entered</th><th>Pts</th></tr></thead><tbody>${sc.rows.map(r => `<tr><td>${r.h}</td><td>${r.par}</td><td>${r.g === undefined ? '–' : esc(String(r.g))}</td><td>${r.pts == null ? '–' : r.pts}</td></tr>`).join('')}</tbody></table>`;
+  if (sh.phase === 'manual') { const sc = scoreCard(c, round, gid);
+    h += `<p class="errbox">${esc(sh.err || '')} Check the photo against what ${esc(fn)} entered.</p>${sh.errDetail ? `<p class="hint" style="margin:-4px 0 12px;word-break:break-word">Details: ${esc(sh.errDetail)}</p>` : ''}`;
+    if (sc.filled) h += `<p class="hint">Entered: ${esc(cardValueText(sc))} ${esc(unitFor(sc.rc.format) || '')} · ${sc.gross} strokes. Points use the app's handicap (${fmtHi(cardHi(sc.card, g))}, ${sc.total} shots).</p>` + enteredTable(sc);
+    else h += `<p class="hint">${esc(fn)} hasn't entered any scores. Save the photo, then open the card and type them in.</p>`;
+    return h + `<div class="confirm-actions" style="margin-top:12px">${sc.filled ? `<button class="btn primary" data-act="uploadDo" data-m="check">Looks right, mark checked</button>` : ''}<button class="btn" data-act="uploadDo" data-m="fix">Save photo, fix scores</button></div><button class="textbtn" style="margin-top:8px" data-act="uploadRetry">Try reading it again</button>`; }
+  if (sh.phase === 'pick') return h + `<p class="hint" style="margin-bottom:10px">Which golfer on this card is ${esc(gName(gid))}?</p><div class="srcpick" style="flex-direction:column">${sh.found.map((f, i) => `<button class="btn" data-act="uploadPickRow" data-i="${i}">${esc(f.name || 'Unnamed')}${f.gid && f.gid !== gid ? ` (${esc(gName(f.gid))})` : ''}</button>`).join('')}</div><button class="textbtn" style="margin-top:8px" data-act="uploadManual">None of these</button>`;
+  // compare
+  const X = uploadCompare(sh); sh.diff = X.diff; const u = unitFor(X.entered.rc.format) || ''; const stab = X.entered.rc.format === 'stableford';
+  const mark = (r, i) => { const rr = X.read.rows[i]; const d = X.diff.includes(r.h); const q = X.f.unclear.includes(r.h);
+    return `<tr class="${d ? 'differ' : ''}"><td>${r.h}</td><td>${r.par}</td><td>${rr.g === undefined ? '–' : esc(String(rr.g))}${q ? '<span class="q" title="Hard to read">?</span>' : ''}</td><td>${r.g === undefined ? '–' : esc(String(r.g))}</td><td>${(d ? rr : r).pts == null ? '–' : (d ? rr : r).pts}</td></tr>`; };
+  h += `<div class="upsum"><div><span class="label">On the card</span><b>${X.read.gross} strokes${stab ? ` · ${X.read.pts} pts` : ''}</b></div><div><span class="label">${esc(fn)} entered</span><b>${X.nothing ? 'Nothing yet' : `${X.entered.gross} strokes${stab ? ` · ${X.entered.pts} pts` : ''}`}</b></div></div>`;
+  h += `<p class="hint">Points use ${esc(fn)}'s handicap in the app (${fmtHi(cardHi(X.card, X.g))}, ${X.entered.total} shots). Any handicap or points written on the card are ignored.${X.f.signed ? ' A marker signature was found.' : ' <b>No marker signature was found on the card.</b>'}</p>`;
+  if (X.nothing) h += `<p class="notebox">${esc(fn)} hasn't entered scores. Add the card's scores to their card?</p>`;
+  else if (!X.diff.length) h += `<p class="notebox ok"><b>Every hole matches</b> what ${esc(fn)} entered.</p>`;
+  else h += `<p class="errbox"><b>${X.diff.length} hole${X.diff.length === 1 ? '' : 's'} differ${X.diff.length === 1 ? 's' : ''}:</b> ${holesText(X.diff)}. Check those against the photo.</p>`;
+  if (X.f.unclear.length) h += `<p class="hint">? = hard to read on the photo.</p>`;
+  h += `<table class="uptable"><thead><tr><th>Hole</th><th>Par</th><th>Card</th><th>Entered</th><th>Pts</th></tr></thead><tbody>${X.entered.rows.map(mark).join('')}</tbody></table>`;
+  h += X.nothing ? `<div class="confirm-actions" style="margin-top:12px"><button class="btn" data-act="closeSheet">Cancel</button><button class="btn primary" data-act="uploadDo" data-m="useCard">Add the card's scores</button></div>`
+    : !X.diff.length ? `<button class="btn primary block" style="margin-top:12px" data-act="uploadDo" data-m="check">Mark checked</button>`
+    : `<div class="confirm-actions" style="margin-top:12px"><button class="btn" data-act="uploadDo" data-m="check">Keep what ${esc(fn)} entered</button><button class="btn primary" data-act="uploadDo" data-m="useCard">Use the card's scores</button></div><p class="hint" style="margin-top:8px">Pts shows the card's points on holes that differ.</p>`;
+  return h + `<button class="textbtn" style="margin-top:8px" data-act="uploadDo" data-m="fix">Save the photo and fix the card myself</button>`;
+}
+async function confirmUpload(mode){
+  const sh = S.sheet; if (!sh || sh.type !== 'upload' || !S.isAdmin) return; const {cid, round, gid} = sh.ctx; const back = sh.phase;
+  const f = sh.found && sh.pick != null ? sh.found[sh.pick] : null;
+  sh.phase = 'saving'; renderSheet();
+  if (!(await saveCardPhoto(cid, round, gid, sh.file, true))) { sh.phase = back; renderSheet(); return; }
+  if (mode !== 'fix') {
+    const base = cardBase(cid, round, gid); const scores = mode === 'useCard' && f ? Object.assign({}, base.scores, f.scores) : base.scores;
+    const data = Object.assign(base, {scores, updatedAt: Date.now(), updatedBy: S.user.uid, scanned: {at: Date.now(), by: 'organiser', ok: true, scores: JSON.parse(JSON.stringify(scores)), read: f ? f.scores : null, diff: sh.diff || []}});
+    if (f && !base.marker && f.marker) data.marker = f.marker; if (f && !base.signed && f.signed && data.marker) data.signed = true;
+    const cp = `comps/${cid}/cards/${round}_${gid}`; if (!(await put(cp, data))) { sh.phase = back; renderSheet(); return; } localSet(cp, data);
+  }
+  sh.mode = mode; sh.phase = 'done'; render(); if (S.sheet === sh) renderSheet();
+  if (mode === 'fix') { closeSheetQuiet(); S.card = {cid, round, gid}; S.cardEdit = false; top(); render(); toast('Photo saved. Fix the scores, then upload it again to mark it checked.'); }
+}
+// Cards waiting for the organiser to check: complete and signed, in open months, not checked since their last change.
+function cardsToCheck(){
+  const out = [];
+  openComps().forEach(c => Object.values(D.cards).filter(k => k && k.compId === c.id).forEach(card => {
+    const r = compRounds(c).find(x => x.n === card.round); if (!r || roundState(r) === 'upcoming') return;
+    const sc = scoreCard(c, card.round, card.golferId); if (!sc.complete || !sc.marked || checkedBy(card)) return;
+    out.push({c, card, sc, sent: !!card.photoAt});
+  }));
+  return out.sort((a, b) => (b.sent - a.sent) || (b.card.round - a.card.round) || gName(a.card.golferId).localeCompare(gName(b.card.golferId)));
+}
+function checkCardsHtml(){
+  const list = cardsToCheck(); const cur = currentComp(); const u = sc => unitFor(sc.rc.format) || '';
+  let h = `<section><div class="sec-head" style="margin-top:0"><h2>Check cards</h2></div><div class="panel">`;
+  h += `<p class="hint" style="margin-top:0">When a golfer sends you their card on WhatsApp, save the photo to your phone, then tap Upload card. The app reads the card and checks it against what they entered, using the handicap in the app.</p>`;
+  h += list.length ? `<ul class="grp checklist">${list.map(x => `<li><span class="grp-main"><b>${esc(gName(x.card.golferId))} · R${x.card.round} · ${esc(cardValueText(x.sc))}${u(x.sc) ? ' ' + esc(u(x.sc)) : ''}</b><small>${x.sent ? 'Sent ' + esc(whenText(x.card.photoAt)) : photoRequired(x.card) ? 'Not sent yet' : 'No photo sent'}${x.card.scanned && x.card.scanned.by === 'organiser' ? ' · changed since you checked it' : ''}</small></span><button class="btn small ${x.sent ? 'primary' : ''}" data-act="uploadCard" data-cid="${esc(x.c.id)}" data-round="${x.card.round}" data-gid="${esc(x.card.golferId)}">${ICONS.camera}Upload card</button></li>`).join('')}</ul>` : `<p class="notebox">No cards waiting. Every signed card has been checked.</p>`;
+  if (cur) { const rs = compRounds(cur).filter(r => roundState(r) !== 'upcoming'); const gs = sortedGolfers().filter(g => entryOf(cur.id, g.id) || rs.some(r => twosOf(cur.id, r.n, g.id)));
+    if (rs.length && gs.length) h += `<p class="hint" style="margin-top:14px">Upload a card for anyone else:</p><div class="grid2"><label class="field"><span>Golfer</span><select id="up-g">${gs.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}</select></label><label class="field"><span>Round</span><select id="up-r">${rs.slice().reverse().map(r => `<option value="${r.n}">Round ${r.n} · ${esc(shortRange(r))}</option>`).join('')}</select></label></div><button class="btn block" data-act="uploadFor" data-cid="${esc(cur.id)}">${ICONS.camera}Upload a card</button>`; }
+  return h + `</div></section>`;
+}
+
 function saveCard(cid, round, gid, scores){
   const data = Object.assign(cardBase(cid, round, gid), {scores, updatedAt:Date.now(), updatedBy:S.user.uid});
   const path = `comps/${cid}/cards/${round}_${gid}`; const before = cardCounts(cid, round, gid);
@@ -1773,17 +1934,32 @@ const ACT = {
     const idx = holes.indexOf(h); if (v !== 'X' && idx < holes.length - 1) S.activeHole = holes[idx+1];
     saveCard(cid, round, gid, scores);
     requestAnimationFrame(() => requestAnimationFrame(() => { const a = document.querySelector('.hole.active'); if (a) a.scrollIntoView({block:'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'}); }));
-    if (v !== 'X' && idx === holes.length - 1 && Object.keys(scores).length >= holes.length) { { const cc = cardOf(cid, round, gid); toast(markedOK(cc) ? (photoOk(cc) ? 'Card complete' : 'Card complete. Now add a photo of your signed card.') : `Card complete. Add the marker's name, tick that it's signed${photoOk(cc) ? '' : ' and add a photo of the card'}.`); } if (gid === S.myGid && !S.isAdmin) { S.cardEdit = false; top(); render(); } }
+    if (v !== 'X' && idx === holes.length - 1 && Object.keys(scores).length >= holes.length) { { const cc = cardOf(cid, round, gid); toast(markedOK(cc) ? (photoOk(cc) ? 'Card complete' : 'Card complete. Now send it to the organiser.') : `Card complete. Add the marker's name, tick that it's signed${photoOk(cc) ? '' : ' and send it to the organiser'}.`); } if (gid === S.myGid && !S.isAdmin) { S.cardEdit = false; top(); render(); } }
   },
   editShots(){ openSheet({type:'shots'}); },
   async checkOk(){ const {cid, round, gid} = S.card || {}; const card = cardOf(cid, round, gid); if (!S.isAdmin || !writtenOf(card)) return;
     const base = cardBase(cid, round, gid); const data = Object.assign(base, {updatedAt: card.updatedAt || Date.now(), updatedBy: card.updatedBy || S.user.uid, scanned: Object.assign(base.scanned, {ok:true})});
     const path = `comps/${cid}/cards/${round}_${gid}`; localSet(path, data); render(); if (await put(path, data)) toast('Card check cleared'); },
-  photoCard(el){ PHOTO_PENDING = {cid: el.dataset.cid, round: Number(el.dataset.round), gid: el.dataset.gid || S.myGid}; openSheet({type:'pickSrc', kind:'photo'}); },
+  sendCard(el){ const ctx = {cid: el.dataset.cid, round: Number(el.dataset.round), gid: el.dataset.gid || S.myGid}; const card = cardOf(ctx.cid, ctx.round, ctx.gid);
+    if (!card || !cardStarted(card)) { toast('Tap Start my round first.'); return; } if (cardLocked(card)) { toast('This card locked at midnight.'); return; }
+    PHOTO_PENDING = Object.assign(ctx, {mode:'send'}); openSheet({type:'pickSrc', kind:'send'}); },
+  async shareCard(){ const sh = S.sheet; if (!sh || sh.type !== 'send' || !sh.file) return; const text = sendText(sh.ctx); let shared = false;
+    try { if (navigator.canShare && navigator.canShare({files:[sh.file]})) { await navigator.share({files:[sh.file], text}); shared = true; } }
+    catch (e) { if (e && e.name === 'AbortError') { toast('Not sent. Tap Send on WhatsApp to try again.'); return; } console.warn(e); }
+    if (!shared) { sh.phase = 'manual'; renderSheet(); return; }
+    if (await markSent(sh.ctx)) { sh.phase = 'sent'; if (S.sheet === sh) renderSheet(); } },
+  async sentManual(){ const sh = S.sheet; if (!sh || sh.type !== 'send') return; if (await markSent(sh.ctx)) { sh.phase = 'sent'; if (S.sheet === sh) renderSheet(); } },
+  uploadCard(el){ if (!S.isAdmin) return; const ctx = {cid: el.dataset.cid, round: Number(el.dataset.round), gid: el.dataset.gid}; if (!D.comps[ctx.cid] || !D.golfers[ctx.gid]) return;
+    PHOTO_PENDING = Object.assign(ctx, {mode:'upload'}); openSheet({type:'pickSrc', kind:'upload', gid: ctx.gid}); },
+  uploadFor(el){ const g = ($('#up-g') || {}).value, r = Number(($('#up-r') || {}).value); if (!g || !r) return; ACT.uploadCard({dataset:{cid: el.dataset.cid, round: String(r), gid: g}}); },
+  uploadDo(el){ confirmUpload(el.dataset.m); },
+  uploadPickRow(el){ const sh = S.sheet; if (!sh || sh.type !== 'upload') return; sh.pick = Number(el.dataset.i); sh.phase = 'compare'; renderSheet(); },
+  uploadManual(){ const sh = S.sheet; if (!sh || sh.type !== 'upload') return; sh.phase = 'manual'; sh.err = 'Check the card by eye.'; sh.errDetail = ''; renderSheet(); },
+  uploadRetry(){ const sh = S.sheet; if (!sh || sh.type !== 'upload') return; runUpload(); },
   photoView(){ const {cid, round, gid} = S.card || {}; const ph = D.photos[photoPath(cid, round, gid)]; if (ph && ph.img) openSheet({type:'photoView', cid, round, gid}); },
   async photoWaive(){ const {cid, round, gid} = S.card || {}; if (!S.isAdmin || !cardOf(cid, round, gid)) return; const before = cardCounts(cid, round, gid);
     const data = Object.assign(cardBase(cid, round, gid), {photoOk: true, updatedAt: Date.now(), updatedBy: S.user.uid}); const cp = `comps/${cid}/cards/${round}_${gid}`;
-    if (await put(cp, data)) { localSet(cp, data); render(); toast('Okayed without a photo'); notifyIfDone(cid, round, gid, before); } },
+    if (await put(cp, data)) { localSet(cp, data); render(); toast('Okayed: it counts without being sent'); notifyIfDone(cid, round, gid, before); } },
   pickSrc(el){ const kind = S.sheet && S.sheet.kind; if (!kind) return; const id = (kind === 'scan' ? 'scan' : 'photo') + (el.dataset.src === 'cam' ? 'Cam' : 'File');
     const f = $('#' + id); closeSheetQuiet(); render(); if (!f) return; f.value = ''; f.click(); },
   startRound(el){ const cid = el.dataset.cid, round = Number(el.dataset.round); const c = D.comps[cid]; if (!c || !canStart(cid, round)) return;
@@ -1871,7 +2047,7 @@ const ACT = {
     const unmarked = lb.all.reduce((a,r) => a + r.cards.filter(sc => sc.complete && !sc.marked).length, 0);
     const nophoto = lb.all.reduce((a,r) => a + r.cards.filter(sc => sc.complete && sc.marked && !sc.photoOk).length, 0);
     const changes = previewHcp(c.id, 'final');
-    const bits = ['Scores lock and the league points become final.']; if (changes.length) bits.push('Handicaps: ' + changes.map(x => `${gName(x.gid)} ${fmtHi(x.from)} → ${fmtHi(x.to)}`).join(', ') + '.'); if (unmarked) bits.push(`${unmarked} complete card${unmarked === 1 ? " isn't" : "s aren't"} ticked as signed by a marker and won't count.`); if (nophoto) bits.push(`${nophoto} signed card${nophoto === 1 ? ' has' : 's have'} no photo of the card and won't count.`); if (unpaid) bits.push(`${unpaid} entr${unpaid === 1 ? 'y is' : 'ies are'} unpaid.`); bits.push('You can reopen it later.');
+    const bits = ['Scores lock and the league points become final.']; if (changes.length) bits.push('Handicaps: ' + changes.map(x => `${gName(x.gid)} ${fmtHi(x.from)} → ${fmtHi(x.to)}`).join(', ') + '.'); if (unmarked) bits.push(`${unmarked} complete card${unmarked === 1 ? " isn't" : "s aren't"} ticked as signed by a marker and won't count.`); if (nophoto) bits.push(`${nophoto} signed card${nophoto === 1 ? " wasn't" : "s weren't"} sent to you and won't count.`); if (unpaid) bits.push(`${unpaid} entr${unpaid === 1 ? 'y is' : 'ies are'} unpaid.`); bits.push('You can reopen it later.');
     askConfirm('Finalise the month?', bits.join(' '), 'Finalise', async () => { const data = Object.assign({}, c, {status:'final', finalisedAt:Date.now()}); delete data.id;
       if (await put(`comps/${c.id}`, data)) { localSet(`comps/${c.id}`, data); await syncHandicaps(); S.compTab = 'board'; S.boardSel = 'month'; toast(changes.length ? `Results finalised. ${changes.length} handicap${changes.length === 1 ? '' : 's'} updated.` : 'Results finalised'); } });
   },
@@ -2266,6 +2442,9 @@ document.addEventListener('change', ev => {
   if (t.id === 'leagueMonth') { S.leagueMonth = t.value; S.boardSel = 'month'; t.blur(); render(); return; }
   if (t.id === 'scanFile' || t.id === 'scanCam') { startScan(t.files); return; }
   if (t.id === 'photoFile' || t.id === 'photoCam') { const ctx = PHOTO_PENDING; PHOTO_PENDING = null; const file = t.files && t.files[0]; if (!ctx || !file) return;
+    let thumbs = []; try { thumbs = [URL.createObjectURL(file)]; } catch (_) {}
+    if (ctx.mode === 'send') { openSheet({type:'send', ctx, file, thumbs, phase:'ready'}); return; }
+    if (ctx.mode === 'upload') { openSheet({type:'upload', ctx, file, thumbs, phase:'reading'}); runUpload(); return; }
     toast('Adding the photo…'); saveCardPhoto(ctx.cid, ctx.round, ctx.gid || S.myGid, file); return; }
   if (t.id === 'pinRemember') { S.pinRemember = t.checked; if (!t.checked) { try { localStorage.removeItem('rgc-admin'); } catch (_) {} } return; }
   if ((t.id === 'markerName' || t.id === 'signedChk') && S.card) { const {cid, round, gid} = S.card;
@@ -2304,5 +2483,5 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 setInterval(() => { if (document.visibilityState === 'visible') checkVersion(); }, 30 * 60e3);
 checkVersion();
 const hv = (location.hash || '').slice(1); if (['home','table','me','comps','golfers','admin'].includes(hv)) S.view = hv; else if (hv === 'league') S.view = 'table';
-window.__rgc = {S, D, scoreCard, leaderboard, roundBoard, roundPoints, league, allocShots, checkVersion, twosLedger};
+window.__rgc = {S, D, scoreCard, leaderboard, roundBoard, roundPoints, league, allocShots, checkVersion, twosLedger, cardCounts};
 boot();

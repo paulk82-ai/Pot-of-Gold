@@ -365,6 +365,18 @@ details.course[open] summary::after{content:"Hide"}
 @media (prefers-reduced-motion: reduce){.pulse{animation:none}}
 .errbox{padding:12px 14px;border-radius:10px;background:var(--warn-bg);color:var(--warn);font-weight:500}
 .notebox{padding:10px 12px;border-radius:10px;background:var(--tint);font-size:13px;margin-bottom:12px}
+.notebox.ok{background:color-mix(in srgb,var(--fairway) 14%,transparent)}
+.errbox+.uptable,.notebox+.uptable,.hint+.uptable{margin-top:10px}
+.upsum{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:2px 0 10px}
+.upsum>div{padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card);display:flex;flex-direction:column;gap:2px}
+.upsum b{font-size:15px}
+.uptable{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
+.uptable th{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-align:center;padding:6px 4px;border-bottom:1px solid var(--line)}
+.uptable td{text-align:center;padding:6px 4px;border-bottom:1px solid var(--line)}
+.uptable td:first-child,.uptable th:first-child{text-align:left}
+.uptable tr.differ td{background:var(--warn-bg);color:var(--warn);font-weight:700}
+.uptable .q{display:inline-block;margin-left:2px;font-size:11px;font-weight:700;color:var(--warn)}
+.errbox{margin-bottom:10px}
 .scanrow{border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px;display:flex;flex-direction:column;gap:10px}
 .scanrow-head{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:10px;align-items:end}
 .scanrow-head .field{margin:0}
@@ -432,7 +444,7 @@ details.course[open] summary::after{content:"Hide"}
   .cp-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
   .cardphoto .btn svg{width:18px;height:18px;margin-right:6px;vertical-align:-3px}
   .photo-full{display:block;width:100%;height:auto;border-radius:8px;border:1px solid var(--line)}
-  .card-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 14px}
+  .card-actions{display:grid;grid-template-columns:1fr;gap:10px;margin:0 0 14px}
   .card-actions .btn{display:flex;align-items:center;justify-content:center;gap:8px}
   .card-actions svg{width:20px;height:20px}
   .plainholes .h-shots,.plainholes .hole-head .h-shots{grid-column:3 / span 2;text-align:right;font-size:13px;color:var(--muted);padding-right:6px}
@@ -604,6 +616,9 @@ form.inline{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin
 .todo{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:12px;background:var(--gold-bg);margin-bottom:16px}
 .todo .grp{background:var(--card)}
 .todo .grp li{grid-template-columns:minmax(0,1fr) auto}
+.checklist{background:var(--card)}
+.checklist li{grid-template-columns:minmax(0,1fr) auto}
+.checklist .btn{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
 .joinreqs{margin-bottom:14px}
 .btnrow{display:flex;gap:8px;margin-top:12px}
 .btnrow .btn{flex:1;min-width:0}

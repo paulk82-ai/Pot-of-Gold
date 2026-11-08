@@ -1,6 +1,6 @@
 # Pot of Gold — setup guide
 
-An installable phone app for the Pot of Gold, a monthly golf competition played at Rathsallagh. Golfers sign in, enter for the month, pay through Revolut, and enter their own signed cards (or scan them with the camera). The organiser manages golfers, payments and results. Everything runs on Google's Firebase free tier.
+An installable phone app for the Pot of Gold, a monthly golf competition played at Rathsallagh. Golfers sign in, enter for the month, pay through Revolut, and enter their own signed cards. The organiser manages golfers, payments and results. Everything runs on Google's Firebase free tier.
 
 **What's in the box**
 
@@ -16,12 +16,12 @@ An installable phone app for the Pot of Gold, a monthly golf competition played 
 - Entries are paid through Revolut only (no cash): in the Revolut app, or by debit card, Apple Pay or Google Pay on the Revolut page for anyone without Revolut. The golfer taps **I've paid**, and the organiser confirms it under **Payments**. Only confirmed payments go into the pot.
 - Golfers with fewer than 3 counting cards are ranked on what they have, below anyone with 3.
 - Before teeing off, each player taps **Start my round** in the app. That's their one round for the weekend, and the start time is recorded.
-- After the round they get the paper card signed by their marker (anyone, not just players in the competition), then enter or scan it, add the marker's name, tick **My marker has signed my card** and add a photo of the signed card, all by **midnight that day**. Complete, signed cards with a photo count.
-- At midnight the card locks. If it isn't complete, ticked as signed and photographed by then, that round doesn't count and can't be re-entered.
-- **A photo of the signed card is required.** The photo is saved with the card in the app, so nothing needs to go on WhatsApp. Scanning a card saves the photo automatically. For cards typed in, Home and the card show **Add a photo of my signed card**. Until the photo is in, the card shows *No photo of the card yet* and doesn't count (for the month or the 2's), and the organiser isn't told the card is in. The organiser can see each photo on the card (tap it for full size), add one for a golfer, or tap **Photo not needed** to let a card count without one. Cards the organiser enters, and cards started before the rule came in (Sunday 8 November 2026, 9am), don't need one. It can be switched off in **Admin → Cards**.
-- Scanned cards are only accepted for golfers whose names match the golfer list and who are entered that month. Unrecognised names are turned away.
-- Tapping **Scan a card** (or **Add a photo of my signed card**) asks **Take a photo**, which opens the camera, or **Choose from gallery**, which opens the phone's photos.
-- The app always works out the points itself from the strokes on each hole. When a card is scanned, any points and totals written on the paper card are read too and checked against the app's sums. If they differ, the scan, the card and the round leaderboard say so, and the organiser's notification carries a warning. The app explains whether a hole looks misread, the card was added up wrong, or the marker used different shots. The organiser can tap **Looked at it, clear this** once checked.
+- After the round they get the paper card signed by their marker (anyone, not just players in the competition), then type their scores in, add the marker's name, tick **My marker has signed my card** and send a photo of the card to the organiser, all by **midnight that day**. Complete, signed cards that have been sent count.
+- At midnight the card locks. If it isn't complete, ticked as signed and sent by then, that round doesn't count and can't be re-entered.
+- **Golfers send their card to the organiser.** There's no scanning for golfers. Once their card is entered and signed, Home and the card show **Send my card to the organiser**: they take a photo of the signed card (or choose one), tap **Send on WhatsApp**, and pick the organiser in the phone's share menu. The app records that it was sent, and the card counts from then (for the month and the 2's). On a phone that can't share photos from the app, it opens WhatsApp and asks them to tap **I've sent it** once they've sent it. Until it's sent, the card shows *Not sent to the organiser yet* and doesn't count, and the organiser isn't told the card is in. The organiser can tap **Count it anyway** on a card. Cards the organiser enters or uploads, and cards started before Sunday 8 November 2026, 9am, don't need it. It can be switched off in **Admin → Cards**.
+- **The organiser checks cards with Upload card** (Admin → Check cards, or on any card). Save the photo the golfer sent on WhatsApp to your phone, then tap **Upload card** and choose it. The app reads the strokes off the card and compares them with what the golfer entered, hole by hole. Points are worked out with the golfer's handicap in the app: any handicap or points written on the card are ignored. If every hole matches, tap **Mark checked**. If some differ, they're highlighted and you choose **Use the card's scores** or **Keep what they entered**. If the golfer entered nothing, **Add the card's scores** fills in their card. If the scanner can't read it, the photo is shown beside what they entered so you can check it by eye. Either way the photo is saved with the card. **Check cards** lists every signed card not yet checked, sent ones first, and Home's To do shows how many sent cards are waiting. A card changed after you checked it goes back on the list.
+- **Send my card** and **Upload card** ask **Take a photo**, which opens the camera, or **Choose from gallery**, which opens the phone's photos.
+- The app always works out the points itself from the strokes on each hole, using the handicap in the app.
 - League points are given **each weekend round**, from that round's leaderboard: 1st 5, 2nd 4, 3rd 3, 4th 2, and 1 for every other signed card. Each golfer's best 3 rounds of points count each month (the same number as the month's best cards), so up to 15 a month. On a round's leaderboard, points in brackets are outside that golfer's best 3. Golfers tied on a round (after countback) each get that place's points. Points show on the league table straight away and are provisional until the month is finalised. You can change them in Admin.
 - The **Table** tab has **This month** (any month, with live provisional standings while it's open, and each round's results) and **Year** (the Order of Merit for the year, plus a points-by-month grid).
 
@@ -56,7 +56,7 @@ This is easiest on a computer, but it works in a phone browser too.
 6. Create the database: go to **Build → Firestore Database → Create database**. Choose the **europe-west** location nearest you (for example `europe-west1`) and start in **production mode**.
 7. Paste in the rules: still in Firestore, open the **Rules** tab, replace everything with the contents of `firestore.rules`, and tap **Publish**.
 
-## 2. Turn on card scanning (Gemini)
+## 2. Turn on card reading for Upload card (Gemini)
 
 1. In the Firebase console, go to **AI Logic** (under *AI services* or *Build*) and tap **Get started**.
 2. Choose the **Gemini Developer API**, which has a free tier, and follow the prompts.
@@ -66,7 +66,7 @@ This is easiest on a computer, but it works in a phone browser too.
 4. If Google ever renames the model, change `geminiModel` in `docs/config.js`.
 5. **Free limits.** On the free tier, the main model (`gemini-3.8-flash`) allows only about 20 scans a day and 5 a minute for the whole app. When it's used up, busy, retired or gives a reply the app can't use, the app automatically scans with `gemini-3.5-flash-lite` (about 500 a day, 10 a minute), then `gemini-3.1-flash-lite`. Each has its own allowance, and they reset at 8am Irish time (midnight Pacific). Turning on billing (the Blaze plan) removes the low limits; a scan then costs well under a cent. If a scan fails, the message shows the details, so you can tell what went wrong.
 
-Without this step the app still works fully; golfers just type scores in instead of scanning.
+Without this step the app still works fully; Upload card shows the photo beside what the golfer entered so you can check it by eye.
 
 ## 3. Put the app online (free, with GitHub Pages)
 
@@ -103,9 +103,9 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 2. On **Home**, tap **Enter**, then **Pay €10** to open Revolut (the app, or a debit card, Apple Pay or Google Pay). Add the reference shown, then tap **I've paid**. The organiser confirms it.
 3. Before you tee off (Friday to Sunday), tap **Start my round** on **Home**. You get one round per weekend.
 4. Play, and get your marker to sign your paper card.
-5. By midnight that day, tap **Enter my card** and enter your scores hole by hole, or tap **Scan my card** and photograph it, then check the numbers.
+5. By midnight that day, tap **Enter my scores** and enter your scores hole by hole.
 6. Add your marker's name and tick **My marker has signed my card**.
-7. Add a photo of your signed card: scanning adds it for you, otherwise tap **Add a photo of my signed card**. Your card counts once the photo is in.
+7. Tap **Send my card to the organiser**, take a photo of your signed card, then **Send on WhatsApp** and pick the organiser. Your card counts once it's sent.
 
 ## What the organiser can do
 
@@ -120,8 +120,8 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 - Chase entries and payments: the **To do** box on Home shows how many golfers haven't entered or paid this month. **Remind** opens WhatsApp with a ready message naming them and saying what to do. Golfers who haven't entered or paid also see a reminder strip at the top of the app.
 - Enter or correct any card, at any time, including the marker's name and the signed tick (untick it if a card turns out not to be signed), and override shots. Each card shows when the golfer started it.
 - Delete a card if a golfer started a round by mistake; they can then start it again while the round is open.
-- Scan any card. Only golfers on your list are accepted. The marker's name and signature are read from the card for you to check.
-- A **⚠ check card** note on a round's leaderboard means the points or totals written on that scanned card don't match the app. Open the card to see why, fix any misread holes (or the shots), then tap **Looked at it, clear this**.
+- Check cards: upload the photo a golfer sent you, and the app compares it with what they entered (see above).
+- A **⚠ check card** note on a round's leaderboard (from cards scanned before November 2026) means the points written on the card didn't match the app. Open the card to see why, then tap **Looked at it, clear this**.
 - Finalise the month, which locks scores, makes the league points final, sets the prize money and makes the handicap changes. Months can be reopened.
 
 ## Payments through Revolut
@@ -132,7 +132,7 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 
 ## The golfer's card screen
 
-When golfers open their own card, it starts simple: the marker's name and signed tick at the top, then **Enter my scores** and **Scan my card**, then a plain list of the holes with par, stroke index, yards and where their shots fall. Tapping **Enter my scores** (or any hole) opens the keypad; **Done** closes it. After the last hole the card shows the scores, points and totals so they can check it before ticking it signed, with **Edit my scores** to change anything. The organiser's view of a card is unchanged.
+When golfers open their own card, it starts simple: the marker's name and signed tick at the top, then **Enter my scores**, then a plain list of the holes with par, stroke index, yards and where their shots fall. Tapping **Enter my scores** (or any hole) opens the keypad; **Done** closes it. After the last hole the card shows the scores, points and totals so they can check it before ticking it signed, with **Edit my scores** to change anything. Below that is **Send my card to the organiser**. The organiser's view of a card is unchanged.
 
 ## Opening the app from WhatsApp or Facebook
 
@@ -142,7 +142,7 @@ Google won't allow signing in inside another app's built-in browser (WhatsApp, F
 
 Off until you switch it on in **Admin → 2's club**.
 
-**Open to everyone on the golfer list, weekend by weekend.** Golfers who aren't in that month's competition see "Not in November? You can play the 2's on its own this weekend" on Home. They tap **Join & pay €2**, then **Start my round** and enter or scan their card as normal. Their card is marked **2's only**: it counts for the 2's but never for the monthly table, league points, prizes or handicaps, even if they enter the month later. You see them tagged **2's only** on the 2's club sheet, with a **Card** button to check their card. Before switching it on, paste the latest `firestore.rules` into Firebase (Firestore Database → Rules → Publish), because the 2's club needs its own rules.
+**Open to everyone on the golfer list, weekend by weekend.** Golfers who aren't in that month's competition see "Not in November? You can play the 2's on its own this weekend" on Home. They tap **Join & pay €2**, then **Start my round**, enter their card and send it to the organiser as normal. Their card is marked **2's only**: it counts for the 2's but never for the monthly table, league points, prizes or handicaps, even if they enter the month later. You see them tagged **2's only** on the 2's club sheet, with a **Card** button to check their card. Before switching it on, paste the latest `firestore.rules` into Firebase (Firestore Database → Rules → Publish), because the 2's club needs its own rules.
 
 - €2 a round (you can change it in Admin). Golfers can tap **Join** in the 2's panel on Home any time the round is open before they tee off. When they tap **Start my round**, the app knows if they're already in; if not, it asks **Are you in the 2's club this round?** with **Yes, I'm in** or **No, just start**. They can still join and pay for 10 minutes after starting, but not later.
 - **Nobody is in without paying, and it's paid before teeing off.** Joining takes them straight to Revolut; they're in once they tap **I've paid**, and you confirm it under the month's **2's club** button. Anyone who hasn't paid within 10 minutes of starting their round is not in that weekend and can't pay later. A 2 counts once you've confirmed the payment. You can still mark someone paid yourself if you know they paid in time.
@@ -168,7 +168,7 @@ When a new version is put online, phones that have the app open show **A new ver
 ## Costs
 
 - **Firebase (Spark plan)** is free for a club of this size.
-- **Gemini scanning** uses the free tier of the Gemini Developer API. If you ever outgrow it, Google asks you to add billing first; it doesn't charge without it.
+- **Gemini card reading** (Upload card) uses the free tier of the Gemini Developer API. If you ever outgrow it, Google asks you to add billing first; it doesn't charge without it.
 - **GitHub Pages** is free.
 
 ## Files
