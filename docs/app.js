@@ -104,7 +104,12 @@ function unitFor(format){ return format === 'stableford' ? 'pts' : format === 'm
 function firstFriday(y, m){ const d = new Date(y, m, 1); d.setDate(1 + ((5 - d.getDay() + 7) % 7)); return d; }
 function defaultFirstFri(){ const now = new Date(); let f = firstFriday(now.getFullYear(), now.getMonth()); if (iso(f) < iso(now) && addDays(iso(f), 2) < iso(now)) f = firstFriday(now.getFullYear(), now.getMonth() + 1); return iso(f); }
 function weekendRounds(firstFri, count){ return range(1, count).map(i => { const from = addDays(firstFri, 7*(i-1)); return {n:i, from, to:addDays(from, 2)}; }); }
-function roundState(r){ const t = iso(new Date()); return t < r.from ? 'upcoming' : t > r.to ? 'played' : 'open'; }
+function roundState(r){ const t = iso(new Date()); return t < r.from ? 'upcoming' : (t > r.to || r.closedAt) ? 'played' : 'open'; }
+// The organiser can close a round before its weekend ends (say Sunday evening, once everyone's in): golfers can't start,
+// enter or send cards for it any more, its 2's closes too, and Home moves on to the next round. It can be reopened.
+function roundCloseDue(c, r){ return !!(c && r && c.status === 'open' && !r.closedAt && roundState(r) === 'open' && iso(new Date()) === r.to && new Date().getHours() >= 18); }
+function roundShut(card){ const c = card && D.comps[card.compId]; const r = c ? compRounds(c).find(x => x.n === Number(card.round)) : null; return !!(r && r.closedAt); }
+function openRoundOf(c){ return c ? compRounds(c).find(r => roundState(r) === 'open') || null : null; }
 function roundOpenNow(c, n){ const r = compRounds(c).find(x => x.n === n); return !!r && roundState(r) === 'open'; }
 function currentRound(c){ const rs = compRounds(c); const o = rs.find(r => roundState(r) === 'open'); if (o) return o.n; const p = rs.filter(r => roundState(r) === 'played'); return p.length ? p[p.length-1].n : rs[0].n; }
 function roundLabel(r){ const a = dParts(r.from), b = dParts(r.to); if (r.from === r.to) return `${a.dow} ${a.day} ${a.mon}`; return `${a.dow} ${a.day}${a.mon !== b.mon ? ' ' + a.mon : ''} – ${b.dow} ${b.day} ${b.mon}`; }
@@ -249,7 +254,7 @@ function metric(comp, rows){
 const higher = c => (FORMATS[c.format] || FORMATS.stableford).better === 'high';
 function cbSegments(n){ return [Math.ceil(n/2), Math.round(n/3), Math.round(n/6), 1].filter(k => k > 0); }
 function cbKeys(comp, sc){ return [metric(comp, sc.rows)].concat(cbSegments(sc.rows.length).map(n => metric(comp, sc.rows.slice(-n)))); }
-function cardStatus(sc){ const c = sc.card; const late = cardLocked(c);
+function cardStatus(sc){ const c = sc.card; const late = cardLocked(c) || roundShut(c);
   if (!c || (!sc.filled && !cardStarted(c))) return 'No card';
   if (!sc.filled) return late ? 'Missed: nothing entered by midnight' : `Started ${whenText(c.startedAt)}`;
   if (!sc.complete) return (late ? 'Missed: ' : '') + 'Thru ' + sc.filled; if (sc.nr) return 'NR';
@@ -769,6 +774,7 @@ function homeHero(c){
     const st = compStats(c); h += `<dl class="figs"><div><dt>Entries</dt><dd>${st.entries}</dd></div><div><dt>Paid</dt><dd>${st.paid}</dd></div><div><dt>Pot</dt><dd>${euro(st.pot)}</dd></div></dl>`;
   }
   if (S.isAdmin) h += `<button class="btn block" data-act="openComp" data-id="${cid}">Manage ${esc(c.name)}</button>`;
+  if (S.isAdmin && open && c.status === 'open' && iso(new Date()) === open.to) h += `<button class="btn block" style="margin-top:8px" data-act="roundClose" data-cid="${cid}" data-round="${open.n}">Close round ${open.n}</button>`;
   return h + '</section>';
 }
 function myRoundHtml(c, open, only){
@@ -851,7 +857,8 @@ function todoHtml(open){
   if (reqs) items.push(`<li><span class="grp-main"><b>${reqs} ${reqs === 1 ? 'person is' : 'people are'} asking to join</b><small>Add them to the golfer list so they can sign in</small></span><button class="btn small primary" data-act="joinList">Review</button></li>`);
   open.forEach(c => { const chk = entriesFor(c.id).filter(e => payState(e) === 'claimed').length;
     if (chk) items.push(`<li><span class="grp-main"><b>${chk} payment${chk === 1 ? '' : 's'} to check</b><small>${esc(c.name)} · check your Revolut, then confirm</small></span><button class="btn small primary" data-act="payments" data-id="${esc(c.id)}">Check</button></li>`); });
-  if (twosOn()) twosLedger().filter(twosCloseDue).forEach(x => items.push(`<li><span class="grp-main"><b>Close the 2's for round ${x.r.n}</b><small>${esc(x.c.name)} · ${esc(twosResult(x))}</small></span><button class="btn small primary" data-act="twosOpen" data-cid="${esc(x.c.id)}" data-round="${x.r.n}">Close</button></li>`));
+  openComps().forEach(c => compRounds(c).filter(r => roundCloseDue(c, r)).forEach(r => items.push(`<li><span class="grp-main"><b>Close round ${r.n}</b><small>${esc(c.name)} · stops new cards${twosOn() ? ", closes the 2's" : ''} and moves everyone on</small></span><button class="btn small primary" data-act="roundClose" data-cid="${esc(c.id)}" data-round="${r.n}">Close</button></li>`)));
+  if (twosOn()) twosLedger().filter(x => twosCloseDue(x) && !roundCloseDue(x.c, x.r)).forEach(x => items.push(`<li><span class="grp-main"><b>Close the 2's for round ${x.r.n}</b><small>${esc(x.c.name)} · ${esc(twosResult(x))}</small></span><button class="btn small primary" data-act="twosOpen" data-cid="${esc(x.c.id)}" data-round="${x.r.n}">Close</button></li>`));
   const tc = cardsToCheck().filter(x => x.sent).length;
   if (tc) items.push(`<li><span class="grp-main"><b>${tc} card${tc === 1 ? '' : 's'} to check</b><small>Sent on WhatsApp · upload ${tc === 1 ? 'it' : 'them'} to check against what was entered</small></span><button class="btn small primary" data-act="tab" data-v="admin">Check</button></li>`);
   const cur = currentComp();
@@ -908,6 +915,9 @@ function entriesHtml(c, lb){
   const all = lb.all.slice().sort((a,b) => byName(a.golfer, b.golfer));
   let h = '';
   if (A && !fin) h += `<div class="entry-tools"><button class="btn primary" data-act="tab" data-v="admin">${ICONS.camera}Check cards</button><button class="btn" data-act="addEntry">+ Add entries</button></div>`;
+  if (A && !fin) { const o = openRoundOf(c); const shut = compRounds(c).filter(r => r.closedAt && iso(new Date()) <= r.to);
+    if (o) h += `<button class="btn block" style="margin-top:8px" data-act="roundClose" data-cid="${esc(c.id)}" data-round="${o.n}">Close round ${o.n}</button>`;
+    shut.forEach(r => { h += `<p class="hint" style="margin:8px 0 0">Round ${r.n} was closed ${esc(whenText(r.closedAt))}. <button class="textbtn" data-act="roundReopen" data-cid="${esc(c.id)}" data-round="${r.n}">Reopen round ${r.n}</button></p>`; }); }
   if (!all.length) return h + `<div class="empty" style="margin-top:12px"><p class="hint">No entries yet.</p></div>`;
   h += `<p class="hint entry-hint">Tap a golfer to see their cards. A * means the card isn't ticked as signed by a marker yet${photoRule() ? " or hasn't been sent to the organiser" : ''}, so it doesn't count. Brackets show a dropped round.</p>`;
   h += '<ul class="list">' + all.map(r => {
@@ -1722,7 +1732,7 @@ function photoBlockHtml(sc, cid, round, gid, W){
   if (card.photoOk) return `<div class="cardphoto ok"><div class="cp-text"><b>Counts without being sent</b><small>The organiser okayed this card.</small>${admin ? upBtn('Upload card') : ''}</div></div>`;
   if (!need) return mineW ? `<div class="cardphoto"><div class="cp-text"><b>Send your card to the organiser</b><small>A photo of the signed card, on WhatsApp.</small>${sendBtn('Send my card', 'small')}</div></div>` : admin ? `<div class="cardphoto"><div class="cp-text"><b>Photo of the card</b><small>None yet.</small>${upBtn('Upload card')}</div></div>` : '';
   if (mineW) return `<div class="cardphoto need"><div class="cp-text"><b>Send your card to the organiser</b><small>Take a photo of your signed card and send it on WhatsApp. Your card counts once it's sent.</small></div>${sendBtn('Send my card to the organiser', 'primary block')}</div>`;
-  return `<div class="cardphoto need"><div class="cp-text"><b>Not sent to the organiser yet</b><small>${cardLocked(card) ? "It wasn't sent by midnight, so this card doesn't count." : "The card won't count until it's sent."}</small>${admin ? `<div class="cp-btns">${upBtn('Upload card')}<button class="btn small" data-act="photoWaive">Count it anyway</button></div>` : ''}</div></div>`;
+  return `<div class="cardphoto need"><div class="cp-text"><b>Not sent to the organiser yet</b><small>${cardLocked(card) ? "It wasn't sent by midnight, so this card doesn't count." : roundShut(card) ? "The round was closed before it was sent, so it doesn't count." : "The card won't count until it's sent."}</small>${admin ? `<div class="cp-btns">${upBtn('Upload card')}<button class="btn small" data-act="photoWaive">Count it anyway</button></div>` : ''}</div></div>`;
 }
 
 /* ---------- Sending the card, and the organiser's Upload card ----------
@@ -1972,6 +1982,28 @@ const ACT = {
   creditLog(el){ openSheet({type:'credit', id: el.dataset.id}); },
   twosTable(){ S.view = 'table'; S.leagueTab = 'twos'; S.card = null; S.compId = null; S.playerId = null; top(); render(); },
   twosOpen(el){ openSheet({type:'twos', cid: el.dataset.cid, round: Number(el.dataset.round)}); },
+  roundClose(el){ const c = D.comps[el.dataset.cid || S.compId]; const n = Number(el.dataset.round); const r = c && compRounds(c).find(x => x.n === n);
+    if (!S.isAdmin || !r || r.closedAt || roundState(r) !== 'open') return;
+    const going = Object.values(D.cards).filter(k => k && k.compId === c.id && Number(k.round) === n && cardStarted(k) && !cardLocked(k) && !cardCounts(c.id, n, k.golferId));
+    const unsent = going.filter(k => { const sc = scoreCard(c, n, k.golferId); return sc.complete && sc.marked && !sc.photoOk; }).length; const unfinished = going.length - unsent;
+    const nxt = compRounds(c).find(x => x.n === n + 1);
+    const bits = [`Golfers can't start, enter or send cards for round ${n} after this, and Home moves on to ${nxt ? `round ${n + 1}` : 'the end of the month'}.`];
+    if (unfinished) bits.push(`${unfinished} golfer${unfinished === 1 ? " has started but hasn't" : "s have started but haven't"} finished their card, so ${unfinished === 1 ? 'it' : 'those'} won't count.`);
+    if (unsent) bits.push(`${unsent} signed card${unsent === 1 ? " hasn't" : "s haven't"} been sent to you yet. ${unsent === 1 ? 'It' : 'They'} won't count unless you upload ${unsent === 1 ? 'it' : 'them'} or tap Count it anyway.`);
+    const x = twosOn() ? twosItem(c.id, n) : null; const tw = !!(x && !x.closed && (x.entrants.length || x.carryIn > 0.004));
+    if (tw) bits.push(`The 2's closes too: ${x.winners.length ? `${x.ace ? 'hole-in-one! ' : ''}${x.winners.map(w => twosWho(w, true)).join(', ')}` : `no 2s, so the ${euro(x.pot)} rolls over`}.${x.toConfirm ? ` ${x.toConfirm === 1 ? "One 2's payment is" : `${x.toConfirm} 2's payments are`} still to confirm, so ${x.toConfirm === 1 ? 'that golfer is' : 'those golfers are'} left out.` : ''}${nxt ? ` Golfers can join round ${n + 1}'s 2's straight away.` : ''}`);
+    bits.push('You can reopen it.');
+    askConfirm(`Close round ${n}?`, bits.join(' '), `Close round ${n}`, async () => {
+      const cur = D.comps[c.id]; const L = tw ? twosItem(c.id, n) : null;
+      const rounds = compRounds(cur).map(y => y.n === n ? Object.assign({}, y, {closedAt: Date.now(), closesWas: y.closes != null ? y.closes : null, closes: be.stamp(new Date())}) : y);
+      const data = Object.assign({}, cur, {rounds}); if (L && !L.closed) data.twosClosed = Object.assign({}, cur.twosClosed || {}, {[String(n)]: twosRecord(L)}); delete data.id;
+      if (await put(`comps/${c.id}`, data)) { localSet(`comps/${c.id}`, data); MEMO = {}; render(); toast(`Round ${n} closed.${L ? " The 2's is closed too." : ''}`); } }); },
+  roundReopen(el){ const c = D.comps[el.dataset.cid || S.compId]; const n = Number(el.dataset.round); const r = c && compRounds(c).find(x => x.n === n); if (!S.isAdmin || !r || !r.closedAt) return;
+    askConfirm(`Reopen round ${n}?`, `Golfers can start, enter and send cards for round ${n} again until the weekend ends. The 2's stays closed: reopen it from the 2's club button if you need to.`, 'Reopen', async () => {
+      const cur = D.comps[c.id];
+      const rounds = compRounds(cur).map(y => { if (y.n !== n) return y; const o = Object.assign({}, y, {closes: y.closesWas != null ? y.closesWas : be.stamp(parseDate(addDays(y.from, 3)))}); delete o.closedAt; delete o.closesWas; return o; });
+      const data = Object.assign({}, cur, {rounds}); delete data.id;
+      if (await put(`comps/${c.id}`, data)) { localSet(`comps/${c.id}`, data); MEMO = {}; render(); toast(`Round ${n} reopened`); } }); },
   twosClose(el){ const c = D.comps[el.dataset.cid]; const n = Number(el.dataset.round); const x = c && twosItem(c.id, n); if (!x || x.closed || !S.isAdmin) return;
     const out = x.entrants.filter(t => twosIn(t)).filter(t => { const card = cardOf(c.id, n, t.golferId); return !cardCounts(c.id, n, t.golferId) && !(cardStarted(card) && cardLocked(card)); }).length;
     const bits = [x.winners.length ? `${x.ace ? 'Hole-in-one! ' : ''}${x.winners.map(w => twosWho(w, true)).join(', ')}.${x.leftover > 0.004 ? ` ${euro(x.leftover)} left over rolls on.` : ''}` : `No 2s, so the ${euro(x.pot)} rolls over to the next round.`];
@@ -1980,8 +2012,7 @@ const ACT = {
     bits.push("Nobody can join or pay for this round after it's closed, and the result is fixed. You can reopen it.");
     askConfirm(`Close the 2's for round ${n}?`, bits.join(' '), "Close the 2's", async () => {
       const L = twosItem(c.id, n); if (!L) return; const cur = D.comps[c.id];
-      const rec = {closedAt: Date.now(), by: S.user.uid, pot: L.pot, carryIn: L.carryIn, paid: L.paid, ace: !!L.ace, leftover: L.shares ? L.leftover : 0, rolled: L.shares ? L.leftover : L.pot, winners: L.winners.map(w => ({gid: w.gid, holes: w.holes, ace: !!w.ace, won: w.won}))};
-      const data = Object.assign({}, cur, {twosClosed: Object.assign({}, cur.twosClosed || {}, {[String(n)]: rec})}); delete data.id;
+      const data = Object.assign({}, cur, {twosClosed: Object.assign({}, cur.twosClosed || {}, {[String(n)]: twosRecord(L)})}); delete data.id;
       if (await put(`comps/${c.id}`, data)) { localSet(`comps/${c.id}`, data); MEMO = {}; openSheet({type:'twos', cid: c.id, round: n}); toast(`2's closed for round ${n}. Share the result with the group.`); } }); },
   twosReopen(el){ const c = D.comps[el.dataset.cid]; const n = Number(el.dataset.round); if (!c || !twosClosedRec(c, n) || !S.isAdmin) return;
     askConfirm(`Reopen round ${n} of the 2's?`, "The result goes back to being worked out from the cards and payments, and golfers can join again while the round is still open.", 'Reopen', async () => {
@@ -2281,6 +2312,7 @@ function twosLedger(){
   });
   return (MEMO.twos = out);
 }
+function twosRecord(L){ return {closedAt: Date.now(), by: S.user.uid, pot: L.pot, carryIn: L.carryIn, paid: L.paid, ace: !!L.ace, leftover: L.shares ? L.leftover : 0, rolled: L.shares ? L.leftover : L.pot, winners: L.winners.map(w => ({gid: w.gid, holes: w.holes, ace: !!w.ace, won: w.won}))}; }
 function twosClosedRec(c, n){ const m = c && c.twosClosed; return m && typeof m === 'object' ? (m[String(n)] || null) : null; }
 // Once the organiser closes a round's 2's, golfers can join (and pay for) the next round of the month straight away.
 function twosEarly(c, n){ if (!c || c.status !== 'open' || n <= 1) return false; const r = compRounds(c).find(x => x.n === Number(n));
