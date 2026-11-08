@@ -110,6 +110,8 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 
 ## What the organiser can do
 
+- **Test a competition** (Admin): one tap starts a one-round test competition that's open today. **Try it as a golfer** puts you on Home in it as a golfer, so you can Start my round, enter scores, send your card, then check it under Check cards. Only organisers ever see it, it never counts for the league, handicaps or the 2's, and **Finish testing** takes you back. Delete it in Admin when you're done.
+
 - Add and edit golfers and their emails, let in people who ask to join, and add other organisers.
 - Play too: tap **Add me** in the To do box on Home to put yourself on the golfer list. Locking **Admin** (or tapping your initials → **See the app as a golfer**) shows you exactly what golfers see, with your own card. Tap your initials → **Back to organiser view** to return; Admin asks for the code again.
 - Create months and change round dates.

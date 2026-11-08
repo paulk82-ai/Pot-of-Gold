@@ -354,7 +354,7 @@ function league(season){
 }
 function playerStats(gid, season){
   const out = {counts:{eagle:0, birdie:0, par:0, bogey:0, double:0, pickup:0}, holes:0, byPar:{3:[],4:[],5:[]}, perHole:{}, months:[], bests:{}, cards:0};
-  Object.values(D.comps).filter(c => inSeason(c, season)).sort((a,b) => String(b.date||'').localeCompare(String(a.date||''))).forEach(c => {
+  Object.values(D.comps).filter(c => !c.test && inSeason(c, season)).sort((a,b) => String(b.date||'').localeCompare(String(a.date||''))).forEach(c => {
     if (!entryOf(c.id, gid)) return;
     const lb = leaderboard(c); const row = lb.all.find(r => r.gid === gid);
     compRounds(c).forEach(r => {
@@ -501,6 +501,7 @@ function resolveRole(){
   S.adminRole = !!(D.admins && (D.admins.emails || []).includes(email));
   S.myGid = D.member ? D.member.golferId : null;
   try { S.golferMode = localStorage.getItem('rgc-golfer-view') === '1'; } catch (_) {}
+  try { S.testFocus = sessionStorage.getItem('rgc-test-focus') === '1'; } catch (_) {}
   applyMode();
   if (!S.adminRole && !S.myGid) { S.phase = D.admins ? 'nomember' : 'bootstrap'; stopDataOnly(); render(); return; }
   if (S.phase !== 'app' || wasAdmin !== S.adminRole || wasGid !== S.myGid) { S.phase = 'app'; startData(); }
@@ -732,10 +733,14 @@ function activityHtml(){
 }
 
 /* ----- Home: this month at a glance, with the golfer's own card first ----- */
-function openComps(){ return Object.values(D.comps).filter(c => c.status !== 'final').sort((a,b) => String(a.date||'').localeCompare(String(b.date||''))); }
+// Test competitions are only seen by organisers, and only become Home's month while an organiser is trying one out.
+function testComp(){ return Object.values(D.comps).find(c => c.test && c.status !== 'final') || null; }
+function testing(){ return !!(S.adminRole && S.testFocus && testComp()); }
+function openComps(){ return Object.values(D.comps).filter(c => c.status !== 'final' && (!c.test || S.adminRole)).sort((a,b) => String(a.date||'').localeCompare(String(b.date||''))); }
 // The month that's running now: one with a round open, else one with a round coming up, else the latest unfinished one.
 function currentComp(){
-  const open = openComps(); const has = st => c => compRounds(c).some(r => roundState(r) === st);
+  if (testing()) return testComp();
+  const open = openComps().filter(c => !c.test); const has = st => c => compRounds(c).some(r => roundState(r) === st);
   return open.find(has('open')) || open.find(has('upcoming')) || open[open.length - 1] || null;
 }
 function lastFinal(){ return Object.values(D.comps).filter(c => c.status === 'final' && !c.test).sort((a,b) => String(b.date||'').localeCompare(String(a.date||'')))[0] || null; }
@@ -749,6 +754,7 @@ function viewHome(){
     h += `<section class="hero"><span class="eyebrow">Pot of Gold</span><h1 class="hero-title">No month running</h1><p class="hero-sub">${S.isAdmin ? 'Create the next month and it shows here for everyone.' : 'The organiser will post the next month here.'}</p>${S.isAdmin ? '<button class="btn primary block" data-act="newComp">New competition</button>' : ''}</section>`;
     const last = lastFinal(); return h + (last ? miniTable(last) : '');
   }
+  if (c.test) h += `<p class="banner testbanner"><b>Test competition.</b> Nothing here counts or shows to golfers. <button class="textbtn" data-act="testEnd">Finish testing</button></p>`;
   h += homeHero(c) + creditHomeNote(c) + (twosOn() ? (() => { const x = twosNow(); return x ? twosPanelHtml(x) : ''; })() : '') + (S.isAdmin ? activityHtml() : '') + miniTable(c);
   const last = lastFinal(); if (last && last.id !== c.id) h += lastMonthHtml(last);
   return h;
@@ -1054,7 +1060,7 @@ function viewTable(){
   return h + (S.leagueTab === 'year' ? yearTableHtml() : S.leagueTab === 'twos' && twosOn() ? twosTableHtml() : monthTableHtml());
 }
 function monthTableHtml(){
-  const comps = Object.values(D.comps).sort((a,b) => String(b.date||'').localeCompare(String(a.date||'')));
+  const comps = Object.values(D.comps).filter(c => !c.test || S.adminRole).sort((a,b) => String(b.date||'').localeCompare(String(a.date||'')));
   if (!comps.length) return `<section class="empty"><p class="hint">No months yet. The monthly table appears once the organiser creates a month.</p></section>`;
   let c = D.comps[S.leagueMonth]; if (!c) c = currentComp() || comps[0];
   const lb = leaderboard(c); const rs = compRounds(c); const fin = c.status === 'final';
@@ -1245,6 +1251,7 @@ function viewAdmin(){
   const admins = (D.admins && D.admins.emails) || [];
   return `<div class="pagehead"><div><span class="eyebrow">Admin</span><h1>Settings</h1></div><button class="btn small" data-act="lockAdmin">Lock</button></div>
   ${checkCardsHtml()}
+  ${testCompHtml()}
   <p class="hint" style="margin:14px 0 14px">Settings: changes save as you go, and you'll see "Settings saved" each time. The button at the bottom saves everything again if you want to be sure.</p>
   <form id="setupForm" class="setup" onsubmit="return false">
     <section><div class="sec-head" style="margin-top:0"><h2>Entry & payments</h2></div><div class="panel">
@@ -1902,6 +1909,15 @@ function cardsToCheck(){
   }));
   return out.sort((a, b) => (b.sent - a.sent) || (b.card.round - a.card.round) || gName(a.card.golferId).localeCompare(gName(b.card.golferId)));
 }
+function testCompHtml(){
+  const t = testComp();
+  let h = `<section><div class="sec-head"><h2>Test a competition</h2></div><div class="panel">`;
+  if (!t) return h + `<p class="hint" style="margin-top:0">Try the whole thing yourself before golfers do: a one-round test competition that's open today. Start my round, enter scores, send your card, check it and see the leaderboard. Only organisers see it, and it never counts for the league, handicaps or the 2's.</p><button class="btn primary block" data-act="testStart">Start a test competition</button></div></section>`;
+  const r = compRounds(t)[0]; const cards = Object.values(D.cards).filter(k => k.compId === t.id).length;
+  return h + `<p class="hint" style="margin-top:0"><b>${esc(t.name)}</b> is running${r ? ` (${esc(roundLabel(r))})` : ''} · ${cards} card${cards === 1 ? '' : 's'}. Only organisers see it, and nothing in it counts.</p>
+    <button class="btn primary block" data-act="testPlay">Try it as a golfer</button>
+    <div class="entry-tools" style="margin-top:8px"><button class="btn" data-act="openComp" data-id="${esc(t.id)}">Open it</button><button class="btn" data-act="testDelete">Delete it</button></div></div></section>`;
+}
 function checkCardsHtml(){
   const list = cardsToCheck(); const cur = currentComp(); const u = sc => unitFor(sc.rc.format) || '';
   let h = `<section><div class="sec-head" style="margin-top:0"><h2>Check cards</h2></div><div class="panel">`;
@@ -2000,6 +2016,22 @@ const ACT = {
     if (f.length && sh.pick == null) { const mine = f.filter(x => x.gid === sh.ctx.gid); sh.pick = mine.length === 1 ? f.indexOf(mine[0]) : f.length === 1 ? 0 : null; }
     if (sh.phase === 'compare' && sh.pick == null) sh.phase = 'pick'; renderSheet(); },
   uploadDo(el){ confirmUpload(el.dataset.m); },
+  async testStart(){ if (!S.isAdmin || testComp()) return; const today = iso(new Date()); const id = newId(); const k = cfg();
+    const data = {test: true, name: 'Test competition', date: today, status: 'open', format: 'stableford', holes: range(1, 18), tee: k.tee || 'white', fee: 0, allowance: num(k.allowance, 95), best: 1,
+      rounds: [{n: 1, from: today, to: addDays(today, 2), opens: be.stamp(new Date(Date.now() - 60000)), closes: be.stamp(parseDate(addDays(today, 3))), format: null, tee: null, holes: null}]};
+    const ops = [{path: `comps/${id}`, data}]; if (S.myGid) ops.push({path: `comps/${id}/entries/${S.myGid}`, data: {compId: id, golferId: S.myGid, paid: true, method: 'card', paidAt: new Date().toISOString(), createdAt: Date.now()}});
+    if (await batch(ops)) { ops.forEach(o => localSet(o.path, o.data)); MEMO = {}; render(); toast('Test competition started. Tap Try it as a golfer.'); } },
+  testPlay(){ const t = testComp(); if (!t) return; if (!S.myGid) { toast('Add yourself as a golfer first (To do on Home), then try again.'); return; }
+    S.testFocus = true; try { sessionStorage.setItem('rgc-test-focus', '1'); } catch (_) {}
+    if (!entryOf(t.id, S.myGid)) { const p = `comps/${t.id}/entries/${S.myGid}`; const d = {compId: t.id, golferId: S.myGid, paid: true, method: 'card', paidAt: new Date().toISOString(), createdAt: Date.now()}; put(p, d).then(ok => ok && localSet(p, d)); }
+    S.view = 'home'; S.card = null; setMode(true); top(); render(); toast("You're in the test competition as a golfer. Tap Start my round."); },
+  testEnd(){ S.testFocus = false; try { sessionStorage.removeItem('rgc-test-focus'); } catch (_) {} setMode(false); S.card = null; top(); render(); toast('Back to the organiser view. Delete the test competition in Admin when you\'re done.'); },
+  testDelete(){ const t = testComp(); if (!t || !S.adminRole) return;
+    askConfirm('Delete the test competition?', 'Its entries, cards and photos are removed. Nothing else changes.', 'Delete', async () => {
+      const cards = Object.values(D.cards).filter(x => x.compId === t.id);
+      const ops = [].concat(entriesFor(t.id).map(e => ({path: `comps/${t.id}/entries/${e.golferId}`, del: true})), cards.map(x => ({path: `comps/${t.id}/cards/${x.id}`, del: true})), cards.map(x => ({path: `comps/${t.id}/photos/${x.id}`, del: true})), [{path: `comps/${t.id}`, del: true}]);
+      for (let i = 0; i < ops.length; i += 400) { if (!(await batch(ops.slice(i, i + 400)))) return; }
+      S.testFocus = false; try { sessionStorage.removeItem('rgc-test-focus'); } catch (_) {} if (S.compId === t.id) S.compId = null; MEMO = {}; render(); toast('Test competition deleted'); }, true); },
   checkAll(){ if (!S.isAdmin) return; const list = cardsToCheck().filter(x => cardCounts(x.c.id, x.card.round, x.card.golferId)); if (!list.length) return; const n = list.length; const left = cardsToCheck().length - n;
     askConfirm(`Mark ${n} card${n === 1 ? '' : 's'} as checked?`, `Use this once you've checked ${n === 1 ? 'it' : 'them'} against the photos you were sent. ${n === 1 ? 'It comes' : 'They come'} off the list, and nothing on the cards changes.${left ? ` ${left} card${left === 1 ? " that doesn't" : "s that don't"} count yet stay${left === 1 ? 's' : ''} on the list.` : ''} If a golfer changes a card afterwards, it comes back on the list.`, 'Mark checked', async () => {
       const ops = list.map(x => { const {c, card} = x; const base = cardBase(c.id, card.round, card.golferId);
@@ -2015,7 +2047,7 @@ const ACT = {
   pickSrc(el){ const kind = S.sheet && S.sheet.kind; if (!kind) return; const id = (kind === 'scan' ? 'scan' : 'photo') + (el.dataset.src === 'cam' ? 'Cam' : 'File');
     const f = $('#' + id); closeSheetQuiet(); render(); if (!f) return; f.value = ''; f.click(); },
   startRound(el){ const cid = el.dataset.cid, round = Number(el.dataset.round); const c = D.comps[cid]; if (!c || !canStart(cid, round)) return;
-    if (twosOn()) { openSheet({type:'start', cid, round}); return; }
+    if (twosOn() && !c.test) { openSheet({type:'start', cid, round}); return; }
     askConfirm('Start your round?', `This is your round ${round} card for ${c.name}. You only get one this weekend. ${signRule('Enter your scores')} by midnight tonight, or the round won't count.`, 'Start my round', () => doStartRound(cid, round, false)); },
   startGo(el){ const sh = S.sheet; if (!sh || sh.type !== 'start') return; const twos = el.dataset.twos === '1' && !twosOf(sh.cid, sh.round, S.myGid); closeSheetQuiet(); doStartRound(sh.cid, sh.round, twos, el.dataset.pay === '1'); },
   twosJoin(el){ const cid = el.dataset.cid, round = Number(el.dataset.round); if (canJoinTwos(cid, round)) joinTwos(cid, round); },
@@ -2374,7 +2406,7 @@ function twosResult(x){
 // golfer starts their round or within 10 minutes of starting it. After that they can't join or say they've paid.
 function twosWindowOpen(cid, round, gid){
   const c = D.comps[cid]; const r = c && compRounds(c).find(x => x.n === Number(round));
-  if (!c || c.status !== 'open' || !r || twosClosedRec(c, r.n)) return false;
+  if (!c || c.test || c.status !== 'open' || !r || twosClosedRec(c, r.n)) return false;
   if (roundState(r) !== 'open') return twosEarly(c, r.n);
   const card = cardOf(cid, round, gid); if (!cardStarted(card)) return true;
   return !cardLocked(card) && Date.now() - msOf(card.startedAt) < 600000;
