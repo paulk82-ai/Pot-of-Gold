@@ -908,6 +908,7 @@ function todoHtml(open){
     if (chk) items.push(`<li><span class="grp-main"><b>${chk} payment${chk === 1 ? '' : 's'} to check</b><small>${esc(c.name)} · check your Revolut, then confirm</small></span><button class="btn small primary" data-act="payments" data-id="${esc(c.id)}">Check</button></li>`); });
   openComps().forEach(c => compRounds(c).filter(r => roundCloseDue(c, r)).forEach(r => items.push(`<li><span class="grp-main"><b>Close round ${r.n}</b><small>${esc(c.name)} · stops new cards${twosOn() ? ", closes the 2's" : ''} and moves everyone on</small></span><button class="btn small primary" data-act="roundClose" data-cid="${esc(c.id)}" data-round="${r.n}">Close</button></li>`)));
   if (twosOn()) twosLedger().filter(x => twosCloseDue(x) && !roundCloseDue(x.c, x.r)).forEach(x => items.push(`<li><span class="grp-main"><b>Close the 2's for round ${x.r.n}</b><small>${esc(x.c.name)} · ${esc(twosResult(x))}</small></span><button class="btn small primary" data-act="twosOpen" data-cid="${esc(x.c.id)}" data-round="${x.r.n}">Close</button></li>`));
+  if (twosOn()) twosLedger().filter(x => x.toConfirm > 0 && x.state !== 'played').forEach(x => items.push(`<li><span class="grp-main"><b>${x.toConfirm} 2's payment${x.toConfirm === 1 ? '' : 's'} to confirm</b><small>${esc(x.c.name)} · round ${x.r.n} · check Revolut, then tick them off</small></span><button class="btn small primary" data-act="twosOpen" data-cid="${esc(x.c.id)}" data-round="${x.r.n}">Confirm</button></li>`));
   const tc = cardsToCheck().filter(x => x.sent).length;
   if (tc) items.push(`<li><span class="grp-main"><b>${tc} card${tc === 1 ? '' : 's'} to check</b><small>Sent on WhatsApp · upload ${tc === 1 ? 'it' : 'them'} to check against what was entered</small></span><button class="btn small primary" data-act="tab" data-v="admin">Check</button></li>`);
   const cur = currentComp();
@@ -1299,6 +1300,7 @@ function viewAdmin(){
   <div class="admin-tabs" data-show="${S.adminTab || 'cards'}">
   <div data-tab="cards">${checkCardsHtml()}</div>
   <div data-tab="setup">${testCompHtml()}</div>
+  <div data-tab="money">${moneyShortcutsHtml()}</div>
   <p class="hint" data-tab="money rules" style="margin:14px 0 14px">Settings: changes save as you go, and you'll see "Settings saved" each time. The button at the bottom saves everything again if you want to be sure.</p>
   <form id="setupForm" class="setup" onsubmit="return false">
     <section data-tab="money"><div class="sec-head" style="margin-top:0"><h2>Entry & payments</h2></div><div class="panel">
@@ -2007,6 +2009,14 @@ function cardsToCheck(){
     out.push({c, card, sc, sent: !!card.photoAt});
   }));
   return out.sort((a, b) => (b.sent - a.sent) || (b.card.round - a.card.round) || gName(a.card.golferId).localeCompare(gName(b.card.golferId)));
+}
+function moneyShortcutsHtml(){
+  const c = currentComp(); if (!c) return ''; const chk = entriesFor(c.id).filter(e => payState(e) === 'claimed').length; const un = entriesFor(c.id).filter(e => payState(e) === 'unpaid').length;
+  let h = `<section class="setup"><div class="sec-head"><h2>Payments</h2></div><div class="panel"><p class="hint" style="margin-top:0">Tick off payments once you've seen them on Revolut.</p>`;
+  h += `<button class="btn block ${chk ? 'primary' : ''}" data-act="payments" data-id="${esc(c.id)}">Entries · ${esc(c.name)}${chk ? ` · ${chk} to confirm` : ''}${un ? ` · ${un} unpaid` : ''}</button>`;
+  if (twosOn()) { const L = twosLedger().filter(x => x.c.id === c.id && x.state !== 'upcoming' || (x.c.id === c.id && twosEarly(x.c, x.r.n)));
+    L.filter(x => !x.closed || x.toConfirm).slice(-2).forEach(x => { h += `<button class="btn block ${x.toConfirm ? 'primary' : ''}" style="margin-top:8px" data-act="twosOpen" data-cid="${esc(c.id)}" data-round="${x.r.n}">2's club · round ${x.r.n}${x.toConfirm ? ` · ${x.toConfirm} to confirm` : ''} · pot ${euro(x.pot)}</button>`; }); }
+  return h + `</div></section>`;
 }
 function testCompHtml(){
   const t = testComp();
