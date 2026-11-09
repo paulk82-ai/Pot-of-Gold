@@ -765,6 +765,34 @@ function viewHome(){
   const last = lastFinal(); if (last && last.id !== c.id) h += lastMonthHtml(last);
   return h;
 }
+// "Next step" on Home: the one thing a golfer needs to do now, as one big button, with a row showing how far along they are.
+function nextStep(c){
+  const me = S.myGid; if (!c || !me || S.isAdmin || c.status !== 'open') return null;
+  const e = entryOf(c.id, me); const ps = payState(e); const rs = compRounds(c);
+  const open = rs.find(r => roundState(r) === 'open'); const next = rs.find(r => roundState(r) === 'upcoming');
+  const tw = open && twosOn() ? twosOf(c.id, open.n, me) : null; const only = !e && !!tw;
+  const steps = only ? ['Start', 'Scores', 'Signed', 'Sent'] : ['Enter', 'Pay', 'Start', 'Scores', 'Signed', 'Sent'];
+  const payBtn = e && ps === 'unpaid' ? `<button class="btn block" style="margin-top:8px" data-act="pay" data-id="${esc(c.id + '/' + me)}">Pay my ${euro(compFee(c))} entry</button>` : '';
+  const mk = (at, title, text, btn, extra) => ({at: only ? Math.max(0, at - 2) : at, steps, title, text, btn: btn && at > 1 && at < 6 && !btn.includes('data-act="pay"') ? btn + payBtn : btn, extra, unpaid: !only && ps === 'unpaid'});
+  const cid = esc(c.id);
+  if (!e && !tw) return stillToPlay(c) ? mk(0, `Enter ${c.name}`, `${euro(compFee(c))} covers all ${rs.length} rounds, and your best ${compBest(c)} count.`, `<button class="btn primary block big" data-act="selfEnter" data-cid="${cid}">Enter now</button>`) : null;
+  if (e && ps === 'unpaid' && !open) return mk(1, `Pay your ${euro(compFee(c))} entry`, 'Pay on Revolut, then tap I\'ve paid.', `<button class="btn primary block big" data-act="pay" data-id="${esc(c.id + '/' + me)}">Pay now</button>`);
+  if (!open) return next ? mk(2, `Next: round ${next.n}, ${dParts(next.from).dow} ${dParts(next.from).day} ${dParts(next.from).mon}`, 'When you get to the course, tap Start my round here before you tee off.', '', 'wait') : null;
+  const card = cardOf(c.id, open.n, me); const sc = scoreCard(c, open.n, me); const at = `data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}"`;
+  const tw2 = twosOn() ? (twosIn(twosOf(c.id, open.n, me)) ? " You're in the 2's this round." : twosWindowOpen(c.id, open.n, me) ? " It'll ask about the 2's club." : '') : '';
+  if (!cardStarted(card)) return canStart(c.id, open.n) ? mk(2, `Start round ${open.n}`, `Tap this at the course, before you tee off. You get one round this weekend.${tw2}`, `<button class="btn primary block big" data-act="startRound" data-cid="${cid}" data-round="${open.n}">Start my round</button>`) : null;
+  if (cardLocked(card) || roundShut(card)) return sc.valid || cardCounts(c.id, open.n, me) ? mk(6, `Round ${open.n} done`, 'Your card counts. Well played!', '', 'done') : mk(6, `Round ${open.n} is closed`, "Your card wasn't finished in time, so this round doesn't count. Your best rounds still count.", '', 'missed');
+  if (!sc.complete) return mk(3, 'Enter your scores', sc.filled ? `${sc.filled} of ${sc.rc.holes.length} holes in. Carry on from where you left off.` : `Type in your score for each hole, by ${deadlineText(card) || 'midnight'}.`, `<button class="btn primary block big" data-act="nextScores" ${at}>${sc.filled ? 'Carry on entering' : 'Enter my scores'}</button>`);
+  if (!sc.marked) return mk(4, 'Add your marker', "Type your marker's name and tick that they've signed your card.", `<button class="btn primary block big" data-act="openCard" ${at}>Add my marker</button>`);
+  if (!sc.photoOk) return mk(5, 'Send your card to the organiser', 'Take a photo of your signed card and share it on WhatsApp. It only counts once it\'s sent.', `<button class="btn primary block big" data-act="sendCard" ${at}>${ICONS.share}Send my card</button>`);
+  return mk(6, `All done for round ${open.n}`, 'Your card counts. Well played!', '', 'done');
+}
+function nextStepHtml(c){
+  const n = nextStep(c); if (!n) return '';
+  const done = n.extra === 'done', missed = n.extra === 'missed';
+  return `<section class="nextstep ${done ? 'done' : missed ? 'missed' : ''}"><span class="eyebrow">${done ? 'Done' : missed ? 'Missed' : 'Your next step'}</span><h2>${esc(n.title)}</h2><p>${esc(n.text)}</p>${n.btn || ''}
+    <ol class="ns-steps" aria-label="Your progress">${n.steps.map((t, i) => `<li class="${i < n.at && !(t === 'Pay' && n.unpaid) ? 'ok' : i === n.at && !done && !missed && n.extra !== 'wait' ? 'now' : ''}">${t}</li>`).join('')}</ol></section>`;
+}
 function homeHero(c){
   const rs = compRounds(c); const open = rs.find(r => roundState(r) === 'open'); const next = rs.find(r => roundState(r) === 'upcoming');
   const me = S.myGid; const e = me ? entryOf(c.id, me) : null; const fee = compFee(c); const cid = esc(c.id);
@@ -772,14 +800,16 @@ function homeHero(c){
   if (open) h += `<h1 class="hero-title">Round ${open.n} is open</h1><p class="hero-sub">${esc(roundLabel(open))} · ${esc(roundInfo(c, open.n))}</p>`;
   else if (next) { const d = dParts(next.from); h += `<h1 class="hero-title">Round ${next.n} opens ${d.dow} ${d.day} ${d.mon}</h1><p class="hero-sub">Open Friday to Sunday · ${esc(roundInfo(c, next.n))}</p>`; }
   else h += `<h1 class="hero-title">All rounds played</h1><p class="hero-sub">The results are final once the organiser finalises the month.</p>`;
-  const t2only = me && !e && open && twosOn() ? twosOf(c.id, open.n, me) : null;
+  const t2only = me && !e && open && twosOn() ? twosOf(c.id, open.n, me) : null; const ns = !!nextStep(c);
+  h += nextStepHtml(c);
   if (t2only) h += myRoundHtml(c, open, true);
-  if (me && !e) {
+  if (me && !e && ns && !t2only) { h += `<p class="hero-text">Entry is ${euro(fee)} and covers all ${rs.length} round${rs.length === 1 ? '' : 's'}. Your best ${compBest(c)} card${compBest(c) === 1 ? '' : 's'} count.</p>${payNote(c)}`; }
+  else if (me && !e) {
     h += `<p class="hero-text">${t2only ? `You're playing the 2's only this weekend. To play for the monthly prize too, enter ${esc(c.name)}. ` : ''}Entry is ${euro(fee)} and covers all ${rs.length} round${rs.length === 1 ? '' : 's'}. Your best ${compBest(c)} card${compBest(c) === 1 ? '' : 's'} count.</p><button class="btn primary block big" data-act="selfEnter" data-cid="${cid}">Enter ${esc(c.name)}</button>${payNote(c)}`;
   } else if (me && e) {
     if (open) h += myRoundHtml(c, open, false);
     const ps = payState(e);
-    if (ps === 'unpaid') h += `<div class="paynote"><span>Your ${euro(fee)} entry isn't paid yet.</span><button class="btn small primary" data-act="pay" data-id="${esc(c.id + '/' + me)}">Pay now</button></div>`;
+    if (ps === 'unpaid' && !ns) h += `<div class="paynote"><span>Your ${euro(fee)} entry isn't paid yet.</span><button class="btn small primary" data-act="pay" data-id="${esc(c.id + '/' + me)}">Pay now</button></div>`;
     else if (ps === 'claimed') h += `<p class="hint">Payment sent. The organiser is checking it.</p>`;
     h += positionHtml(c);
   } else if (S.isAdmin) {
@@ -790,11 +820,12 @@ function homeHero(c){
   return h + '</section>';
 }
 function myRoundHtml(c, open, only){
-  const me = S.myGid; const cid = esc(c.id); let h = '';
+  const me = S.myGid; const cid = esc(c.id); let h = ''; const ns = !!nextStep(c);
   const sc = scoreCard(c, open.n, me); const done = sc.complete && sc.marked && sc.photoOk; const needPhoto = sc.complete && sc.marked && !sc.photoOk; const u = unitFor(sc.rc.format); const card = sc.card;
   const val = `${cardValueText(sc)}${u ? ' ' + u : ''}`; const late = cardLocked(card); const label = only ? `Your 2's card · round ${open.n}` : `Your round ${open.n} card`;
   if (canStart(c.id, open.n)) {
     h += `<div class="mycard"><span class="label">${label}</span><b>Not started yet</b></div>`;
+    if (ns) return h;
     h += `<button class="btn primary block big" data-act="startRound" data-cid="${cid}" data-round="${open.n}">Start my round</button>`;
     h += only ? `<p class="hint">Tap this before you tee off. This card is just for the 2's, not the monthly competition. ${signRule('Enter it')} by midnight that day.</p>`
       : `<p class="hint">Tap this before you tee off. You get one round this weekend. ${signRule('Enter it')} by midnight that day, or it doesn't count.${twosOn() ? (twosIn(twosOf(c.id, open.n, me)) ? " You're in the 2's this round." : twosWindowOpen(c.id, open.n, me) ? " It'll ask about the 2's club." : '') : ''}</p>`;
@@ -803,6 +834,7 @@ function myRoundHtml(c, open, only){
     const timing = cardStarted(card) ? (late ? `Started ${whenText(card.startedAt)} · locked at midnight` : `Started ${whenText(card.startedAt)} · enter by ${deadlineText(card)}`) : '';
     h += `<div class="mycard ${done ? 'ok' : late || sc.complete ? 'warn' : ''}"><span class="label">${label}</span><b>${esc(status)}</b>${timing ? `<small>${esc(timing)}</small>` : ''}${done ? `<span class="okmark">${only ? 'In' : 'Counts'}</span>` : ''}</div>`;
     if (late) h += `<button class="btn block" data-act="openCard" data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}">View my card</button>`;
+    else if (ns) { if (sc.filled) h += `<button class="btn block" data-act="openCard" data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}">Open my card</button>`; }
     else {
       if (needPhoto) h += `<button class="btn primary block big" data-act="sendCard" data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}">${ICONS.share}Send my card to the organiser</button>`;
       h += `<button class="btn ${needPhoto ? '' : 'primary'} block big" style="margin-top:8px" data-act="openCard" data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}">${sc.filled ? 'Open my card' : 'Enter my scores'}</button>`;
@@ -2012,6 +2044,7 @@ const ACT = {
   async checkOk(){ const {cid, round, gid} = S.card || {}; const card = cardOf(cid, round, gid); if (!S.isAdmin || !writtenOf(card)) return;
     const base = cardBase(cid, round, gid); const data = Object.assign(base, {updatedAt: card.updatedAt || Date.now(), updatedBy: card.updatedBy || S.user.uid, scanned: Object.assign(base.scanned, {ok:true})});
     const path = `comps/${cid}/cards/${round}_${gid}`; localSet(path, data); render(); if (await put(path, data)) toast('Card check cleared'); },
+  nextScores(el){ const c = D.comps[el.dataset.cid]; if (!c) return; stopPhotos(); S.card = {cid: c.id, round: Number(el.dataset.round), gid: S.myGid}; S.cardEdit = true; S.activeHole = null; top(); render(); },
   startedNext(){ if (S.sheet && S.sheet.type === 'started') { S.sheet.phase = 'step3'; renderSheet(); } },
   startedGo(){ const sh = S.sheet; if (!sh || sh.type !== 'started') return; closeSheetQuiet(); S.card = {cid: sh.cid, round: sh.round, gid: S.myGid}; S.cardEdit = true; S.activeHole = null; top(); render(); },
   sendCard(el){ const ctx = {cid: el.dataset.cid, round: Number(el.dataset.round), gid: el.dataset.gid || S.myGid}; const card = cardOf(ctx.cid, ctx.round, ctx.gid);
