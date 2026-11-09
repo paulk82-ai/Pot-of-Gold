@@ -47,7 +47,7 @@ const S = {
   card:null, activeHole:null, playerId:null, season:String(new Date().getFullYear()), sheet:null, loaded:{},
   adminHash:null, pin:null, changing:false, golferTab:'list', hcpSynced:false, leagueTab:'month', leagueMonth:null, pinRemember:true, courseOpen:false, adminRole:false, golferMode:false, installEvt:null, signinMode:'signin', busy:false
 };
-let MEMO = {}, CONFIRM_FN = null, unsubs = [], SCAN_CTL = null, SCAN_PENDING = null, PHOTO_PENDING = null, SCAN_TICK = null;
+let BULK_CTX = null; let MEMO = {}, CONFIRM_FN = null, unsubs = [], SCAN_CTL = null, SCAN_PENDING = null, PHOTO_PENDING = null, SCAN_TICK = null;
 const cardTimers = {};
 
 /* ---------- Helpers ---------- */
@@ -1842,7 +1842,7 @@ function uploadPrompt(c, round, gid){
   const holes = rcfg(c, round).holes; const k = cfg().course;
   const pars = range(1,18).map(h => `${h}: par ${k.parM[h-1]}${k.parL[h-1] !== k.parM[h-1] ? ` (ladies ${k.parL[h-1]})` : ''}`).join('; ');
   return ['Read this photo of a golf scorecard from Rathsallagh Golf Club, Co. Wicklow, and turn the handwritten gross scores into data.',
-    `We are checking the card of ${gName(gid)}. This round is holes ${holes.join(', ')}, but read every hole that has a score written on it (1 to 18).`, `Pars: ${pars}.`, `Golfers on the club list: ${sortedGolfers().map(g => g.name).join(', ')}.`, '',
+    `${gid ? `We are checking the card of ${gName(gid)}.` : 'We are checking every golfer on this card.'} This round is holes ${holes.join(', ')}, but read every hole that has a score written on it (1 to 18).`, `Pars: ${pars}.`, `Golfers on the club list: ${sortedGolfers().map(g => g.name).join(', ')}.`, '',
     'Rules:',
     '- Read the gross strokes written for each golfer on each hole. A card holds up to four golfers.',
     '- Only read strokes. Ignore any handicap, shots received, nett scores, points and totals written on the card, and the printed yardages, par and stroke index.',
@@ -1888,6 +1888,35 @@ async function runUpload(){
   }
   if (SCAN_CTL === ctl) SCAN_CTL = null; renderSheet();
 }
+// Upload several cards: read every photo first, then go through each golfer found, one at a time, on the same check screen.
+async function runBulk(){
+  const sh = S.sheet; if (!sh || !sh.bulk) return; const B = sh.bulk; const c = D.comps[sh.ctx.cid]; if (!c) { closeSheet(); return; }
+  const ctl = {aborted: false}; SCAN_CTL = ctl; const holes = range(1, 18); renderSheet();
+  const okReply = t => { const r = parseJSON(String(t || '')); return !!(r && Array.isArray(r.golfers)); };
+  for (const file of B.files) {
+    if (ctl.aborted || S.sheet !== sh) return; let thumb = ''; try { thumb = URL.createObjectURL(file); } catch (_) {}
+    sh.attempt = 0; startScanTick(sh); if (S.sheet === sh) renderSheet();
+    try {
+      const img = await imageToBase64(file);
+      const text = await be.scan(uploadPrompt(c, sh.ctx.round, null), img.data, img.mime, okReply, (i) => { sh.attempt = i; });
+      const res = parseJSON(text); if (!res || !Array.isArray(res.golfers)) throw Object.assign(new Error('unreadable reply'), {unreadable: true});
+      const found = res.golfers.slice(0, 6).map(g => { const name = String((g && g.name_on_card) || '').slice(0, 60);
+        return {name, gid: recognise(g && typeof g.match === 'string' ? g.match : null, name), scores: cleanScores(g && g.scores, holes), marker: g && typeof g.marker === 'string' ? g.marker.trim().slice(0, 60) : '', signed: !!(g && g.marker_signed === true), unclear: Array.isArray(g && g.unclear) ? g.unclear.map(Number) : []}; }).filter(f => Object.keys(f.scores).length);
+      if (!found.length) B.items.push({file, thumb, f: null, gid: null, err: 'No scores were found on this photo.'});
+      found.forEach(f => B.items.push({file, thumb, f, gid: f.gid}));
+    } catch (e) { if (ctl.aborted) return; console.warn(e); B.items.push({file, thumb, f: null, gid: null, err: scanErrText(e)}); }
+    B.read++;
+  }
+  if (SCAN_CTL === ctl) SCAN_CTL = null; if (S.sheet !== sh) return;
+  bulkGo(sh, 0);
+}
+function bulkGo(sh, i){
+  const B = sh.bulk; B.i = i; if (S.sheet !== sh) return;
+  if (i >= B.items.length) { sh.phase = 'bulkdone'; renderSheet(); return; }
+  const it = B.items[i]; sh.ctx = Object.assign({}, sh.ctx, {gid: it.gid}); sh.file = it.file; sh.thumbs = it.thumb ? [it.thumb] : []; sh.found = it.f ? [it.f] : []; sh.pick = it.f ? 0 : null; sh.diff = [];
+  sh.err = it.err || ''; sh.errDetail = '';
+  sh.phase = !it.gid ? 'who' : it.f ? 'compare' : 'manual'; renderSheet(); const el = $('#sheetIn'); if (el && el.parentElement) el.parentElement.scrollTop = 0;
+}
 function uploadCompare(sh){
   const {cid, round, gid} = sh.ctx; const c = D.comps[cid]; const g = D.golfers[gid]; const f = sh.found[sh.pick]; const card = cardOf(cid, round, gid);
   const entered = scoreCard(c, round, gid);
@@ -1900,8 +1929,14 @@ function uploadCompare(sh){
 }
 function sheetUpload(){
   const sh = S.sheet; const c = D.comps[sh.ctx.cid]; if (!c) return null; const {round, gid} = sh.ctx; const g = D.golfers[gid]; const fn = firstName(gName(gid));
-  const test = !!sh.ctx.test;
-  let h = `<h3>${test ? 'Test a card' : 'Upload card'}</h3><p class="sub">${esc(gName(gid))} · ${esc(c.name)} · Round ${round}</p>`;
+  const test = !!sh.ctx.test; const B = sh.bulk;
+  if (B && sh.phase === 'bulkreading') return `<h3>Upload cards</h3><p class="sub">${esc(c.name)} · Round ${round}</p><div class="reading"><span class="pulse"></span><p><b>Reading photo ${Math.min(B.read + 1, B.files.length)} of ${B.files.length}…</b> About 10 to 30 seconds each. You can check each card as soon as they're all read.${sh.attempt ? ' Using the backup scanner.' : ''} <span id="scanSecs" style="opacity:.6"></span></p></div><button class="btn block" data-act="stopScan">Stop</button>`;
+  if (B && sh.phase === 'bulkdone') { const fix = B.items.filter(x => x.result === 'fix');
+    return `<h3>All cards done</h3><p class="sub">${esc(c.name)} · Round ${round}</p><p class="notebox ok"><b>${B.done} card${B.done === 1 ? '' : 's'} checked</b>${B.skipped ? `, ${B.skipped} skipped` : ''} from ${B.files.length} photo${B.files.length === 1 ? '' : 's'}.</p>${fix.length ? `<p class="hint">Photo saved, scores to fix:</p>${fix.map(x => `<button class="btn block" style="margin-top:6px" data-act="openCard" data-cid="${esc(c.id)}" data-round="${round}" data-gid="${esc(x.gid)}">Fix ${esc(gName(x.gid))}'s card</button>`).join('')}` : ''}<button class="btn primary block" style="margin-top:12px" data-act="closeSheet">Done</button>`; }
+  let h = `<h3>${test ? 'Test a card' : B ? 'Upload cards' : 'Upload card'}</h3><p class="sub">${gid ? esc(gName(gid)) + ' · ' : ''}${esc(c.name)} · Round ${round}</p>`;
+  if (B) h += `<div class="bulkbar"><span>Card ${B.i + 1} of ${B.items.length}</span><button class="textbtn" data-act="bulkSkip">Skip this one</button></div>`;
+  if (B && sh.phase === 'who') { const it = B.items[B.i]; const gs = sortedGolfers();
+    return h + (sh.thumbs && sh.thumbs.length ? `<img class="photo-full" style="margin-bottom:12px" src="${esc(sh.thumbs[0])}" alt="Photo of the card">` : '') + `<p class="${it.err ? 'errbox' : 'hint'}">${it.err ? esc(it.err) + ' ' : ''}${it.f && it.f.name ? `The name on the card reads <b>${esc(it.f.name)}</b>, which isn't on the golfer list. ` : ''}Whose card is this?</p><label class="field"><span>Golfer</span><select id="bulk-g">${gs.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')}</select></label><button class="btn primary block" data-act="bulkWho">That's them</button>`; }
   if (test) h += `<p class="notebox"><b>Test only.</b> Nothing is saved and no leaderboards change.${sh.phase === 'compare' || sh.phase === 'manual' ? ' Tap a round to check the same card against it.' : ''}</p>`;
   if (test && (sh.phase === 'compare' || sh.phase === 'manual')) h += `<div class="bsel rtabs" style="margin-bottom:12px">${compRounds(c).map(r => `<button data-act="uploadRound" data-v="${r.n}" aria-pressed="${r.n === round}">R${r.n}<small>${esc(shortRange(r))}</small></button>`).join('')}</div>`;
   const big = sh.phase === 'manual' || sh.phase === 'pick';
@@ -1915,7 +1950,7 @@ function sheetUpload(){
     h += `<p class="errbox">${esc(sh.err || '')} Check the photo against what ${esc(fn)} entered.</p>${sh.errDetail ? `<p class="hint" style="margin:-4px 0 12px;word-break:break-word">Details: ${esc(sh.errDetail)}</p>` : ''}`;
     if (sc.filled) h += `<p class="hint">Entered: ${esc(cardValueText(sc))} ${esc(unitFor(sc.rc.format) || '')} · ${sc.gross} strokes. Points use the app's handicap (${fmtHi(cardHi(sc.card, g))}, ${sc.total} shots).</p>` + enteredTable(sc);
     else h += `<p class="hint">${esc(fn)} hasn't entered any scores. Save the photo, then open the card and type them in.</p>`;
-    return h + (test ? `<button class="btn block" style="margin-top:12px" data-act="closeSheet">Done</button>` : `<div class="confirm-actions" style="margin-top:12px">${sc.filled ? `<button class="btn primary" data-act="uploadDo" data-m="check">Looks right, mark checked</button>` : ''}<button class="btn" data-act="uploadDo" data-m="fix">Save photo, fix scores</button></div>`) + `<button class="textbtn" style="margin-top:8px" data-act="uploadRetry">Try reading it again</button>`; }
+    return h + (test ? `<button class="btn block" style="margin-top:12px" data-act="closeSheet">Done</button>` : `<div class="confirm-actions" style="margin-top:12px">${sc.filled ? `<button class="btn primary" data-act="uploadDo" data-m="check">Looks right, mark checked</button>` : ''}<button class="btn" data-act="uploadDo" data-m="fix">Save photo, fix scores</button></div>`) + (B ? '' : `<button class="textbtn" style="margin-top:8px" data-act="uploadRetry">Try reading it again</button>`); }
   if (sh.phase === 'pick') return h + `<p class="hint" style="margin-bottom:10px">Which golfer on this card is ${esc(gName(gid))}?</p><div class="srcpick" style="flex-direction:column">${sh.found.map((f, i) => `<button class="btn" data-act="uploadPickRow" data-i="${i}">${esc(f.name || 'Unnamed')}${f.gid && f.gid !== gid ? ` (${esc(gName(f.gid))})` : ''}</button>`).join('')}</div><button class="textbtn" style="margin-top:8px" data-act="uploadManual">None of these</button>`;
   // compare
   const X = uploadCompare(sh); sh.diff = X.diff; const u = unitFor(X.entered.rc.format) || ''; const stab = X.entered.rc.format === 'stableford';
@@ -1924,6 +1959,8 @@ function sheetUpload(){
   h += `<div class="upsum"><div><span class="label">On the card</span><b>${X.read.gross} strokes${stab ? ` · ${X.read.pts} pts` : ''}</b></div><div><span class="label">${esc(fn)} entered</span><b>${X.nothing ? 'Nothing yet' : `${X.entered.gross} strokes${stab ? ` · ${X.entered.pts} pts` : ''}`}</b></div></div>`;
   h += `<p class="hint">Points use ${esc(fn)}'s handicap in the app (${fmtHi(cardHi(X.card, X.g))}, ${X.entered.total} shots). Any handicap or points written on the card are ignored.${X.f.signed ? ' A marker signature was found.' : ' <b>No marker signature was found on the card.</b>'}</p>`;
   if (X.extra.length) h += `<p class="errbox"><b>The card has ${holesText(X.extra)}, which ${X.extra.length === 1 ? "isn't" : "aren't"} part of round ${round}.</b> This round is set to holes ${esc(rangeText(X.entered.rc.holes))}. If that's wrong, change the round's holes in the month's settings.</p>`;
+  const notIn = !test && X.nothing && !entryOf(c.id, gid) && !twosOf(c.id, round, gid);
+  if (notIn) return h + `<p class="errbox">${esc(gName(gid))} isn't entered in ${esc(c.name)}. Add them under the month's entries first, then upload this card again.</p>` + (sh.bulk ? `<button class="btn block" style="margin-top:12px" data-act="bulkSkip">Skip this one</button>` : `<button class="btn block" style="margin-top:12px" data-act="closeSheet">Close</button>`);
   if (X.nothing) h += `<p class="notebox">${esc(fn)} hasn't entered scores for round ${round}.${test ? " Here's what this card would score." : " Add the card's scores to their card?"}</p>`;
   else if (!X.diff.length) h += `<p class="notebox ok"><b>Every hole matches</b> what ${esc(fn)} entered.</p>`;
   else h += `<p class="errbox"><b>${X.diff.length} hole${X.diff.length === 1 ? '' : 's'} differ${X.diff.length === 1 ? 's' : ''}:</b> ${holesText(X.diff)}. Check those against the photo.</p>`;
@@ -1947,6 +1984,7 @@ async function confirmUpload(mode){
     if (f && !base.marker && f.marker) data.marker = f.marker; if (f && !base.signed && f.signed && data.marker) data.signed = true;
     const cp = `comps/${cid}/cards/${round}_${gid}`; if (!(await put(cp, data))) { sh.phase = back; renderSheet(); return; } localSet(cp, data);
   }
+  if (sh.bulk) { const it = sh.bulk.items[sh.bulk.i]; it.result = mode === 'fix' ? 'fix' : 'done'; sh.bulk.done++; render(); bulkGo(sh, sh.bulk.i + 1); return; }
   sh.mode = mode; sh.phase = 'done'; render(); if (S.sheet === sh) renderSheet();
   if (mode === 'fix') { closeSheetQuiet(); S.card = {cid, round, gid}; S.cardEdit = false; top(); render(); toast('Photo saved. Fix the scores, then upload it again to mark it checked.'); }
 }
@@ -1976,7 +2014,7 @@ function checkCardsHtml(){
   const ready = list.filter(x => cardCounts(x.c.id, x.card.round, x.card.golferId)).length;
   h += list.length ? `<ul class="grp checklist">${list.map(x => `<li><span class="grp-main"><b>${esc(gName(x.card.golferId))} · R${x.card.round} · ${esc(cardValueText(x.sc))}${u(x.sc) ? ' ' + esc(u(x.sc)) : ''}</b><small>${x.sent ? 'Sent ' + esc(whenText(x.card.photoAt)) : photoRequired(x.card) ? 'Not sent yet' : 'No photo sent'}${x.card.scanned && x.card.scanned.by === 'organiser' ? ' · changed since you checked it' : ''}</small></span><button class="btn small ${x.sent ? 'primary' : ''}" data-act="uploadCard" data-cid="${esc(x.c.id)}" data-round="${x.card.round}" data-gid="${esc(x.card.golferId)}">${ICONS.camera}Upload card</button></li>`).join('')}</ul>${ready ? `<button class="btn block" style="margin-top:10px" data-act="checkAll">✓ Mark ${ready === list.length ? 'all ' : ''}${ready} card${ready === 1 ? '' : 's'} checked</button><p class="hint" style="margin-top:6px">For when you've already checked them against the photos on WhatsApp.${ready < list.length ? " Cards that don't count yet (not sent) stay on the list." : ''}</p>` : ''}` : `<p class="notebox">No cards waiting. Every signed card has been checked.</p>`;
   if (cur) { const rs = compRounds(cur); const gs = sortedGolfers(); const now = currentRound(cur);
-    if (rs.length && gs.length) h += `<p class="hint" style="margin-top:14px">Upload a card for anyone else, or test one. A test checks the photo against any round, and nothing is saved.</p><div class="grid2"><label class="field"><span>Golfer</span><select id="up-g">${gs.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}</select></label><label class="field"><span>Round</span><select id="up-r">${rs.map(r => `<option value="${r.n}" ${r.n === now ? 'selected' : ''}>Round ${r.n} · ${esc(shortRange(r))}</option>`).join('')}</select></label></div><div class="entry-tools"><button class="btn" data-act="uploadFor" data-cid="${esc(cur.id)}">${ICONS.camera}Upload a card</button><button class="btn" data-act="testFor" data-cid="${esc(cur.id)}">Test a card</button></div>`; }
+    if (rs.length && gs.length) h += `<p class="hint" style="margin-top:14px">Upload a card for anyone else, or test one. A test checks the photo against any round, and nothing is saved.</p><div class="grid2"><label class="field"><span>Golfer</span><select id="up-g">${gs.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}</select></label><label class="field"><span>Round</span><select id="up-r">${rs.map(r => `<option value="${r.n}" ${r.n === now ? 'selected' : ''}>Round ${r.n} · ${esc(shortRange(r))}</option>`).join('')}</select></label></div><div class="entry-tools"><button class="btn" data-act="uploadFor" data-cid="${esc(cur.id)}">${ICONS.camera}Upload a card</button><button class="btn" data-act="testFor" data-cid="${esc(cur.id)}">Test a card</button></div><button class="btn primary block" style="margin-top:8px" data-act="bulkPick" data-cid="${esc(cur.id)}">${ICONS.camera}Upload several cards</button><p class="hint" style="margin-top:6px">Pick all the round's card photos at once. The app reads them, then takes you through each golfer one at a time.</p>`; }
   return h + `</div></section>`;
 }
 
@@ -2092,6 +2130,11 @@ const ACT = {
       if (await batch(ops)) { ops.forEach(o => localSet(o.path, o.data)); render(); toast(`${n} card${n === 1 ? '' : 's'} marked checked`); } }); },
   uploadPickRow(el){ const sh = S.sheet; if (!sh || sh.type !== 'upload') return; sh.pick = Number(el.dataset.i); sh.phase = 'compare'; renderSheet(); },
   uploadManual(){ const sh = S.sheet; if (!sh || sh.type !== 'upload') return; sh.phase = 'manual'; sh.err = 'Check the card by eye.'; sh.errDetail = ''; renderSheet(); },
+  bulkPick(el){ const r = Number(($('#up-r') || {}).value); if (!S.isAdmin || !r || !D.comps[el.dataset.cid]) return; const c = D.comps[el.dataset.cid]; const rr = compRounds(c).find(x => x.n === r);
+    if (rr && roundState(rr) === 'upcoming') { toast(`Round ${r} hasn't started yet.`); return; }
+    BULK_CTX = {cid: c.id, round: r}; const inp = $('#bulkFile'); if (inp) { inp.value = ''; inp.click(); } },
+  bulkSkip(){ const sh = S.sheet; if (!sh || !sh.bulk || sh.phase === 'saving') return; sh.bulk.items[sh.bulk.i].result = 'skip'; sh.bulk.skipped++; bulkGo(sh, sh.bulk.i + 1); },
+  bulkWho(){ const sh = S.sheet; if (!sh || !sh.bulk) return; const g = ($('#bulk-g') || {}).value; if (!g) return; const it = sh.bulk.items[sh.bulk.i]; it.gid = g; if (it.f) it.f.gid = g; bulkGo(sh, sh.bulk.i); },
   uploadRetry(){ const sh = S.sheet; if (!sh || sh.type !== 'upload') return; runUpload(); },
   photoView(){ const {cid, round, gid} = S.card || {}; const ph = D.photos[photoPath(cid, round, gid)]; if (ph && ph.img) openSheet({type:'photoView', cid, round, gid}); },
   async photoWaive(){ const {cid, round, gid} = S.card || {}; if (!S.isAdmin || !cardOf(cid, round, gid)) return; const before = cardCounts(cid, round, gid);
@@ -2641,6 +2684,8 @@ document.addEventListener('change', ev => {
   if (t.id === 'season') { S.season = t.value; render(); return; }
   if (t.id === 'leagueMonth') { S.leagueMonth = t.value; S.boardSel = 'month'; t.blur(); render(); return; }
   if (t.id === 'scanFile' || t.id === 'scanCam') { startScan(t.files); return; }
+  if (t.id === 'bulkFile') { const ctx = BULK_CTX; BULK_CTX = null; const files = [...(t.files || [])].slice(0, 30); if (!ctx || !files.length) return;
+    openSheet({type:'upload', ctx: {cid: ctx.cid, round: ctx.round, gid: null}, bulk: {files, items: [], i: 0, read: 0, done: 0, skipped: 0}, phase: 'bulkreading'}); runBulk(); return; }
   if (t.id === 'photoFile' || t.id === 'photoCam') { const ctx = PHOTO_PENDING; PHOTO_PENDING = null; const file = t.files && t.files[0]; if (!ctx || !file) return;
     let thumbs = []; try { thumbs = [URL.createObjectURL(file)]; } catch (_) {}
     if (ctx.mode === 'send') { openSheet({type:'send', ctx, file, thumbs, phase:'preparing'}); prepareShare(S.sheet); return; }
