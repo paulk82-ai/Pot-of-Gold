@@ -35,7 +35,7 @@ const FORMATS = {
   gross:{name:'Stroke play (gross)', short:'Gross', better:'low'},
   parbogey:{name:'v Par', short:'v Par', better:'high'}
 };
-const DEFAULTS = { pointsSystem:'field', fee:10, revtag:'paul3d7qv', points:[5,4,3,2], entryPoint:1, prize:[60,40], allowance:95, tee:'white', rounds:4, best:3, bands:[10,20], cutWin:[1,2,3], cutRun:[0.5,1,1.5], riseBy:0.5, riseAfter:2, hcpMax:54, twosOn:false, twosFee:2, photoRequired:true };
+const DEFAULTS = { pointsSystem:'field', fee:10, revtag:'paul3d7qv', points:[5,4,3,2], entryPoint:1, prize:[60,40], allowance:95, tee:'white', rounds:4, best:3, bands:[10,20], cutWin:[1,2,3], cutRun:[0.5,1,1.5], riseBy:0.5, riseAfter:1, holdMonths:6, hcpMax:54, twosOn:false, twosFee:2, photoRequired:true };
 // Entries are paid through Revolut only: in the Revolut app, or by debit card on the Revolut payment page.
 const METHODS = {revolut:'Revolut', card:'Card (Revolut)', credit:'Paid from credit'};
 
@@ -85,6 +85,9 @@ function cfg(){
     points: Array.isArray(s.points) && s.points.length ? s.points.map(Number) : DEFAULTS.points,
     prize: Array.isArray(s.prize) && s.prize.length ? s.prize.map(Number) : DEFAULTS.prize,
     entryPoint: isFinite(s.entryPoint) ? Number(s.entryPoint) : DEFAULTS.entryPoint,
+    // Settings saved before the handicap protection rules (hcpV 2) had "rise after 2 months": those move to 1.
+    riseAfter: s.hcpV >= 2 && isFinite(s.riseAfter) ? Number(s.riseAfter) : DEFAULTS.riseAfter,
+    holdMonths: isFinite(s.holdMonths) && Number(s.holdMonths) >= 1 ? Math.round(Number(s.holdMonths)) : DEFAULTS.holdMonths,
     pointsSystem: s.pointsSystem === 'fixed' || s.pointsSystem === 'field' ? s.pointsSystem : DEFAULTS.pointsSystem,
     course: { parM: okArr(c.parM, COURSE.parM), siM: freshSi(okArr(c.siM, COURSE.siM), 'siM'), parL: okArr(c.parL, COURSE.parL), siL: freshSi(okArr(c.siL, COURSE.siL), 'siL') }
   });
@@ -392,45 +395,88 @@ function playerStats(gid, season){
   return out;
 }
 
-/* ---------- Competition handicaps: winner cut, runner-up cut, rise after months without a cut ---------- */
+/* ---------- Competition handicaps ----------
+   A golfer's Pot of Gold handicap is locked when they join (golfers/{id}.hcpStart). After that only the app moves it:
+   the winner and runner-up are cut, everyone else who played goes up after "rise after" months without a cut, and a month
+   not entered changes nothing. Their Golf Ireland handicap (golfers/{id}.hi) is ignored while they're away, unless they've
+   been away more than "hold" months: then they come back on whichever is lower, the held handicap or Golf Ireland's. */
 const r1 = x => Math.round(x * 10) / 10;
+const isNum = v => v !== null && v !== undefined && v !== '' && isFinite(v);
 // Cuts depend on the golfer's handicap at the time: lower handicaps are cut less.
-function hcpRules(){ const k = cfg(); return {bands: k.bands, win: k.cutWin, second: k.cutRun, rise: num(k.riseBy, 0.5), after: Math.max(1, Math.round(num(k.riseAfter, 2))), max: num(k.hcpMax, 54)}; }
+function hcpRules(){ const k = cfg(); return {bands: k.bands, win: k.cutWin, second: k.cutRun, rise: num(k.riseBy, 0.5), after: Math.max(1, Math.round(num(k.riseAfter, 1))), hold: Math.max(1, Math.round(num(k.holdMonths, 6))), max: num(k.hcpMax, 54)}; }
 function bandOf(R, hcp){ return hcp < R.bands[0] ? 0 : hcp < R.bands[1] ? 1 : 2; }
 function bandLabels(R){ const f = x => String(x).replace(/\.0$/, ''); return [`Under ${f(R.bands[0])}`, `${f(R.bands[0])} to ${f(r1(R.bands[1] - 0.1))}`, `${f(R.bands[1])} and over`]; }
 function fmtChange(x){ return (x > 0 ? '+' : '−') + Math.abs(x).toFixed(1).replace(/\.0$/, ''); }
+// Calendar months from a to b (Nov to June is 7). Away more than R.hold means a gap of more than that: last played
+// in November, held through May (6 months missed), and from June they come back on the lower one.
+function monthsBetween(a, b){ const x = parseDate(a), y = parseDate(b); if (!x || !y) return 0; return (y.getFullYear() - x.getFullYear()) * 12 + y.getMonth() - x.getMonth(); }
+function monthName(s, n){ const d = parseDate(s); if (!d) return ''; d.setDate(1); d.setMonth(d.getMonth() + (n || 0)); return MONTHS[d.getMonth()] + ' ' + d.getFullYear(); }
+function todayIso(){ return iso(new Date()); }
+function hcpBase(g){ return isNum(g.hcpStart) ? Number(g.hcpStart) : isNum(g.hi) ? Number(g.hi) : null; }
+function hcpStartDay(g){ return /^\d{4}-\d{2}-\d{2}$/.test(g.hcpStartAt || '') ? g.hcpStartAt : g.createdAt && isFinite(g.createdAt) ? iso(new Date(Number(g.createdAt))) : null; }
+// The handicap each of this golfer's cards in a month was played off (lowest, if it changed during the month).
+function cardHiIn(c, gid){ let lo = null; Object.values(D.cards || {}).forEach(k => { if (k && k.compId === c.id && k.golferId === gid && isNum(k.hi) && (lo === null || Number(k.hi) < lo)) lo = Number(k.hi); }); return lo; }
 // Worked out fresh from every finalised month, oldest first, so reopening or editing a month corrects itself.
 function hcpLedger(){
   if (MEMO.ledger) return MEMO.ledger;
-  const R = hcpRules(); const L = {};
-  Object.values(D.golfers).forEach(g => { const b = g.hi === null || g.hi === undefined || g.hi === '' || !isFinite(g.hi) ? null : Number(g.hi); L[g.id] = {base:b, current:b, events:[], streak:0, played:0}; });
+  const R = hcpRules(); const L = {}; const today = todayIso();
+  Object.values(D.golfers).forEach(g => { const b = hcpBase(g); L[g.id] = {base:b, current:b, events:[], streak:0, played:0, since: hcpStartDay(g), lastPlayed:null}; });
+  const back = (l, g, c, day) => { // returning after more than R.hold months away: the lower of held and Golf Ireland
+    if (!l.since || monthsBetween(l.since, day) <= R.hold) return;
+    const gui = c ? cardHiIn(c, g.id) : null; const v = gui !== null ? gui : isNum(g.hi) ? Number(g.hi) : null;
+    if (v === null || v >= l.current) return;
+    const before = l.current; l.current = r1(v); const away = monthsBetween(l.since, day) - 1;
+    l.events.push({compId: c ? c.id : null, date: c ? c.date : day, name: c ? c.name : '', change: r1(l.current - before), reason: `Back after ${away} months away. Golf Ireland ${fmtHi(v)} is lower`, before, after: l.current, back: true, pending: !c});
+  };
   Object.values(D.comps).filter(c => c.status === 'final' && !c.test).sort((a,b) => String(a.date||'').localeCompare(String(b.date||''))).forEach(c => {
     leaderboard(c).all.forEach(r => {
-      const l = L[r.gid]; if (!l || l.base === null) return;
+      const l = L[r.gid]; const g = D.golfers[r.gid]; if (!l || l.base === null) return;
+      back(l, g, c, c.date);
       l.played++; let change = 0, reason = '';
       const band = bandOf(R, l.current);
       if (r.pos === 1) { change = -R.win[band]; reason = `Won ${c.name}`; l.streak = 0; }
       else if (r.pos === 2) { change = -R.second[band]; reason = `Runner-up in ${c.name}`; l.streak = 0; }
-      else { l.streak++; if (l.streak >= R.after) { change = R.rise; reason = `No cut in ${R.after} months (to ${c.name})`; l.streak = 0; } }
-      if (change) { const before = l.current; l.current = r1(Math.min(R.max, before + change)); const real = r1(l.current - before); if (real) l.events.push({compId:c.id, date:c.date, name:c.name, change:real, reason, before, after:l.current}); }
+      else { l.streak++; if (l.streak >= R.after) { change = R.rise; reason = R.after === 1 ? `Played ${c.name}, no win` : `No cut in ${R.after} months (to ${c.name})`; l.streak = 0; } }
+      if (change) { const before = l.current; l.current = r1(Math.max(-10, Math.min(R.max, before + change))); const real = r1(l.current - before); if (real) l.events.push({compId:c.id, date:c.date, name:c.name, change:real, reason, before, after:l.current}); }
+      l.since = l.lastPlayed = c.date;
     });
   });
-  Object.values(L).forEach(l => { l.toRise = R.after - l.streak; });
+  Object.values(D.golfers).forEach(g => { const l = L[g.id]; if (!l || l.base === null) return;
+    l.toRise = R.after - l.streak;
+    // Held: the handicap stays put however long they're away. Back after the hold: the lower one, ready for their next card.
+    // If they've already started a card in a month that isn't finalised, that card's handicap stands.
+    const open = Object.values(D.comps).filter(c => c.status !== 'final' && !c.test && cardHiIn(c, g.id) !== null).sort((a,b) => String(a.date||'').localeCompare(String(b.date||'')))[0];
+    if (open) { if (l.since && monthsBetween(l.since, open.date) > R.hold) { const v = cardHiIn(open, g.id); if (v < l.current) back(l, {id:g.id, hi:v}, null, today); } }
+    else back(l, g, null, today);
+    l.away = l.since ? Math.max(0, monthsBetween(l.since, today) - 1) : 0; // whole months missed since they last played (or joined)
+  });
   return (MEMO.ledger = L);
 }
 function curHcp(gid){ const l = hcpLedger()[gid]; return l ? l.current : null; }
 // The handicap a new card is played off (kept on the golfer record so the security rules can check it).
 function snapHcp(g){ return g ? (g.hcp !== undefined && g.hcp !== null ? g.hcp : (g.hi !== undefined ? g.hi : null)) : null; }
+function holdText(gid){
+  const l = hcpLedger()[gid]; const R = hcpRules(); if (!l || l.base === null || !l.since) return '';
+  const last = l.events[l.events.length - 1];
+  if (last && last.pending) return `Away more than ${R.hold} months, so back on the lower of the held handicap and Golf Ireland's.`;
+  if (l.away < 1) return '';
+  return `Held: ${l.lastPlayed ? 'last played ' + monthName(l.since) : 'joined ' + monthName(l.since)}. Stays at ${fmtHi(l.current)} through ${monthName(l.since, R.hold)}, whatever Golf Ireland says. After that: the lower of the two.`;
+}
 function riseText(gid, short){
   const l = hcpLedger()[gid]; const R = hcpRules(); if (!l || l.base === null) return '';
   const n = l.toRise; const open = Object.values(D.comps).filter(c => c.status !== 'final').sort((a,b) => String(a.date||'').localeCompare(String(b.date||'')));
-  if (short) return n === 1 ? `+${R.rise} next month` : `+${R.rise} in ${n} months`;
+  if (short) return n === 1 ? `+${R.rise} if no win` : `+${R.rise} in ${n} months`;
   const next = open[0] ? open[0].name : 'the next month';
-  return n === 1 ? `Goes up ${R.rise} after ${next} unless ${gid === S.myGid ? 'you win' : 'they win'} or finish runner-up.` : `Goes up ${R.rise} after ${n} more months without a cut.`;
+  const who = gid === S.myGid ? 'you' : 'they';
+  return n === 1 ? `Goes up ${R.rise} after ${next} if ${who} play and don't win or finish runner-up. A month ${who} don't play changes nothing.` : `Goes up ${R.rise} after ${n} more months played without a cut.`;
 }
 function hcpOps(){
-  const L = hcpLedger(); const ops = [];
-  Object.values(D.golfers).forEach(g => { const l = L[g.id]; if (!l || l.base === null) return; if (snapHcp(g) !== l.current) ops.push({path:`golfers/${g.id}`, data: Object.assign({}, g, {hcp:l.current})}); });
+  const L = hcpLedger(); const ops = []; const today = todayIso();
+  Object.values(D.golfers).forEach(g => { const l = L[g.id]; if (!l || l.base === null) return;
+    const lock = !isNum(g.hcpStart) || !g.hcpStartAt;
+    if (snapHcp(g) !== l.current || lock) { const data = Object.assign({}, g, {hcp:l.current}); delete data.id;
+      if (lock) { data.hcpStart = l.base; data.hcpStartAt = g.hcpStartAt || hcpStartDay(g) || today; }
+      ops.push({path:`golfers/${g.id}`, data}); } });
   return ops;
 }
 async function syncHandicaps(){ if (!S.adminRole) return; const ops = hcpOps(); if (ops.length) { ops.forEach(o => localSet(o.path, o.data)); await batch(ops); } }
@@ -1154,10 +1200,12 @@ function handicapsHtml(ps){
   const R = hcpRules(); const L = hcpLedger();
   const BL = bandLabels(R);
   let h = `<div class="panel hcprules"><table class="bandtbl"><thead><tr><th>Handicap</th><th>Winner</th><th>Runner-up</th></tr></thead><tbody>${BL.map((l, i) => `<tr><td>${esc(l)}</td><td class="cut">cut ${R.win[i]}</td><td class="cut">cut ${R.second[i]}</td></tr>`).join('')}</tbody></table>
-    <p><b class="rise">+${R.rise}</b> after ${R.after} months played without a cut.</p><p class="hint">The band is the golfer's competition handicap going into the month. Changes are made when the organiser finalises a month. Cards are played off the handicap on the day they're marked.</p></div>`;
+    <p><b class="rise">+${R.rise}</b> ${R.after === 1 ? 'for each month played without a win or runner-up' : `after ${R.after} months played without a cut`}.</p>
+    <p><b>Held</b> for any month not played, whatever happens to the Golf Ireland handicap. Away more than ${R.hold} months: back on whichever is lower, the held handicap or Golf Ireland's.</p>
+    <p class="hint">Everyone starts on the handicap they joined with, and plays off the Pot of Gold handicap, not Golf Ireland's. The band is the handicap going into the month. Changes are made when the organiser finalises a month. Cards are played off the handicap on the day they're marked.</p></div>`;
   h += `<ul class="list" style="margin-top:12px"><li class="hc-head"><span>Golfer</span><span>Hcp</span><span>Last change</span><span>Rises</span></li>` + ps.map(p => { const l = L[p.id]; if (!l) return '';
     const last = l.events[l.events.length - 1]; const due = l.base !== null && l.toRise === 1;
-    return `<li><button class="hc-row" data-act="openPlayer" data-id="${esc(p.id)}"><span class="hc-name">${esc(p.name)}<small>Started ${fmtHi(l.base)}</small></span><span class="hc-now">${fmtHi(l.current)}</span><span class="hc-last">${last ? `<b class="${last.change < 0 ? 'cut' : 'rise'}">${fmtChange(last.change)}</b><small>${esc(dParts(last.date).mon)} ${dParts(last.date).year}</small>` : '<small>None yet</small>'}</span><span class="hc-due ${due ? 'soon' : ''}">${l.base === null ? '–' : esc(riseText(p.id, true))}</span></button></li>`; }).join('') + '</ul>';
+    return `<li><button class="hc-row" data-act="openPlayer" data-id="${esc(p.id)}"><span class="hc-name">${esc(p.name)}<small>Started ${fmtHi(l.base)}</small></span><span class="hc-now">${fmtHi(l.current)}</span><span class="hc-last">${last ? `<b class="${last.change < 0 ? 'cut' : 'rise'}">${fmtChange(last.change)}</b><small>${esc(dParts(last.date).mon)} ${dParts(last.date).year}</small>` : '<small>None yet</small>'}</span><span class="hc-due ${due && !(l.away >= 1) ? 'soon' : ''}">${l.base === null ? '–' : l.away >= 1 ? `Held ${l.away} mth${l.away === 1 ? '' : 's'}` : esc(riseText(p.id, true))}</span></button></li>`; }).join('') + '</ul>';
   return h;
 }
 function golferEmails(){ const out = {}; Object.entries(D.members || {}).forEach(([email, m]) => { if (m && m.golferId) out[m.golferId] = email; }); return out; }
@@ -1165,7 +1213,7 @@ function hcpPanel(gid){
   const l = hcpLedger()[gid]; if (!l || l.base === null) return '';
   const ev = l.events.slice().reverse();
   return `<section class="panel hcp-panel"><div class="hcp-top"><div><span class="label">Competition handicap</span><b class="hcp-big">${fmtHi(l.current)}</b></div><div class="hcp-side"><span class="label">Started at</span><b>${fmtHi(l.base)}</b></div></div>
-    <p class="hcp-due ${l.toRise === 1 ? 'soon' : ''}">${esc(riseText(gid))}</p>
+    <p class="hcp-due ${l.toRise === 1 ? 'soon' : ''}">${esc(riseText(gid))}</p>${holdText(gid) ? `<p class="hcp-due held">${esc(holdText(gid))}</p>` : ''}
     ${ev.length ? `<ul class="hcp-hist">${ev.slice(0, 8).map(e => `<li><span class="${e.change < 0 ? 'cut' : 'rise'}">${fmtChange(e.change)}</span><span>${esc(e.reason)}</span><span>${fmtHi(e.before)} → ${fmtHi(e.after)}</span></li>`).join('')}</ul>` : '<p class="hint">No changes yet.</p>'}</section>`;
 }
 function viewPlayer(){
@@ -1320,8 +1368,8 @@ function viewAdmin(){
         <label class="bandlbl">Under ${n('s-b1', k.bands[0], 'min="0" step="0.1" aria-label="First band ends at"')}</label>${n('s-w1', k.cutWin[0], 'min="0" step="0.1" aria-label="Winner cut, lowest band"')}${n('s-r1', k.cutRun[0], 'min="0" step="0.1" aria-label="Runner-up cut, lowest band"')}
         <label class="bandlbl">${esc(String(k.bands[0]))} to under ${n('s-b2', k.bands[1], 'min="0" step="0.1" aria-label="Second band ends at"')}</label>${n('s-w2', k.cutWin[1], 'min="0" step="0.1" aria-label="Winner cut, middle band"')}${n('s-r2', k.cutRun[1], 'min="0" step="0.1" aria-label="Runner-up cut, middle band"')}
         <span class="bandlbl">${esc(String(k.bands[1]))} and over</span>${n('s-w3', k.cutWin[2], 'min="0" step="0.1" aria-label="Winner cut, highest band"')}${n('s-r3', k.cutRun[2], 'min="0" step="0.1" aria-label="Runner-up cut, highest band"')}</div>
-      <div class="grid2" style="margin-top:12px"><label class="field"><span>Rise by</span>${n('s-rb', k.riseBy, 'min="0" step="0.1"')}</label><label class="field"><span>Rise after (months)</span>${n('s-ra', k.riseAfter, 'min="1" step="1"')}</label><label class="field"><span>Highest handicap</span>${n('s-hm', k.hcpMax, 'min="0" step="1"')}</label></div>
-      <p class="hint">Applied when a month is finalised. The band is the golfer's competition handicap going into that month, so lower handicaps are cut less. "Rise after" counts months a golfer played without a cut (winning or runner-up). Changing these recalculates everyone's handicap.</p></div></section>
+      <div class="grid2" style="margin-top:12px"><label class="field"><span>Rise by</span>${n('s-rb', k.riseBy, 'min="0" step="0.1"')}</label><label class="field"><span>Rise after (months)</span>${n('s-ra', k.riseAfter, 'min="1" step="1"')}</label><label class="field"><span>Hold when away (months)</span>${n('s-hold', k.holdMonths, 'min="1" step="1"')}</label><label class="field"><span>Highest handicap</span>${n('s-hm', k.hcpMax, 'min="0" step="1"')}</label></div>
+      <p class="hint">Applied when a month is finalised. The band is the golfer's competition handicap going into that month, so lower handicaps are cut less. "Rise after" counts months a golfer played without a cut (winning or runner-up); a month they don't play changes nothing. A golfer's handicap is held while they're away. Away longer than "Hold when away": they come back on the lower of the held handicap and their Golf Ireland handicap. Changing these recalculates everyone's handicap.</p></div></section>
     <section data-tab="rules"><div class="sec-head"><h2>Handicaps</h2></div><div class="panel"><div class="grid2"><label class="field"><span>Allowance %</span>${n('s-allow', k.allowance, 'min="0" max="100"')}</label><label class="field"><span>Default men's tees</span><select id="s-tee">${Object.entries(TEES).map(([key,t]) => `<option value="${key}" ${k.tee === key ? 'selected' : ''}>${t.name} · ${t.cr} / ${t.slope}</option>`).join('')}</select></label></div>
       <p class="hint">Shots use index × slope ÷ 113 + (rating − par), times the allowance. Ladies use the red tees. Each card keeps the golfer's index from the day it was marked.</p></div></section>
     <section data-tab="rules"><div class="panel"><details class="course" id="courseDetails" ${S.courseOpen ? 'open' : ''}><summary>Course card: par and stroke index</summary>
@@ -1519,8 +1567,10 @@ function sheetGolfer(){
   return `<form data-form="golfer"><h3>${p ? 'Edit golfer' : 'Add golfer'}</h3><p class="sub">${p ? esc(p.name) : 'The email is how they sign in.'}</p>
     <label class="field"><span>Name</span><input type="text" id="gl-name" name="name" value="${esc(p ? p.name : '')}" required></label>
     <label class="field"><span>Email they sign in with</span><input type="email" id="gl-email" name="email" value="${esc(email)}" autocapitalize="off" placeholder="name@gmail.com"></label>
-    <label class="field"><span>Starting handicap</span><input type="text" id="gl-hi" name="hi" inputmode="decimal" value="${p && p.hi != null ? esc(fmtHi(p.hi)) : ''}" placeholder="e.g. 14.2"></label>
-    ${p ? `<p class="hint" style="margin:-6px 0 12px">Current handicap ${fmtHi(curHcp(p.id))}. Cuts and rises from finalised months are added to the starting handicap automatically.</p>` : ''}
+    <label class="field"><span>${p ? 'Golf Ireland handicap' : 'Golf Ireland handicap (they start on this)'}</span><input type="text" id="gl-hi" name="hi" inputmode="decimal" value="${p && p.hi != null ? esc(fmtHi(p.hi)) : ''}" placeholder="e.g. 14.2"></label>
+    ${p ? `<p class="hint" style="margin:-6px 0 12px">Only used if they come back after more than ${hcpRules().hold} months away. It doesn't change their Pot of Gold handicap.</p>
+    <label class="field"><span>Pot of Gold starting handicap</span><input type="text" id="gl-start" name="start" inputmode="decimal" value="${esc(fmtHi(hcpBase(p)))}"></label>
+    <p class="hint" style="margin:-6px 0 12px">Locked when they joined${p.hcpStartAt ? ` (${esc(dParts(p.hcpStartAt).day + ' ' + dParts(p.hcpStartAt).mon + ' ' + dParts(p.hcpStartAt).year)})` : ''}. Only change it to fix a mistake. Current handicap ${fmtHi(curHcp(p.id))}: cuts and rises from finalised months are added to it automatically.</p>` : ''}
     <div class="field"><span>Card</span><div class="radios">${radio('gender','M',"Men's", !p || p.gender !== 'L')}${radio('gender','L',"Ladies' (red)", p && p.gender === 'L')}</div></div>
     <p class="hint" style="margin-bottom:16px">Use + for a plus handicap, e.g. +1.2. Only golfers on this list can sign in, enter, or be read from an uploaded card.</p>
     <button class="btn primary block" type="submit">${p ? 'Save' : 'Add golfer'}</button>
@@ -2499,7 +2549,8 @@ const FORMS = {
     const email = normEmail(fd.get('email')); if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { toast('That email doesn\'t look right'); return; }
     const id = S.sheet.id || newId(); const prev = D.golfers[id] || {}; const oldEmail = golferEmails()[id];
     if (email && D.members[email] && D.members[email].golferId !== id) { toast(`${email} is already used by ${gName(D.members[email].golferId)}`); return; }
-    const gdata = {name, hi: parseHi(fd.get('hi')), gender: fd.get('gender') === 'L' ? 'L' : 'M', createdAt: prev.createdAt || Date.now()}; if (prev.credits) gdata.credits = prev.credits;
+    const gdata = Object.assign({}, prev, {name, hi: parseHi(fd.get('hi')), gender: fd.get('gender') === 'L' ? 'L' : 'M', createdAt: prev.createdAt || Date.now()}); delete gdata.id; delete gdata.hcp;
+    const start = S.sheet.id ? parseHi(fd.get('start')) : gdata.hi; gdata.hcpStart = start !== null ? start : (isNum(prev.hcpStart) ? prev.hcpStart : gdata.hi); gdata.hcpStartAt = prev.hcpStartAt || todayIso();
     const savedG = D.golfers[id]; D.golfers[id] = Object.assign({}, gdata, {id}); MEMO = {}; const l = hcpLedger()[id]; if (savedG) D.golfers[id] = savedG; else delete D.golfers[id]; MEMO = {};
     gdata.hcp = l ? l.current : gdata.hi;
     const ops = [{path:`golfers/${id}`, data:gdata}];
@@ -2524,7 +2575,7 @@ const FORMS = {
     }
     const name = String(fd.get('name') || '').trim(); if (!name) { toast('Add a name'); return; }
     const hi = parseHi(fd.get('hi')); const id = newId();
-    ops.push({path:'golfers/' + id, data:{name, hi, hcp:hi, gender: fd.get('gender') === 'L' ? 'L' : 'M', createdAt:Date.now()}}, {path:'members/' + email, data:{golferId:id, name}});
+    ops.push({path:'golfers/' + id, data:{name, hi, hcp:hi, hcpStart:hi, hcpStartAt:todayIso(), gender: fd.get('gender') === 'L' ? 'L' : 'M', createdAt:Date.now()}}, {path:'members/' + email, data:{golferId:id, name}});
     if (await batch(ops)) { delete D.requests[email]; closeSheet(); toast(`${name} added. They're in now.`); } },
   async addAdmin(f){ const e = normEmail(new FormData(f).get('email')); if (!e) return; const list = [...new Set(((D.admins && D.admins.emails) || []).concat(e))]; if (await put('config/admins', Object.assign({}, D.admins, {emails:list}))) toast(`${e} is now an organiser`); }
 };
@@ -2535,7 +2586,7 @@ function saveSettings(){
   const course = {parM:[], siM:[], parL:[], siL:[]};
   range(1,18).forEach(h => { course.parM.push(n('c-pm-'+h, k.course.parM[h-1])); course.siM.push(n('c-sm-'+h, k.course.siM[h-1])); course.parL.push(n('c-pl-'+h, k.course.parL[h-1])); course.siL.push(n('c-sl-'+h, k.course.siL[h-1])); });
   const rev = String((g('s-rev') || {}).value || '').trim().replace(/^https?:\/\/(www\.)?revolut\.me\//i, '').replace(/^@/, '').replace(/\/.*$/, '');
-  const data = { fee:n('s-fee', k.fee), revtag:rev, prize:[n('s-p1', k.prize[0]), n('s-p2', k.prize[1] != null ? k.prize[1] : 0)], points:[n('s-pt1', k.points[0]), n('s-pt2', k.points[1]), n('s-pt3', k.points[2]), n('s-pt4', k.points[3])], entryPoint:n('s-pte', k.entryPoint), rounds: Math.max(1, Math.min(5, n('s-rounds', k.rounds))), best: Math.max(1, Math.min(5, n('s-best', k.best))), allowance:n('s-allow', k.allowance), tee:(g('s-tee') || {}).value || k.tee, course, bands: (() => { const a = n('s-b1', k.bands[0]), b = n('s-b2', k.bands[1]); return a < b ? [a, b] : k.bands; })(), cutWin:[n('s-w1', k.cutWin[0]), n('s-w2', k.cutWin[1]), n('s-w3', k.cutWin[2])], cutRun:[n('s-r1', k.cutRun[0]), n('s-r2', k.cutRun[1]), n('s-r3', k.cutRun[2])], riseBy:n('s-rb', k.riseBy), riseAfter:Math.max(1, Math.round(n('s-ra', k.riseAfter))), hcpMax:n('s-hm', k.hcpMax), twosOn: g('s-twosOn') ? g('s-twosOn').checked : !!k.twosOn, twosFee: Math.max(1, n('s-twosFee', k.twosFee)),
+  const data = { fee:n('s-fee', k.fee), revtag:rev, prize:[n('s-p1', k.prize[0]), n('s-p2', k.prize[1] != null ? k.prize[1] : 0)], points:[n('s-pt1', k.points[0]), n('s-pt2', k.points[1]), n('s-pt3', k.points[2]), n('s-pt4', k.points[3])], entryPoint:n('s-pte', k.entryPoint), rounds: Math.max(1, Math.min(5, n('s-rounds', k.rounds))), best: Math.max(1, Math.min(5, n('s-best', k.best))), allowance:n('s-allow', k.allowance), tee:(g('s-tee') || {}).value || k.tee, course, bands: (() => { const a = n('s-b1', k.bands[0]), b = n('s-b2', k.bands[1]); return a < b ? [a, b] : k.bands; })(), cutWin:[n('s-w1', k.cutWin[0]), n('s-w2', k.cutWin[1]), n('s-w3', k.cutWin[2])], cutRun:[n('s-r1', k.cutRun[0]), n('s-r2', k.cutRun[1]), n('s-r3', k.cutRun[2])], riseBy:n('s-rb', k.riseBy), riseAfter:Math.max(1, Math.round(n('s-ra', k.riseAfter))), holdMonths:Math.max(1, Math.round(n('s-hold', k.holdMonths))), hcpV:2, hcpMax:n('s-hm', k.hcpMax), twosOn: g('s-twosOn') ? g('s-twosOn').checked : !!k.twosOn, twosFee: Math.max(1, n('s-twosFee', k.twosFee)),
     photoRequired: g('s-photoReq') ? g('s-photoReq').checked : k.photoRequired !== false, photoFrom: (g('s-photoReq') && g('s-photoReq').checked && k.photoRequired === false) ? Date.now() : (k.photoFrom || null) };
   D.settings = data; MEMO = {};
   clearTimeout(settingsTimer); settingsTimer = setTimeout(async () => { if (await put('config/settings', data)) { syncHandicaps(); toast('Settings saved'); } }, 400);
@@ -2866,5 +2917,5 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 setInterval(() => { if (document.visibilityState === 'visible') checkVersion(); }, 30 * 60e3);
 checkVersion();
 const hv = (location.hash || '').slice(1); if (['home','table','me','comps','golfers','admin'].includes(hv)) S.view = hv; else if (hv === 'league') S.view = 'table';
-window.__rgc = {S, D, scoreCard, leaderboard, roundBoard, roundPoints, league, allocShots, checkVersion, twosLedger, cardCounts};
+window.__rgc = {S, D, hcpLedger, hcpRules, scoreCard, leaderboard, roundBoard, roundPoints, league, allocShots, checkVersion, twosLedger, cardCounts};
 boot();

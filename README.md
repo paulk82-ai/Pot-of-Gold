@@ -29,15 +29,18 @@ An installable phone app for the Pot of Gold, a monthly golf competition played 
 
 **Competition handicaps**
 
-These are worked out automatically each time a month is finalised:
+Golfers play off their Pot of Gold handicap, not their Golf Ireland handicap. It's set when they join (their Golf Ireland handicap that day) and locked. After that only the app moves it, worked out automatically each time a month is finalised:
 
 - Cuts depend on the golfer's competition handicap going into the month, so lower handicaps are cut less:
   - under 10: winner cut 1, runner-up cut 0.5;
   - 10 to 19.9: winner cut 2, runner-up cut 1;
   - 20 and over: winner cut 3, runner-up cut 1.5.
-- A golfer who plays 2 months in a row without a cut (winning or runner-up) goes up 0.5, and the count starts again. Months a golfer doesn't enter don't count.
+- A golfer who plays a month and doesn't win or finish runner-up goes up 0.5.
+- **Held while away.** A month a golfer doesn't enter changes nothing: their handicap is held for up to 6 months, whatever their Golf Ireland handicap does in the meantime. So nobody can sit out, let their Golf Ireland handicap go up, and come back off a higher one.
+- **Back after more than 6 months away** (say last played in November, back in June or later): they come back on whichever is lower, their held Pot of Gold handicap or their Golf Ireland handicap at the time. Keep their Golf Ireland handicap up to date on their golfer page (Golfers → tap them → Edit): it's only used for this.
+- Golfers already on the list were locked at the handicap they had when this came in. If a starting handicap was entered wrongly, fix it under **Pot of Gold starting handicap** on the golfer's Edit page.
 - Everyone can see each golfer's current handicap, starting handicap, history of changes, and when they're next due to rise, under **Golfers → Handicaps** and on each golfer's page.
-- Reopening a month undoes its changes. You can change the bands, the cuts, the rise, the number of months and a top limit in **Admin → Handicap changes**.
+- Reopening a month undoes its changes. You can change the bands, the cuts, the rise, the number of months before a rise, how long a handicap is held while away, and a top limit in **Admin → Handicap changes**.
 - Each card is played off the handicap the golfer had on the day it was marked.
 
 You can try every screen first with made-up golfers: open the app's address with `?sample=1` on the end.
