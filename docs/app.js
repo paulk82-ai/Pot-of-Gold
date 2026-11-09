@@ -35,7 +35,7 @@ const FORMATS = {
   gross:{name:'Stroke play (gross)', short:'Gross', better:'low'},
   parbogey:{name:'v Par', short:'v Par', better:'high'}
 };
-const DEFAULTS = { fee:10, revtag:'paul3d7qv', points:[5,4,3,2], entryPoint:1, prize:[60,40], allowance:95, tee:'white', rounds:4, best:3, bands:[10,20], cutWin:[1,2,3], cutRun:[0.5,1,1.5], riseBy:0.5, riseAfter:2, hcpMax:54, twosOn:false, twosFee:2, photoRequired:true };
+const DEFAULTS = { pointsSystem:'field', fee:10, revtag:'paul3d7qv', points:[5,4,3,2], entryPoint:1, prize:[60,40], allowance:95, tee:'white', rounds:4, best:3, bands:[10,20], cutWin:[1,2,3], cutRun:[0.5,1,1.5], riseBy:0.5, riseAfter:2, hcpMax:54, twosOn:false, twosFee:2, photoRequired:true };
 // Entries are paid through Revolut only: in the Revolut app, or by debit card on the Revolut payment page.
 const METHODS = {revolut:'Revolut', card:'Card (Revolut)', credit:'Paid from credit'};
 
@@ -85,6 +85,7 @@ function cfg(){
     points: Array.isArray(s.points) && s.points.length ? s.points.map(Number) : DEFAULTS.points,
     prize: Array.isArray(s.prize) && s.prize.length ? s.prize.map(Number) : DEFAULTS.prize,
     entryPoint: isFinite(s.entryPoint) ? Number(s.entryPoint) : DEFAULTS.entryPoint,
+    pointsSystem: s.pointsSystem === 'fixed' || s.pointsSystem === 'field' ? s.pointsSystem : DEFAULTS.pointsSystem,
     course: { parM: okArr(c.parM, COURSE.parM), siM: freshSi(okArr(c.siM, COURSE.siM), 'siM'), parL: okArr(c.parL, COURSE.parL), siL: freshSi(okArr(c.siL, COURSE.siL), 'siL') }
   });
 }
@@ -291,9 +292,13 @@ function roundBoard(comp, n){
 // They're provisional until the month is finalised.
 function roundPoints(comp, n){
   const key = `rp:${comp.id}:${n}`; if (MEMO[key]) return MEMO[key]; const k = cfg(); const out = {};
+  if (comp.pointsSystem === 'field') { const N = fieldSize(comp); roundBoard(comp, n).ranked.forEach(sc => { out[sc.gid] = Math.max(1, N - sc.pos + 1) + (sc.pos === 1 ? 1 : 0); }); return (MEMO[key] = out); }
   roundBoard(comp, n).ranked.forEach(sc => { out[sc.gid] = sc.pos <= k.points.length ? Math.max(k.points[sc.pos-1], k.entryPoint) : k.entryPoint; });
   return (MEMO[key] = out);
 }
+// "By players" league points (from December 2026): the round winner gets one point for every paid player in the month,
+// plus a bonus point for winning; second gets one fewer, and so on down to 1. Tied golfers share the place's points.
+function fieldSize(comp){ return Math.max(1, entriesFor(comp.id).filter(e => e.paid).length); }
 function monthPoints(comp){
   const key = 'mp:' + comp.id; if (MEMO[key]) return MEMO[key]; const out = {};
   compRounds(comp).forEach(r => Object.entries(roundPoints(comp, r.n)).forEach(([gid, p]) => { const o = out[gid] || (out[gid] = {pts:0, rounds:0, byRound:{}, counted:new Set()}); o.rounds++; o.byRound[r.n] = p; }));
@@ -940,11 +945,12 @@ function viewComp(){
   h += S.compTab === 'board' ? boardHtml(c, lb) : entriesHtml(c, lb);
   if (A) {
     h += `<div class="actions">${fin ? '<button class="btn" data-act="reopen">Reopen scoring</button>' : '<button class="btn primary" data-act="finalise">Finalise results</button>'}<button class="btn" data-act="editComp">Edit details</button><button class="btn danger" data-act="delComp">Delete</button></div>`;
-    if (!fin) h += `<p class="hint" style="margin-top:10px">Finalising locks the month's scores, sets the prize money and makes the handicap changes. League points are given each round (${pointsKeyText()}), each golfer's best ${compBest(c)} rounds count, and they become final too.</p>`;
+    if (!fin) h += `<p class="hint" style="margin-top:10px">Finalising locks the month's scores, sets the prize money and makes the handicap changes. League points are given each round (${pointsKeyText(c)}), each golfer's best ${compBest(c)} rounds count, and they become final too.</p>`;
   }
   return h;
 }
-function pointsKeyText(){ const k = cfg(); return k.points.map((p,i) => `${ord(i+1)} ${p}`).join(', ') + `, every other card ${k.entryPoint}`; }
+function pointsKeyText(c){ const k = cfg(); if (c && c.pointsSystem === 'field') { const N = fieldSize(c); return `${N} paid player${N === 1 ? '' : 's'}: winner ${N} + 1 bonus = ${N + 1}, 2nd ${Math.max(1, N - 1)}, then one fewer each place, down to 1`; }
+  return k.points.map((p,i) => `${ord(i+1)} ${p}`).join(', ') + `, every other card ${k.entryPoint}`; }
 function payNote(c){
   return `<p class="hint">Entry is ${euro(compFee(c))} for the month, paid through Revolut: in the Revolut app, or by debit card, Apple Pay or Google Pay if you don't have Revolut.</p>`;
 }
@@ -990,12 +996,12 @@ function monthListHtml(c, lb){
   }).join('');
   const rest = lb.rest.map(r => `<li class="lb-row lb-rest"><span class="lb-pos">–</span><button class="lb-name" data-act="openPlayer" data-id="${esc(r.gid)}">${esc(r.golfer.name)}<small>${esc(r.status)}</small></button><span class="lb-score"></span><span class="lb-pts"><b>${r.points} pt${r.points === 1 ? '' : 's'}</b></span></li>`).join('');
   const mixNote = lb.mode && lb.mode.mixed ? `<p class="hint" style="margin-top:10px">Rounds use different formats, so this table adds up Stableford points from each golfer's best ${compBest(c)} cards.</p>` : '';
-  const note = mixNote + (fin ? '' : `<p class="hint" style="margin-top:10px">Provisional. Only complete cards signed by a marker count. Golfers with fewer than ${compBest(c)} counting cards rank below those with ${compBest(c)}. League points are given each round (${pointsKeyText()}). Each golfer's best ${compBest(c)} rounds count, and they stay provisional until the organiser finalises the month.</p>`);
+  const note = mixNote + (fin ? '' : `<p class="hint" style="margin-top:10px">Provisional. Only complete cards signed by a marker count. Golfers with fewer than ${compBest(c)} counting cards rank below those with ${compBest(c)}. League points are given each round (${pointsKeyText(c)}). Each golfer's best ${compBest(c)} rounds count, and they stay provisional until the organiser finalises the month.</p>`);
   return `<ul class="list">${head}${rows}${rest}</ul>${note}`;
 }
 function roundBoardHtml(c, n){
   const rb = roundBoard(c, n); const lb = leaderboard(c); const rc = rcfg(c, n); const r = compRounds(c).find(x => x.n === n);
-  const info = `<p class="hint" style="margin-bottom:10px">Round ${n}${r ? ' · ' + esc(roundLabel(r)) : ''} · ${esc((FORMATS[rc.format] || FORMATS.stableford).name)} · ${rc.holes.length} holes · ${esc((TEES[rc.tee] || TEES.white).name)} tees</p><p class="hint" style="margin:-6px 0 10px">League points: ${pointsKeyText()}. Each golfer's best ${compBest(c)} rounds count; brackets show points that don't. Counts or dropped is for the month total.</p>`;
+  const info = `<p class="hint" style="margin-bottom:10px">Round ${n}${r ? ' · ' + esc(roundLabel(r)) : ''} · ${esc((FORMATS[rc.format] || FORMATS.stableford).name)} · ${rc.holes.length} holes · ${esc((TEES[rc.tee] || TEES.white).name)} tees</p><p class="hint" style="margin:-6px 0 10px">League points: ${pointsKeyText(c)}. Each golfer's best ${compBest(c)} rounds count; brackets show points that don't. Counts or dropped is for the month total.</p>`;
   const head = `<div class="lb-head"><span>Pos</span><span>Golfer</span><span>Score</span><span>League</span></div>`; const rp = roundPoints(c, n); const mp = monthPoints(c);
   const rows = rb.ranked.map(sc => { const row = lb.all.find(r => r.gid === sc.gid); const counts = row && row.countedNs.has(n); const pp = rp[sc.gid] || 0; const lgIn = mp[sc.gid] && mp[sc.gid].counted.has(n); const ptxt = `${pp} pt${pp === 1 ? '' : 's'}`;
     return `<li class="lb-row ${sc.pos === 1 ? 'first' : ''}"><span class="lb-pos">${sc.tied ? 'T' : ''}${sc.pos}</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>Marker ${esc(markerName(sc.card))}${cardStarted(sc.card) ? ' · started ' + esc(whenText(sc.card.startedAt)) : ''}${sc.onCb ? ' · on countback' : ''}${S.isAdmin && cardCheck(sc) ? ' · <span class="cardpts">⚠ check card</span>' : ''}</small></button><span class="lb-score">${esc(cardValueText(sc))}<small>${unitFor(rc.format)}</small></span><span class="lb-pts"><b>${lgIn ? ptxt : '(' + ptxt + ')'}</b>${counts ? 'counts' : 'dropped'}</span></li>`; }).join('');
@@ -1111,8 +1117,9 @@ function monthTableHtml(){
   return h;
 }
 function yearTableHtml(){
-  const rows = league(S.season); const k = cfg();
-  let h = `<div class="pointskey">${k.points.map((p,i) => `<span class="chip">${ord(i+1)} · ${p} pts</span>`).join('')}<span class="chip">Every other card · ${k.entryPoint} pt</span></div><p class="hint" style="margin:-4px 0 10px">Points are given each weekend round, on that round's leaderboard. Your best ${k.best} rounds each month count.</p>`;
+  const rows = league(S.season); const k = cfg(); const cc = currentComp();
+  let h = cc && cc.pointsSystem === 'field' ? `<div class="pointskey"><span class="chip">Winner · ${fieldSize(cc)} + 1 bonus</span><span class="chip">2nd · ${Math.max(1, fieldSize(cc) - 1)}</span><span class="chip">One fewer each place, down to 1</span></div><p class="hint" style="margin:-4px 0 6px">${esc(cc.name)}: ${fieldSize(cc)} paid players, so the round winner gets ${fieldSize(cc)} points plus a bonus point. Points are given each weekend round, and your best ${compBest(cc)} rounds each month count.</p>` : '';
+  if (!h) h = `<div class="pointskey">${k.points.map((p,i) => `<span class="chip">${ord(i+1)} · ${p} pts</span>`).join('')}<span class="chip">Every other card · ${k.entryPoint} pt</span></div><p class="hint" style="margin:-4px 0 10px">Points are given each weekend round, on that round's leaderboard. Your best ${k.best} rounds each month count.</p>`;
   const open = Object.values(D.comps).filter(c => c.status !== 'final' && !c.test && inSeason(c, S.season) && Object.keys(monthPoints(c)).length);
   if (!rows.length) return h + `<section class="empty"><p class="hint">No league points ${S.season === 'all' ? 'yet' : 'in ' + S.season + ' yet'}. They're added after each round as signed cards come in.</p></section>`;
   h += `<ul class="list"><li class="lg-head"><span>Pos</span><span>Golfer</span><span>P</span><span>W</span><span>Pts</span></li>` + rows.map(r => {
@@ -1304,7 +1311,7 @@ function viewAdmin(){
     <section data-tab="money"><div class="sec-head"><h2>2's club</h2></div><div class="panel"><label class="check" style="margin-bottom:10px"><input type="checkbox" id="s-twosOn" ${k.twosOn ? 'checked' : ''}><span><b>Run the 2's club</b><small>Golfers join and pay each round before they tee off, from Home or when they tap Start my round.</small></span></label>
       <div class="grid2"><label class="field"><span>Cost a round (€)</span>${n('s-twosFee', k.twosFee, 'min="1" step="1"')}</label></div>
       <p class="hint">Paid on Revolut before teeing off, and only paid golfers are in. A gross 2 on any hole wins, each 2 is a share of the pot, and a hole-in-one takes the whole pot. Shares are rounded down to the euro, with the leftover kept in the pot. With no 2s the pot rolls over to the next weekend.</p></div></section>
-    <section data-tab="rules"><div class="sec-head"><h2>League points</h2></div><div class="panel"><div class="grid5"><label class="field"><span>1st</span>${n('s-pt1', k.points[0])}</label><label class="field"><span>2nd</span>${n('s-pt2', k.points[1])}</label><label class="field"><span>3rd</span>${n('s-pt3', k.points[2])}</label><label class="field"><span>4th</span>${n('s-pt4', k.points[3])}</label><label class="field"><span>Others</span>${n('s-pte', k.entryPoint)}</label></div><p class="hint">Given each weekend round, on that round's leaderboard, and each golfer's best rounds count (the same number as "Best cards count" below). "Others" is the point for every other signed card.</p></div></section>
+    <section data-tab="rules"><div class="sec-head"><h2>League points</h2></div><div class="panel"><p class="hint" style="margin-top:0"><b>New months use "By players"</b> (from December): the round winner gets 1 point for every paid player that month plus a bonus point, 2nd one fewer, and so on down to 1. You can change it in each month's settings. These fixed points are for months set to Fixed, like November:</p><div class="grid5"><label class="field"><span>1st</span>${n('s-pt1', k.points[0])}</label><label class="field"><span>2nd</span>${n('s-pt2', k.points[1])}</label><label class="field"><span>3rd</span>${n('s-pt3', k.points[2])}</label><label class="field"><span>4th</span>${n('s-pt4', k.points[3])}</label><label class="field"><span>Others</span>${n('s-pte', k.entryPoint)}</label></div><p class="hint">Given each weekend round, on that round's leaderboard, and each golfer's best rounds count (the same number as "Best cards count" below). "Others" is the point for every other signed card.</p></div></section>
     <section data-tab="rules"><div class="sec-head"><h2>New months</h2></div><div class="panel"><div class="grid2"><label class="field"><span>Weekend rounds</span>${n('s-rounds', k.rounds, 'min="1" max="5"')}</label><label class="field"><span>Best cards count</span>${n('s-best', k.best, 'min="1" max="5"')}</label></div><p class="hint">Each round is open Friday to Sunday. One card per golfer per round.</p></div></section>
     <section data-tab="rules"><div class="sec-head"><h2>Handicap changes</h2></div><div class="panel"><div class="bandedit"><span class="label">Handicap</span><span class="label">Winner cut</span><span class="label">Runner-up cut</span>
         <label class="bandlbl">Under ${n('s-b1', k.bands[0], 'min="0" step="0.1" aria-label="First band ends at"')}</label>${n('s-w1', k.cutWin[0], 'min="0" step="0.1" aria-label="Winner cut, lowest band"')}${n('s-r1', k.cutRun[0], 'min="0" step="0.1" aria-label="Runner-up cut, lowest band"')}
@@ -1434,6 +1441,7 @@ function sheetComp(){
     <label class="field"><span>Name</span><input type="text" id="f-name" name="name" value="${esc(c ? c.name : '')}" placeholder="${esc(dParts(rs[0].from).month + ' ' + FORMATS[fmt].short)}"></label>
     <div class="grid2"><label class="field"><span>Weekend rounds</span><select id="f-rcount" name="rcount">${range(1,5).map(i => `<option value="${i}" ${i === rs.length ? 'selected' : ''}>${i}</option>`).join('')}</select></label>
     <label class="field"><span>Best cards count</span><select id="f-best" name="best">${range(1,5).map(i => `<option value="${i}" ${i === best ? 'selected' : ''}>${i}</option>`).join('')}</select></label></div>
+    <label class="field"><span>League points</span><select id="f-points" name="pointsSystem">${(() => { const v = c ? (c.pointsSystem || 'fixed') : cfg().pointsSystem; return [['field', 'By players: winner gets 1 point per paid player + 1 bonus'], ['fixed', `Fixed: ${cfg().points.join(', ')}, others ${cfg().entryPoint}`]].map(([x, l]) => `<option value="${x}" ${v === x ? 'selected' : ''}>${l}</option>`).join(''); })()}</select></label>
     <div class="field"><span>Rounds</span><div id="f-rounds" class="rrows">${rs.map(r => roundRow(r.n, r, perRound)).join('')}</div><p class="hint">Pick each round's Friday; it runs Friday, Saturday and Sunday.</p></div>
     <label class="check toggle"><input type="checkbox" id="f-test" name="test" ${c && c.test ? 'checked' : ''}><span><b>Test month.</b> Rounds can start on any day, so you can try the app out. It never counts towards the league or handicaps. Delete it when you've finished.</span></label>
     <label class="check toggle"><input type="checkbox" id="f-perround" name="perround" ${perRound ? 'checked' : ''}><span>Different format, tees or holes for some rounds. "Default" uses the month's settings below.</span></label>
@@ -2350,7 +2358,8 @@ const FORMS = {
     if (rounds.some(r => r.bad)) { toast('Each round needs a later date than the one before.'); return; }
     const best = Math.min(count, Math.max(1, Number(fd.get('best')) || count));
     const id = S.sheet.id || newId(); const prev = D.comps[id] || {}; const format = fd.get('format') || 'stableford';
-    const data = Object.assign({}, prev, {test, name: String(fd.get('name') || '').trim() || (test ? 'Test month' : `${dParts(sorted[0]).month} ${FORMATS[format].short}`), date: sorted[0], rounds, best, format, holes, tee: fd.get('tee') || k.tee, fee: num(fd.get('fee'), k.fee), allowance: num(fd.get('allowance'), k.allowance), status: prev.status || 'open', createdAt: prev.createdAt || Date.now()});
+    const pointsSystem = fd.get('pointsSystem') === 'field' ? 'field' : 'fixed';
+    const data = Object.assign({}, prev, {test, pointsSystem, name: String(fd.get('name') || '').trim() || (test ? 'Test month' : `${dParts(sorted[0]).month} ${FORMATS[format].short}`), date: sorted[0], rounds, best, format, holes, tee: fd.get('tee') || k.tee, fee: num(fd.get('fee'), k.fee), allowance: num(fd.get('allowance'), k.allowance), status: prev.status || 'open', createdAt: prev.createdAt || Date.now()});
     delete data.id;
     if (await put(`comps/${id}`, data)) { localSet(`comps/${id}`, data); closeSheetQuiet(); S.view = 'comps'; S.compId = id; S.card = null; S.compTab = 'entries'; top(); render(); toast(prev.name ? 'Competition updated' : 'Month created'); }
   },
