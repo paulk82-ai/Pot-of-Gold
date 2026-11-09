@@ -8,12 +8,16 @@ const CONFIGURED = !!(CFG.firebase && CFG.firebase.apiKey && CFG.firebase.projec
 const SAMPLE = PARAMS.has('sample');
 
 /* ---------- Course & rules ---------- */
+// Par and stroke index from the current Rathsallagh scorecard (Nov 2026): men's index from the white column,
+// ladies' from the red column.
 const COURSE = {
   parM:[5,4,4,3,4,5,3,4,4, 4,5,4,3,4,4,5,3,4],
-  siM:[13,2,15,11,9,6,17,4,7, 1,10,12,18,14,8,5,16,3],
+  siM:[14,3,8,11,9,7,12,5,6, 1,15,13,17,18,10,4,16,2],
   parL:[5,4,4,3,4,5,3,4,4, 5,5,4,3,4,4,5,3,4],
-  siL:[15,1,13,11,9,5,17,7,3, 10,4,14,12,18,8,6,16,2]
+  siL:[9,1,13,17,7,5,15,3,11, 8,10,12,14,18,6,2,16,4]
 };
+// The old (out of date) index, which earlier saved settings may still hold: treated as "use the current card".
+const OLD_SI = {siM:[13,2,15,11,9,6,17,4,7, 1,10,12,18,14,8,5,16,3], siL:[15,1,13,11,9,5,17,7,3, 10,4,14,12,18,8,6,16,2]};
 // Men's tees. Ladies always play off the red tees with the ladies' rating (RED below).
 // Yards per hole from the published Rathsallagh scorecard (red = forward tees, used by ladies and by men who play the reds).
 const YARDS = {
@@ -22,8 +26,9 @@ const YARDS = {
   white:[488,414,353,147,362,460,154,341,359, 424,478,336,124,317,329,495,160,359],
   red:  [432,393,304,127,342,424,135,309,302, 399,402,308,115,260,309,423,126,373]
 };
-const TEES = { white:{name:'White', cr:70.3, slope:125, par:72}, blue:{name:'Blue', cr:71.7, slope:127, par:72}, black:{name:'Black', cr:74.0, slope:132, par:72}, red:{name:'Red', cr:69.9, slope:120, par:72} };
-const RED = {name:'Red', cr:72.2, slope:122, par:73};
+// Course ratings and slopes from Golf Ireland (Christy O'Connor course, Nov 2026).
+const TEES = { white:{name:'White', cr:71.0, slope:126, par:72}, blue:{name:'Blue', cr:72.3, slope:130, par:72}, black:{name:'Black', cr:74.2, slope:132, par:72}, red:{name:'Red', cr:67.9, slope:119, par:72} };
+const RED = {name:'Red', cr:72.0, slope:124, par:73};
 const FORMATS = {
   stableford:{name:'Stableford', short:'Stableford', better:'high'},
   medal:{name:'Stroke play (nett)', short:'Medal', better:'low'},
@@ -80,9 +85,10 @@ function cfg(){
     points: Array.isArray(s.points) && s.points.length ? s.points.map(Number) : DEFAULTS.points,
     prize: Array.isArray(s.prize) && s.prize.length ? s.prize.map(Number) : DEFAULTS.prize,
     entryPoint: isFinite(s.entryPoint) ? Number(s.entryPoint) : DEFAULTS.entryPoint,
-    course: { parM: okArr(c.parM, COURSE.parM), siM: okArr(c.siM, COURSE.siM), parL: okArr(c.parL, COURSE.parL), siL: okArr(c.siL, COURSE.siL) }
+    course: { parM: okArr(c.parM, COURSE.parM), siM: freshSi(okArr(c.siM, COURSE.siM), 'siM'), parL: okArr(c.parL, COURSE.parL), siL: freshSi(okArr(c.siL, COURSE.siL), 'siL') }
   });
 }
+function freshSi(a, k){ return JSON.stringify(a) === JSON.stringify(OLD_SI[k]) ? COURSE[k] : a; }
 function gName(gid){ const g = D.golfers[gid]; return g ? g.name : 'Unknown golfer'; }
 function sortedGolfers(){ return Object.values(D.golfers).sort(byName); }
 function inSeason(c, season){ return season === 'all' || String(c.date||'').slice(0,4) === season; }
@@ -1275,7 +1281,7 @@ function viewAdmin(){
     <section><div class="sec-head"><h2>Handicaps</h2></div><div class="panel"><div class="grid2"><label class="field"><span>Allowance %</span>${n('s-allow', k.allowance, 'min="0" max="100"')}</label><label class="field"><span>Default men's tees</span><select id="s-tee">${Object.entries(TEES).map(([key,t]) => `<option value="${key}" ${k.tee === key ? 'selected' : ''}>${t.name} · ${t.cr} / ${t.slope}</option>`).join('')}</select></label></div>
       <p class="hint">Shots use index × slope ÷ 113 + (rating − par), times the allowance. Ladies use the red tees. Each card keeps the golfer's index from the day it was marked.</p></div></section>
     <section><div class="panel"><details class="course" id="courseDetails" ${S.courseOpen ? 'open' : ''}><summary>Course card: par and stroke index</summary>
-      <p class="hint">From the published Rathsallagh scorecard. Check it against the card in the clubhouse.</p>
+      <p class="hint">From the current Rathsallagh scorecard (November 2026). Change it here if the club re-indexes the course.</p>
       <div class="ctable"><table><thead><tr><th>Hole</th><th>Men's par</th><th>Men's SI</th><th>Ladies' par</th><th>Ladies' SI</th></tr></thead><tbody>${range(1,18).map(h => `<tr><td>${h}</td><td>${n('c-pm-'+h, c.parM[h-1])}</td><td>${n('c-sm-'+h, c.siM[h-1])}</td><td>${n('c-pl-'+h, c.parL[h-1])}</td><td>${n('c-sl-'+h, c.siL[h-1])}</td></tr>`).join('')}</tbody></table></div>
       ${!siOk(c.siM) || !siOk(c.siL) ? '<p class="warnline">Each stroke index from 1 to 18 should appear once per card.</p>' : ''}</details></div></section>
     <button type="button" class="btn primary block" style="margin-top:14px" data-act="saveSettings">Save settings</button>
