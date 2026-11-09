@@ -1007,7 +1007,7 @@ function roundBoardHtml(c, n){
   const rows = rb.ranked.map(sc => { const row = lb.all.find(r => r.gid === sc.gid); const counts = row && row.countedNs.has(n); const pp = rp[sc.gid] || 0; const lgIn = mp[sc.gid] && mp[sc.gid].counted.has(n); const ptxt = `${pp} pt${pp === 1 ? '' : 's'}`;
     return `<li class="lb-row ${sc.pos === 1 ? 'first' : ''}"><span class="lb-pos">${sc.tied ? 'T' : ''}${sc.pos}</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>Marker ${esc(markerName(sc.card))}${cardStarted(sc.card) ? ' · started ' + esc(whenText(sc.card.startedAt)) : ''}${sc.onCb ? ' · on countback' : ''}${S.isAdmin && cardCheck(sc) ? ' · <span class="cardpts">⚠ check card</span>' : ''}</small></button><span class="lb-score">${esc(cardValueText(sc))}<small>${unitFor(rc.format)}</small></span><span class="lb-pts"><b>${lgIn ? ptxt : '(' + ptxt + ')'}</b>${counts ? 'counts' : 'dropped'}</span></li>`; }).join('');
   const rest = rb.rest.map(sc => `<li class="lb-row lb-rest"><span class="lb-pos">–</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>${esc(cardStatus(sc))}${S.isAdmin && cardCheck(sc) ? ' · <span class="cardpts">⚠ check card</span>' : ''}</small></button><span class="lb-score"></span><span class="lb-pts"></span></li>`).join('');
-  return `${info}<ul class="list">${head}${rows}${rest}</ul>`;
+  return `${info}<ul class="list">${head}${rows}${rest}</ul>${S.isAdmin && rb.ranked.length ? `<button class="btn block" style="margin-top:12px" data-act="shareRound" data-cid="${esc(c.id)}" data-round="${n}">${ICONS.share}Share round ${n} results</button>` : ''}`;
 }
 
 /* ----- Scorecard ----- */
@@ -1128,6 +1128,7 @@ function yearTableHtml(){
     return `<li><button class="lg-row ${r.pos === 1 ? 'p1' : ''}" data-act="openPlayer" data-id="${esc(r.id)}"><span class="lb-pos">${tied ? 'T' : ''}${r.pos}</span><span class="lg-name">${esc(p.name)}<small>${r.seconds ? r.seconds + '× runner-up · ' : ''}${r.won > 0.004 ? euro(r.won) + ' won' : 'Hcp ' + fmtHi(curHcp(p.id))}</small></span><span class="lg-n">${r.played}</span><span class="lg-n">${r.wins}</span><span class="lg-pts">${r.pts}</span></button></li>`;
   }).join('') + '</ul>';
   if (open.length) h += `<p class="hint" style="margin-top:10px">Includes ${open.map(c => esc(c.name)).join(' and ')}, still open, so ${open.length === 1 ? 'its' : 'their'} points are provisional until finalised.</p>`;
+  h += seasonHtml(S.season);
   // month-by-month grid
   const months = leagueComps(S.season).filter(c => Object.keys(monthPoints(c)).length);
   const pts = {}; months.forEach(c => leaderboard(c).all.forEach(r => { (pts[r.gid] || (pts[r.gid] = {}))[c.id] = r; }));
@@ -1298,9 +1299,9 @@ function viewAdmin(){
   return `<div class="pagehead"><div><span class="eyebrow">Organiser</span><h1>Admin</h1></div><button class="btn small" data-act="lockAdmin">Lock</button></div>
   <div class="seg admintabs" role="tablist">${[["cards","Cards"],["money","Money"],["rules","Rules"],["setup","Setup"]].map(([k2, l]) => `<button data-act="adminTab" data-v="${k2}" aria-pressed="${(S.adminTab || "cards") === k2}">${l}</button>`).join("")}</div>
   <div class="admin-tabs" data-show="${S.adminTab || 'cards'}">
-  <div data-tab="cards">${checkCardsHtml()}</div>
+  <div data-tab="cards">${chaseHtml()}${checkCardsHtml()}${startForHtml()}</div>
   <div data-tab="setup">${testCompHtml()}</div>
-  <div data-tab="money">${moneyShortcutsHtml()}</div>
+  <div data-tab="money">${moneyShortcutsHtml()}${prizesHtml()}</div>
   <p class="hint" data-tab="money rules" style="margin:14px 0 14px">Settings: changes save as you go, and you'll see "Settings saved" each time. The button at the bottom saves everything again if you want to be sure.</p>
   <form id="setupForm" class="setup" onsubmit="return false">
     <section data-tab="money"><div class="sec-head" style="margin-top:0"><h2>Entry & payments</h2></div><div class="panel">
@@ -2018,6 +2019,110 @@ function moneyShortcutsHtml(){
     L.filter(x => !x.closed || x.toConfirm).slice(-2).forEach(x => { h += `<button class="btn block ${x.toConfirm ? 'primary' : ''}" style="margin-top:8px" data-act="twosOpen" data-cid="${esc(c.id)}" data-round="${x.r.n}">2's club · round ${x.r.n}${x.toConfirm ? ` · ${x.toConfirm} to confirm` : ''} · pot ${euro(x.pot)}</button>`; }); }
   return h + `</div></section>`;
 }
+
+/* ---------- Organiser tools: chase list, start a round for someone, prizes to pay, results and season to share ---------- */
+const wa = text => 'https://wa.me/?text=' + encodeURIComponent(text);
+function chaseData(){
+  const c = currentComp(); if (!c) return null; const fee = euro(compFee(c)); const url = appUrl(); const rev = 'revolut.me/' + cfg().revtag;
+  const open = compRounds(c).find(r => roundState(r) === 'open'); const groups = [];
+  const g = (key, title, why, people, msg, group) => { if (people.length) groups.push({key, title, why, people, msg, group}); };
+  if (open) {
+    const cards = Object.values(D.cards).filter(k => k && k.compId === c.id && Number(k.round) === open.n && cardStarted(k) && !cardLocked(k) && !roundShut(k) && D.golfers[k.golferId]);
+    const scs = cards.map(k => scoreCard(c, open.n, k.golferId));
+    g('unfinished', 'Started, not finished', `Round ${open.n} · card not complete or not ticked signed`, scs.filter(x => !x.complete || !x.marked).map(x => x.golfer).sort(byName),
+      p => `Hi ${firstName(p.name)}, your round ${open.n} card in the Pot of Gold app isn't finished yet. Enter your scores, add your marker and tick it signed, then send me the card, all by midnight, or it won't count. ${url}`,
+      names => `Pot of Gold round ${open.n}: ${names} – your cards aren't finished yet. Enter your scores, add your marker and send me the card by midnight, or it won't count. ${url}`);
+    g('unsent', 'Signed, not sent', `Round ${open.n} · photo of the card not sent yet`, scs.filter(x => x.complete && x.marked && !x.photoOk).map(x => x.golfer).sort(byName),
+      p => `Hi ${firstName(p.name)}, your round ${open.n} card is in, but I haven't got the photo of it yet. Tap Send my card to the organiser in the app before midnight, or it won't count. Thanks!`,
+      names => `Pot of Gold round ${open.n}: ${names} – I haven't got the photo of your card yet. Tap Send my card to the organiser in the app before midnight, or it won't count.`);
+    if (twosOn()) g('twos', "2's: not paid", `Round ${open.n} · joined the 2's but the ${euro(twosFee())} isn't paid`, twosFor(c.id, open.n).filter(t => twosPayState(t) === 'unpaid').map(t => D.golfers[t.golferId]).filter(Boolean).sort(byName),
+      p => `Hi ${firstName(p.name)}, you're down for the 2's this weekend but the ${euro(twosFee())} isn't paid yet. Pay ${rev} before you tee off (or within 10 minutes of starting), then tap I've paid in the app, or you're not in.`,
+      names => `2's club round ${open.n}: ${names} – your ${euro(twosFee())} isn't paid yet. Pay ${rev} before you tee off and tap I've paid in the app, or you're not in.`);
+  }
+  const L = chaseLists(c);
+  g('unpaid', 'Entry not paid', `${c.name} · ${fee} entry`, L.unpaid,
+    p => `Hi ${firstName(p.name)}, just a reminder your ${fee} entry for ${c.name} isn't paid yet. Pay ${rev}, then tap I've paid in the app. Thanks!`,
+    names => `${c.name}: ${names} – your ${fee} entry isn't paid yet. Pay ${rev}, then tap I've paid in the app. Thanks!`);
+  g('notin', 'Not entered', `${c.name} · still rounds to play`, L.notEntered,
+    p => `Hi ${firstName(p.name)}, ${c.name} is on: ${fee} covers all ${compRounds(c).length} rounds and your best ${compBest(c)} count. Enter in the app: ${url}`,
+    names => `${c.name} is on: ${fee} covers all ${compRounds(c).length} rounds and your best ${compBest(c)} count. Not in yet: ${names}. Enter in the app: ${url}`);
+  return {c, open, groups};
+}
+function chaseHtml(){
+  const d = chaseData(); if (!d) return '';
+  let h = `<section><div class="sec-head"><h2>Chase list</h2></div><div class="panel">`;
+  if (!d.groups.length) return h + `<p class="notebox ok" style="margin:0">Nobody to chase. Everyone's entered, paid, finished and sent.</p></div></section>`;
+  h += `<p class="hint" style="margin-top:0">Tap <b>Remind</b> to open WhatsApp with a message ready; pick the golfer and send. <b>Remind all</b> writes one message for the group.</p>`;
+  d.groups.forEach(gr => {
+    h += `<div class="chase"><div class="chase-head"><span><b>${esc(gr.title)} · ${gr.people.length}</b><small>${esc(gr.why)}</small></span><a class="btn small" href="${esc(wa(gr.group(gr.people.map(p => p.name).join(', '))))}" target="_blank" rel="noopener">Remind all</a></div>
+      <ul class="grp checklist">${gr.people.map(p => `<li><span class="grp-main"><b>${esc(p.name)}</b></span><a class="btn small" href="${esc(wa(gr.msg(p)))}" target="_blank" rel="noopener">${ICONS.share}Remind</a></li>`).join('')}</ul></div>`;
+  });
+  return h + `</div></section>`;
+}
+function startForHtml(){
+  const c = currentComp(); const open = c && compRounds(c).find(r => roundState(r) === 'open'); if (!open || c.status !== 'open') return '';
+  const gs = sortedGolfers().filter(g => (entryOf(c.id, g.id) || twosOf(c.id, open.n, g.id)) && !cardStarted(cardOf(c.id, open.n, g.id)) && !(cardOf(c.id, open.n, g.id) || {}).scores);
+  return `<section><div class="sec-head"><h2>Start a round for someone</h2></div><div class="panel"><p class="hint" style="margin-top:0">For a golfer who texts you "starting now" instead of using the app. It records the time now, exactly as if they'd tapped Start my round. Then upload their card as usual.</p>
+    ${gs.length ? `<div class="grid2"><label class="field"><span>Golfer</span><select id="sf-g">${gs.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}</select></label><div class="field"><span>Round</span><p style="margin:10px 0 0"><b>Round ${open.n}</b> · ${esc(shortRange(open))}</p></div></div><button class="btn block" data-act="startFor" data-cid="${esc(c.id)}" data-round="${open.n}">Start their round now</button>` : `<p class="notebox" style="margin:0">Everyone entered has already started round ${open.n}.</p>`}</div></section>`;
+}
+function prizeList(){
+  const out = [];
+  Object.values(D.comps).filter(c => !c.test).forEach(c => {
+    if (c.status === 'final') leaderboard(c).ranked.filter(r => (r.prize || 0) > 0).forEach(r => out.push({c, key: 'm_' + r.gid, gid: r.gid, what: `${c.name} · ${ord(r.pos)}`, amt: r.prize, paid: (c.prizesPaid || {})['m_' + r.gid]}));
+  });
+  if (twosOn()) twosLedger().filter(x => x.state === 'played').forEach(x => x.winners.filter(w => w.won > 0).forEach(w => out.push({c: x.c, key: `t${x.r.n}_${w.gid}`, gid: w.gid, what: `2's · ${x.c.name} round ${x.r.n} · ${twosDesc(w)}`, amt: w.won, paid: (x.c.prizesPaid || {})[`t${x.r.n}_${w.gid}`]})));
+  return out.filter(x => D.golfers[x.gid]).sort((a, b) => (!!a.paid - !!b.paid) || String(b.c.date || '').localeCompare(String(a.c.date || '')));
+}
+function prizesHtml(){
+  const L = prizeList(); const due = L.filter(x => !x.paid), done = L.filter(x => x.paid);
+  let h = `<section class="setup"><div class="sec-head"><h2>Prizes to pay</h2></div><div class="panel"><p class="hint" style="margin-top:0">Monthly prizes once a month is finalised, and every 2's win. Tick each one off when you've paid it on Revolut.</p>`;
+  if (!L.length) return h + `<p class="notebox" style="margin:0">No prizes yet. They show here once a month is finalised or someone wins the 2's.</p></div></section>`;
+  const row = x => `<li><span class="grp-main"><b>${esc(gName(x.gid))} · ${euro(x.amt)}</b><small>${esc(x.what)}${x.paid ? ' · paid ' + esc(whenText(x.paid)) : ''}</small></span><button class="btn small ${x.paid ? '' : 'primary'}" data-act="prizePaid" data-cid="${esc(x.c.id)}" data-k="${esc(x.key)}">${x.paid ? 'Undo' : 'Paid'}</button></li>`;
+  h += due.length ? `<ul class="grp checklist">${due.map(row).join('')}</ul>` : `<p class="notebox ok" style="margin:0">All prizes paid.</p>`;
+  if (done.length) h += `<details style="margin-top:10px"><summary class="hint">Paid already (${done.length})</summary><ul class="grp checklist" style="margin-top:8px">${done.map(row).join('')}</ul></details>`;
+  return h + `</div></section>`;
+}
+function roundResultsText(c, n){
+  const rb = roundBoard(c, n); const rp = roundPoints(c, n); const u = unitFor(rcfg(c, n).format);
+  const lines = [`Pot of Gold · ${c.name} · round ${n} results`];
+  rb.ranked.slice(0, 10).forEach(sc => lines.push(`${sc.tied ? 'T' : ''}${sc.pos}. ${sc.golfer.name} ${cardValueText(sc)}${u ? ' ' + u : ''} (${rp[sc.gid] || 0} league pts)`));
+  if (rb.ranked.length > 10) lines.push(`…and ${rb.ranked.length - 10} more`);
+  if (!rb.ranked.length) lines.push('No cards in yet.');
+  const x = twosOn() ? twosItem(c.id, n) : null;
+  if (x && (x.entrants.length || x.carryIn > 0.004)) lines.push(x.winners.length ? `2's: ${x.winners.map(w => twosWho(w, true)).join(', ')}${x.leftover > 0.004 ? ` · ${euro(x.leftover)} rolls on` : ''}` : `2's: no 2s, ${euro(x.pot)} rolls over to next weekend`);
+  const lb = leaderboard(c); const lead = lb.ranked && lb.ranked[0];
+  if (lead) lines.push(`Month so far: ${lead.golfer ? lead.golfer.name : gName(lead.gid)} leads`);
+  lines.push(appUrl());
+  return lines.join('\n');
+}
+function seasonHighlights(season){
+  const comps = leagueComps(season); let best = null, wins = {}, twos = {}, played = {};
+  comps.forEach(c => compRounds(c).forEach(r => { const rc = rcfg(c, r.n);
+    entriesFor(c.id).forEach(e => { const sc = scoreCard(c, r.n, e.golferId); if (!sc.valid) return; played[sc.gid] = (played[sc.gid] || 0) + 1;
+      sc.rows.forEach(x => { if (typeof x.g === 'number' && x.g <= 2) twos[sc.gid] = (twos[sc.gid] || 0) + 1; });
+      if (rc.format === 'stableford' && rc.holes.length === 18 && (!best || sc.pts > best.pts)) best = {gid: sc.gid, pts: sc.pts, c, n: r.n}; });
+    const rb = roundBoard(c, r.n); rb.ranked.filter(sc => sc.pos === 1).forEach(sc => { wins[sc.gid] = (wins[sc.gid] || 0) + 1; }); }));
+  const top = m => { const e = Object.entries(m).filter(([g]) => D.golfers[g]).sort((a, b) => b[1] - a[1]); return e.length ? {gid: e[0][0], n: e[0][1], tied: e.filter(x => x[1] === e[0][1]).length} : null; };
+  return {best, wins: top(wins), twos: top(twos), played: top(played)};
+}
+function seasonHtml(season){
+  const H = seasonHighlights(season); const items = [];
+  if (H.wins) items.push(['Most round wins', `${gName(H.wins.gid)}${H.wins.tied > 1 ? ` and ${H.wins.tied - 1} more` : ''} · ${H.wins.n}`]);
+  if (H.best) items.push(['Best 18-hole Stableford', `${gName(H.best.gid)} · ${H.best.pts} pts (${H.best.c.name} R${H.best.n})`]);
+  if (H.twos) items.push(['Most 2s', `${gName(H.twos.gid)}${H.twos.tied > 1 ? ` and ${H.twos.tied - 1} more` : ''} · ${H.twos.n}`]);
+  if (H.played) items.push(['Most rounds played', `${gName(H.played.gid)}${H.played.tied > 1 ? ` and ${H.played.tied - 1} more` : ''} · ${H.played.n}`]);
+  if (!items.length) return '';
+  return `<div class="sec-head"><h2>Season highlights</h2></div><dl class="highlights">${items.map(([a, b]) => `<div><dt>${esc(a)}</dt><dd>${esc(b)}</dd></div>`).join('')}</dl><button class="btn block" style="margin:10px 0 18px" data-act="shareSeason">${ICONS.share}Share the season</button>`;
+}
+function seasonText(season){
+  const rows = league(season); const H = seasonHighlights(season);
+  const lines = [`Pot of Gold league · ${season === 'all' ? 'all seasons' : season}`];
+  rows.slice(0, 10).forEach(r => lines.push(`${r.pos}. ${gName(r.id)} ${r.pts} pts${r.wins ? ` · ${r.wins} month win${r.wins === 1 ? '' : 's'}` : ''}`));
+  if (H.wins) lines.push(`Most round wins: ${gName(H.wins.gid)} (${H.wins.n})`);
+  if (H.best) lines.push(`Best round: ${gName(H.best.gid)}, ${H.best.pts} pts`);
+  if (H.twos) lines.push(`Most 2s: ${gName(H.twos.gid)} (${H.twos.n})`);
+  lines.push(appUrl()); return lines.join('\n');
+}
 function testCompHtml(){
   const t = testComp();
   let h = `<section><div class="sec-head"><h2>Test a competition</h2></div><div class="panel">`;
@@ -2143,6 +2248,17 @@ const ACT = {
       const ops = [].concat(entriesFor(t.id).map(e => ({path: `comps/${t.id}/entries/${e.golferId}`, del: true})), cards.map(x => ({path: `comps/${t.id}/cards/${x.id}`, del: true})), cards.map(x => ({path: `comps/${t.id}/photos/${x.id}`, del: true})), [{path: `comps/${t.id}`, del: true}]);
       for (let i = 0; i < ops.length; i += 400) { if (!(await batch(ops.slice(i, i + 400)))) return; }
       S.testFocus = false; try { sessionStorage.removeItem('rgc-test-focus'); } catch (_) {} if (S.compId === t.id) S.compId = null; MEMO = {}; render(); toast('Test competition deleted'); }, true); },
+  shareRound(el){ const c = D.comps[el.dataset.cid]; if (c) shareText(roundResultsText(c, Number(el.dataset.round))); },
+  shareSeason(){ shareText(seasonText(S.season)); },
+  async prizePaid(el){ const c = D.comps[el.dataset.cid]; if (!c || !S.isAdmin) return; const k2 = el.dataset.k; const m = Object.assign({}, c.prizesPaid || {});
+    if (m[k2]) delete m[k2]; else m[k2] = Date.now(); const data = Object.assign({}, c, {prizesPaid: m}); delete data.id;
+    if (await put(`comps/${c.id}`, data)) { localSet(`comps/${c.id}`, data); MEMO = {}; render(); toast(m[k2] ? 'Marked paid' : 'Marked not paid'); } },
+  startFor(el){ const c = D.comps[el.dataset.cid]; const n = Number(el.dataset.round); const gid = ($('#sf-g') || {}).value; if (!c || !gid || !S.isAdmin) return;
+    askConfirm(`Start round ${n} for ${gName(gid)}?`, `Their start time is recorded as now, ${whenText(Date.now())}. Use this when they've told you they're about to tee off.`, 'Start their round', async () => {
+      const now = Date.now(); const path = `comps/${c.id}/cards/${n}_${gid}`;
+      const data = Object.assign(cardBase(c.id, n, gid), {startedAt: now, deadline: Math.min(endOfDay(now), roundCloses(c, n)), updatedAt: now, updatedBy: S.user.uid});
+      if (!entryOf(c.id, gid)) data.twosOnly = true; else delete data.twosOnly;
+      if (await put(path, data)) { localSet(path, data); MEMO = {}; render(); toast(`Round ${n} started for ${gName(gid)} at ${whenText(now)}`); } }); },
   adminTab(el){ S.adminTab = el.dataset.v; top(); render(); },
   checkAll(){ if (!S.isAdmin) return; const list = cardsToCheck().filter(x => cardCounts(x.c.id, x.card.round, x.card.golferId)); if (!list.length) return; const n = list.length; const left = cardsToCheck().length - n;
     askConfirm(`Mark ${n} card${n === 1 ? '' : 's'} as checked?`, `Use this once you've checked ${n === 1 ? 'it' : 'them'} against the photos you were sent. ${n === 1 ? 'It comes' : 'They come'} off the list, and nothing on the cards changes.${left ? ` ${left} card${left === 1 ? " that doesn't" : "s that don't"} count yet stay${left === 1 ? 's' : ''} on the list.` : ''} If a golfer changes a card afterwards, it comes back on the list.`, 'Mark checked', async () => {

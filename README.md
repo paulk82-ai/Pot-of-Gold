@@ -111,6 +111,12 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 
 ## What the organiser can do
 
+- **Chase list** (Admin → Cards): everyone who has started but not finished, signed but not sent, not paid the 2's, not paid their entry, or not entered. Each name has **Remind**, which opens WhatsApp with a message already written (you pick the golfer), and each group has **Remind all** for one group message.
+- **Start a round for someone** (Admin → Cards): for a golfer who texts you "starting now". It records the time as if they'd tapped Start my round; then upload their card as usual.
+- **Share round N results** (on a round's leaderboard): one tap shares the top 10 with scores and league points, the 2's result and who leads the month.
+- **Prizes to pay** (Admin → Money): monthly prizes (once a month is finalised) and every 2's win, each with **Paid** to tick off as you pay on Revolut.
+- **Season highlights** (Table → Year): most round wins, best 18-hole Stableford, most 2s and most rounds played, with **Share the season**.
+
 - **Test a competition** (Admin): one tap starts a one-round test competition that's open today. **Try it as a golfer** puts you on Home in it as a golfer, so you can Start my round, enter scores, send your card, then check it under Check cards. Only organisers ever see it, it never counts for the league, handicaps or the 2's, and **Finish testing** takes you back. Delete it in Admin when you're done.
 
 - Add and edit golfers and their emails, let in people who ask to join, and add other organisers.
