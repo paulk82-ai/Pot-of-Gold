@@ -35,7 +35,7 @@ const FORMATS = {
   gross:{name:'Stroke play (gross)', short:'Gross', better:'low'},
   parbogey:{name:'v Par', short:'v Par', better:'high'}
 };
-const DEFAULTS = { pointsSystem:'field', fee:10, revtag:'paul3d7qv', points:[5,4,3,2], entryPoint:1, prize:[60,40], allowance:95, tee:'white', rounds:4, best:3, bands:[10,20], cutWin:[1,2,3], cutRun:[0.5,1,1.5], riseBy:0.5, riseAfter:1, holdMonths:1, hcpMax:54, twosOn:false, twosFee:2, photoRequired:true };
+const DEFAULTS = { pointsSystem:'field', fee:10, revtag:'paul3d7qv', points:[5,4,3,2], entryPoint:1, prize:[60,40], allowance:95, tee:'white', rounds:4, best:3, roundDay:5, roundDays:3, bands:[10,20], cutWin:[1,2,3], cutRun:[0.5,1,1.5], riseBy:0.5, riseAfter:1, holdMonths:1, hcpMax:54, twosOn:false, twosFee:2, photoRequired:true };
 // Entries are paid through Revolut only: in the Revolut app, or by debit card on the Revolut payment page.
 const METHODS = {revolut:'Revolut', card:'Card (Revolut)', credit:'Paid from credit'};
 
@@ -99,7 +99,9 @@ function sortedGolfers(){ return Object.values(D.golfers).sort(byName); }
 function inSeason(c, season){ return season === 'all' || String(c.date||'').slice(0,4) === season; }
 function seasonList(){ const ys = new Set(Object.values(D.comps).map(c => String(c.date||'').slice(0,4)).filter(Boolean)); ys.add(String(new Date().getFullYear())); return [...ys].sort().reverse(); }
 
-/* ---------- Rounds (weekends, Friday to Sunday) ---------- */
+/* ---------- Rounds ----------
+   Each round runs from its first day (from) to its last day (to), both inclusive: any days the organiser picks.
+   New months default to the Admin setting: rounds start on roundDay (5 = Friday) and last roundDays days (3: Fri to Sun). */
 function compRounds(c){ return Array.isArray(c.rounds) && c.rounds.length ? c.rounds : [{n:1, from:c.date, to:c.date}]; }
 function compBest(c){ const n = compRounds(c).length; return Math.min(n, Math.max(1, Number(c.best) || n)); }
 // A round's own settings: format, tees, holes and allowance, falling back to the month's.
@@ -112,11 +114,16 @@ function roundsVary(c){ const rs = compRounds(c).map(r => rcfg(c, r.n)); const a
 // Same format and number of holes every round: the month adds up that format. Otherwise it adds up Stableford points.
 function monthMode(c){ const rs = compRounds(c).map(r => rcfg(c, r.n)); const f = rs[0].format, n = rs[0].holes.length; return rs.every(x => x.format === f && x.holes.length === n) ? {mixed:false, format:f} : {mixed:true, format:'stableford'}; }
 function unitFor(format){ return format === 'stableford' ? 'pts' : format === 'medal' ? 'nett' : format === 'gross' ? 'gross' : ''; }
-function firstFriday(y, m){ const d = new Date(y, m, 1); d.setDate(1 + ((5 - d.getDay() + 7) % 7)); return d; }
-function defaultFirstFri(){ const now = new Date(); let f = firstFriday(now.getFullYear(), now.getMonth()); if (iso(f) < iso(now) && addDays(iso(f), 2) < iso(now)) f = firstFriday(now.getFullYear(), now.getMonth() + 1); return iso(f); }
-function weekendRounds(firstFri, count){ return range(1, count).map(i => { const from = addDays(firstFri, 7*(i-1)); return {n:i, from, to:addDays(from, 2)}; }); }
+function firstFriday(y, m, dow){ const w = dow === undefined ? 5 : dow; const d = new Date(y, m, 1); d.setDate(1 + ((w - d.getDay() + 7) % 7)); return d; }
+function roundDays(){ const k = cfg(); return {dow: Math.max(0, Math.min(6, Math.round(num(k.roundDay, 5)))), len: Math.max(1, Math.min(7, Math.round(num(k.roundDays, 3))))}; }
+function defaultFirstFri(){ const {dow, len} = roundDays(); const now = new Date(); let f = firstFriday(now.getFullYear(), now.getMonth(), dow); if (addDays(iso(f), len - 1) < iso(now)) f = firstFriday(now.getFullYear(), now.getMonth() + 1, dow); return iso(f); }
+function weekendRounds(first, count){ const {len} = roundDays(); return range(1, count).map(i => { const from = addDays(first, 7*(i-1)); return {n:i, from, to:addDays(from, len - 1)}; }); }
+// "Friday to Sunday", "Tuesday", "Saturday and Sunday"
+const DOWL = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+function daysText(r){ const a = parseDate(r.from), b = parseDate(r.to || r.from); if (!a || !b) return ''; const n = Math.round((b - a) / 864e5) + 1; if (n <= 1) return DOWL[a.getDay()]; if (n === 2) return `${DOWL[a.getDay()]} and ${DOWL[b.getDay()]}`; if (n >= 7) return `${n} days`; return `${DOWL[a.getDay()]} to ${DOWL[b.getDay()]}`; }
+function usualDaysText(){ const {dow, len} = roundDays(); const d = new Date(2026, 0, 4 + dow); return daysText({from: iso(d), to: addDays(iso(d), len - 1)}); }
 function roundState(r){ const t = iso(new Date()); return t < r.from ? 'upcoming' : (t > r.to || r.closedAt) ? 'played' : 'open'; }
-// The organiser can close a round before its weekend ends (say Sunday evening, once everyone's in): golfers can't start,
+// The organiser can close a round before its last day ends (say that evening, once everyone's in): golfers can't start,
 // enter or send cards for it any more, its 2's closes too, and Home moves on to the next round. It can be reopened.
 function roundCloseDue(c, r){ return !!(c && r && c.status === 'open' && !r.closedAt && roundState(r) === 'open' && iso(new Date()) === r.to && new Date().getHours() >= 18); }
 function roundShut(card){ const c = card && D.comps[card.compId]; const r = c ? compRounds(c).find(x => x.n === Number(card.round)) : null; return !!(r && r.closedAt); }
@@ -291,7 +298,7 @@ function roundBoard(comp, n){
   const rest = all.filter(sc => !sc.valid).sort((a,b) => b.filled - a.filled || byName(a.golfer, b.golfer));
   return (MEMO[key] = {ranked, rest});
 }
-// League points are given each weekend round: 1st to 4th on the round's board get 5/4/3/2,
+// League points are given each round: 1st to 4th on the round's board get 5/4/3/2,
 // every other counting card gets 1. A golfer's best rounds count (the month's "best" number, usually 3).
 // They're provisional until the month is finalised.
 function roundPoints(comp, n){
@@ -490,7 +497,7 @@ function previewHcp(cid, status){
 }
 
 /* ---------- Who can do what (mirrors firestore.rules) ---------- */
-// Players enter their own card (Friday to Sunday); the organiser can enter any card.
+// Players enter their own card while the round is open; the organiser can enter any card.
 function canEnter(cid, round, gid){
   const c = D.comps[cid]; if (!c) return false;
   if (S.isAdmin) return true;
@@ -503,7 +510,7 @@ function canStart(cid, round){
 }
 function errText(e){
   const code = e && e.code || '';
-  if (code === 'permission-denied' || /permission/i.test(e && e.message || '')) return (e && e.message && !/Missing or insufficient/i.test(e.message)) ? e.message : "That isn't allowed. You can enter your own card while the round is open (Friday to Sunday).";
+  if (code === 'permission-denied' || /permission/i.test(e && e.message || '')) return (e && e.message && !/Missing or insufficient/i.test(e.message)) ? e.message : "That isn't allowed. You can enter your own card while the round is open.";
   if (code === 'unavailable') return "You're offline. It will save when you're back online.";
   return 'Something went wrong. Check your connection and try again.';
 }
@@ -834,7 +841,7 @@ function nextStep(c){
   if (!open) return next ? mk(2, `Next: round ${next.n}, ${dParts(next.from).dow} ${dParts(next.from).day} ${dParts(next.from).mon}`, 'When you get to the course, tap Start my round here before you tee off.', '', 'wait') : null;
   const card = cardOf(c.id, open.n, me); const sc = scoreCard(c, open.n, me); const at = `data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}"`;
   const tw2 = twosOn() ? (twosIn(twosOf(c.id, open.n, me)) ? " You're in the 2's this round." : twosWindowOpen(c.id, open.n, me) ? " It'll ask about the 2's club." : '') : '';
-  if (!cardStarted(card)) return canStart(c.id, open.n) ? mk(2, `Start round ${open.n}`, `Tap this at the course, before you tee off. You get one round this weekend.${tw2}`, `<button class="btn primary block big" data-act="startRound" data-cid="${cid}" data-round="${open.n}">Start my round</button>`) : null;
+  if (!cardStarted(card)) return canStart(c.id, open.n) ? mk(2, `Start round ${open.n}`, `Tap this at the course, before you tee off. You get one go at this round.${tw2}`, `<button class="btn primary block big" data-act="startRound" data-cid="${cid}" data-round="${open.n}">Start my round</button>`) : null;
   if (cardLocked(card) || roundShut(card)) return sc.valid || cardCounts(c.id, open.n, me) ? mk(6, `Round ${open.n} done`, 'Your card counts. Well played!', '', 'done') : mk(6, `Round ${open.n} is closed`, "Your card wasn't finished in time, so this round doesn't count. Your best rounds still count.", '', 'missed');
   if (!sc.complete) return mk(3, 'Enter your scores', sc.filled ? `${sc.filled} of ${sc.rc.holes.length} holes in. Carry on from where you left off.` : `Type in your score for each hole, by ${deadlineText(card) || 'midnight'}.`, `<button class="btn primary block big" data-act="nextScores" ${at}>${sc.filled ? 'Carry on entering' : 'Enter my scores'}</button>`);
   if (!sc.marked) return mk(4, 'Add your marker', "Type your marker's name and tick that they've signed your card.", `<button class="btn primary block big" data-act="openCard" ${at}>Add my marker</button>`);
@@ -852,14 +859,14 @@ function homeHero(c){
   const me = S.myGid; const e = me ? entryOf(c.id, me) : null; const fee = compFee(c); const cid = esc(c.id);
   let h = `<section class="hero"><span class="eyebrow">${esc(c.name)}${rs.length > 1 ? ` · best ${compBest(c)} of ${rs.length} rounds` : ''}</span>`;
   if (open) h += `<h1 class="hero-title">Round ${open.n} is open</h1><p class="hero-sub">${esc(roundLabel(open))} · ${esc(roundInfo(c, open.n))}</p>`;
-  else if (next) { const d = dParts(next.from); h += `<h1 class="hero-title">Round ${next.n} opens ${d.dow} ${d.day} ${d.mon}</h1><p class="hero-sub">Open Friday to Sunday · ${esc(roundInfo(c, next.n))}</p>`; }
+  else if (next) { const d = dParts(next.from); h += `<h1 class="hero-title">Round ${next.n} opens ${d.dow} ${d.day} ${d.mon}</h1><p class="hero-sub">Open ${esc(daysText(next))} · ${esc(roundInfo(c, next.n))}</p>`; }
   else h += `<h1 class="hero-title">All rounds played</h1><p class="hero-sub">The results are final once the organiser finalises the month.</p>`;
   const t2only = me && !e && open && twosOn() ? twosOf(c.id, open.n, me) : null; const ns = !!nextStep(c);
   h += nextStepHtml(c);
   if (t2only) h += myRoundHtml(c, open, true);
   if (me && !e && ns && !t2only) { h += `<p class="hero-text">Entry is ${euro(fee)} and covers all ${rs.length} round${rs.length === 1 ? '' : 's'}. Your best ${compBest(c)} card${compBest(c) === 1 ? '' : 's'} count.</p>${payNote(c)}`; }
   else if (me && !e) {
-    h += `<p class="hero-text">${t2only ? `You're playing the 2's only this weekend. To play for the monthly prize too, enter ${esc(c.name)}. ` : ''}Entry is ${euro(fee)} and covers all ${rs.length} round${rs.length === 1 ? '' : 's'}. Your best ${compBest(c)} card${compBest(c) === 1 ? '' : 's'} count.</p><button class="btn primary block big" data-act="selfEnter" data-cid="${cid}">Enter ${esc(c.name)}</button>${payNote(c)}`;
+    h += `<p class="hero-text">${t2only ? `You're playing the 2's only this round. To play for the monthly prize too, enter ${esc(c.name)}. ` : ''}Entry is ${euro(fee)} and covers all ${rs.length} round${rs.length === 1 ? '' : 's'}. Your best ${compBest(c)} card${compBest(c) === 1 ? '' : 's'} count.</p><button class="btn primary block big" data-act="selfEnter" data-cid="${cid}">Enter ${esc(c.name)}</button>${payNote(c)}`;
   } else if (me && e) {
     if (open) h += myRoundHtml(c, open, false);
     const ps = payState(e);
@@ -882,7 +889,7 @@ function myRoundHtml(c, open, only){
     if (ns) return h;
     h += `<button class="btn primary block big" data-act="startRound" data-cid="${cid}" data-round="${open.n}">Start my round</button>`;
     h += only ? `<p class="hint">Tap this before you tee off. This card is just for the 2's, not the monthly competition. ${signRule('Enter it')} by midnight that day.</p>`
-      : `<p class="hint">Tap this before you tee off. You get one round this weekend. ${signRule('Enter it')} by midnight that day, or it doesn't count.${twosOn() ? (twosIn(twosOf(c.id, open.n, me)) ? " You're in the 2's this round." : twosWindowOpen(c.id, open.n, me) ? " It'll ask about the 2's club." : '') : ''}</p>`;
+      : `<p class="hint">Tap this before you tee off. You get one go at this round. ${signRule('Enter it')} by midnight that day, or it doesn't count.${twosOn() ? (twosIn(twosOf(c.id, open.n, me)) ? " You're in the 2's this round." : twosWindowOpen(c.id, open.n, me) ? " It'll ask about the 2's club." : '') : ''}</p>`;
   } else if (cardStarted(card) || (card && card.scores && Object.keys(card.scores).length)) {
     const status = done ? `${val} · signed by ${markerName(card)}` : late ? "Not finished by midnight, so it doesn't count" : !sc.filled ? 'No scores yet' : !sc.complete ? `Thru ${sc.filled} of ${sc.rows.length} holes` : sc.nr ? 'No return (picked up)' : needPhoto ? `${val} · send your card to the organiser` : `${val} · not ticked as signed yet`;
     const timing = cardStarted(card) ? (late ? `Started ${whenText(card.startedAt)} · locked at midnight` : `Started ${whenText(card.startedAt)} · enter by ${deadlineText(card)}`) : '';
@@ -970,7 +977,7 @@ function emptyComps(){
   return `<section class="empty"><span class="eyebrow">Getting started</span><h2>Set up your first month</h2>
     <ol class="steps">
       <li><div><span><b>Add your golfers</b> with their handicap index and email, or share the app link and approve them as they ask to join.</span><span style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn small" data-act="newGolfer">Add a golfer</button><button class="btn small" data-act="invite">Invite</button></span></div></li>
-      <li><div><span><b>Create the month.</b> Four weekend rounds, open Friday to Sunday; the best 3 count.</span><button class="btn small primary" data-act="newComp">New competition</button></div></li>
+      <li><div><span><b>Create the month.</b> ${cfg().rounds} rounds, open ${esc(usualDaysText())} (you can pick any days); the best ${cfg().best} count.</span><button class="btn small primary" data-act="newComp">New competition</button></div></li>
       <li><div><span><b>Check the settings</b> in Admin: entry fee, Revolut link, prizes and points.</span><button class="btn small" data-act="tab" data-v="admin">Open Admin</button></div></li>
     </ol></section>`;
 }
@@ -983,7 +990,7 @@ function viewComp(){
   const lb = leaderboard(c); const st = lb.stats; const k = cfg(); const A = S.isAdmin; const fin = c.status === 'final';
   const kitty = st.pot - st.prizes.reduce((a,b) => a+b, 0); const rs = compRounds(c);
   let h = backBtn('All competitions', 'closeComp');
-  h += `<span class="eyebrow">${fin ? 'Final results' : rs.length > 1 ? `${rs.length} weekend rounds · best ${compBest(c)} count` : 'Open'}</span>
+  h += `<span class="eyebrow">${fin ? 'Final results' : rs.length > 1 ? `${rs.length} rounds · best ${compBest(c)} count` : 'Open'}</span>
     <h1 class="comp-name">${esc(c.name)}</h1><div class="chips">${chipsFor(c)}</div>`;
   if (rs.length > 1) h += roundsStrip(c);
   h += `<dl class="figs four money"><div><dt>Entries</dt><dd>${st.entries}</dd></div><div><dt>Paid</dt><dd>${st.paid}</dd></div><div><dt>Fee</dt><dd>${euro(st.fee)}</dd></div><div><dt>Pot</dt><dd>${euro(st.pot)}</dd></div></dl>
@@ -1086,9 +1093,9 @@ function viewCard(){
     <label class="signchk"><input type="checkbox" id="signedChk" ${isSigned(sc.card) ? 'checked' : ''}><span>${mine ? 'My marker has signed my card' : 'The marker has signed this card'}</span></label>`;
   if (cardStarted(sc.card)) mk += `<small class="timing">Started ${esc(whenText(sc.card.startedAt))} · ${cardLocked(sc.card) ? 'locked at midnight' : 'enter by ' + esc(deadlineText(sc.card))}</small>`;
   h += mk + '</div>';
-  if (mine && !fin && canStart(cid, round)) h += `<div class="startbox"><p><b>Start your round before you tee off.</b> You get one round this weekend. ${signRule('Enter it')} by midnight that day, or it doesn't count.</p><button class="btn primary block big" data-act="startRound" data-cid="${esc(cid)}" data-round="${round}">Start my round</button></div>`;
+  if (mine && !fin && canStart(cid, round)) h += `<div class="startbox"><p><b>Start your round before you tee off.</b> You get one go at this round. ${signRule('Enter it')} by midnight that day, or it doesn't count.</p><button class="btn primary block big" data-act="startRound" data-cid="${esc(cid)}" data-round="${round}">Start my round</button></div>`;
   else if (mine && W && !sc.valid) h += `<p class="hint" style="margin:-4px 0 12px">Your card counts once all ${rc.holes.length} holes are in, it's ticked as signed${photoRequired(sc.card) ? " and you've sent it to the organiser" : ''}, by ${esc(deadlineText(sc.card))}.</p>`;
-  else if (!W && !fin && !S.isAdmin && mine) h += `<p class="hint" style="margin:-4px 0 12px">${cardLocked(sc.card) ? (sc.valid ? 'Locked at midnight. This card counts.' : "Locked at midnight. It wasn't entered and signed in time, so it doesn't count.") : !entryOf(cid, S.myGid) ? 'Enter this month to add your card.' : 'This round is closed. Cards can be entered Friday to Sunday.'}</p>`;
+  else if (!W && !fin && !S.isAdmin && mine) h += `<p class="hint" style="margin:-4px 0 12px">${cardLocked(sc.card) ? (sc.valid ? 'Locked at midnight. This card counts.' : "Locked at midnight. It wasn't entered and signed in time, so it doesn't count.") : !entryOf(cid, S.myGid) ? 'Enter this month to add your card.' : 'This round is closed. Cards can only be entered on the round\'s days.'}</p>`;
   if ((S.isAdmin || gid === S.myGid) && sc.card) { watchPhoto(cid, round, gid); h += photoBlockHtml(sc, cid, round, gid, W); }
   const chk = (S.isAdmin || gid === S.myGid) ? cardCheck(sc) : null;
   if (chk) h += checkBoxHtml(chk, sc, S.isAdmin ? 'admin' : 'card');
@@ -1168,8 +1175,8 @@ function monthTableHtml(){
 }
 function yearTableHtml(){
   const rows = league(S.season); const k = cfg(); const cc = currentComp();
-  let h = cc && cc.pointsSystem === 'field' ? `<div class="pointskey"><span class="chip">Winner · ${fieldSize(cc)} + 1 bonus</span><span class="chip">2nd · ${Math.max(1, fieldSize(cc) - 1)}</span><span class="chip">One fewer each place, down to 1</span></div><p class="hint" style="margin:-4px 0 6px">${esc(cc.name)}: ${fieldSize(cc)} paid players, so the round winner gets ${fieldSize(cc)} points plus a bonus point. Points are given each weekend round, and your best ${compBest(cc)} rounds each month count.</p>` : '';
-  if (!h) h = `<div class="pointskey">${k.points.map((p,i) => `<span class="chip">${ord(i+1)} · ${p} pts</span>`).join('')}<span class="chip">Every other card · ${k.entryPoint} pt</span></div><p class="hint" style="margin:-4px 0 10px">Points are given each weekend round, on that round's leaderboard. Your best ${k.best} rounds each month count.</p>`;
+  let h = cc && cc.pointsSystem === 'field' ? `<div class="pointskey"><span class="chip">Winner · ${fieldSize(cc)} + 1 bonus</span><span class="chip">2nd · ${Math.max(1, fieldSize(cc) - 1)}</span><span class="chip">One fewer each place, down to 1</span></div><p class="hint" style="margin:-4px 0 6px">${esc(cc.name)}: ${fieldSize(cc)} paid players, so the round winner gets ${fieldSize(cc)} points plus a bonus point. Points are given each round, and your best ${compBest(cc)} rounds each month count.</p>` : '';
+  if (!h) h = `<div class="pointskey">${k.points.map((p,i) => `<span class="chip">${ord(i+1)} · ${p} pts</span>`).join('')}<span class="chip">Every other card · ${k.entryPoint} pt</span></div><p class="hint" style="margin:-4px 0 10px">Points are given each round, on that round's leaderboard. Your best ${k.best} rounds each month count.</p>`;
   const open = Object.values(D.comps).filter(c => c.status !== 'final' && !c.test && inSeason(c, S.season) && Object.keys(monthPoints(c)).length);
   if (!rows.length) return h + `<section class="empty"><p class="hint">No league points ${S.season === 'all' ? 'yet' : 'in ' + S.season + ' yet'}. They're added after each round as signed cards come in.</p></section>`;
   h += `<ul class="list"><li class="lg-head"><span>Pos</span><span>Golfer</span><span>P</span><span>W</span><span>Pts</span></li>` + rows.map(r => {
@@ -1364,9 +1371,10 @@ function viewAdmin(){
     <section data-tab="rules"><div class="sec-head"><h2>Cards</h2></div><div class="panel"><label class="check" style="margin:0"><input type="checkbox" id="s-photoReq" ${k.photoRequired !== false ? 'checked' : ''}><span><b>Golfers must send you their card</b><small>A golfer's card only counts once they've tapped Send my card to the organiser (a photo of the signed card on WhatsApp), by midnight. Cards you enter or upload yourself don't need it.</small></span></label></div></section>
     <section data-tab="money"><div class="sec-head"><h2>2's club</h2></div><div class="panel"><label class="check" style="margin-bottom:10px"><input type="checkbox" id="s-twosOn" ${k.twosOn ? 'checked' : ''}><span><b>Run the 2's club</b><small>Golfers join and pay each round before they tee off, from Home or when they tap Start my round.</small></span></label>
       <div class="grid2"><label class="field"><span>Cost a round (€)</span>${n('s-twosFee', k.twosFee, 'min="1" step="1"')}</label></div>
-      <p class="hint">Paid on Revolut before teeing off, and only paid golfers are in. A gross 2 on any hole wins, each 2 is a share of the pot, and a hole-in-one takes the whole pot. Shares are rounded down to the euro, with the leftover kept in the pot. With no 2s the pot rolls over to the next weekend.</p></div></section>
-    <section data-tab="rules"><div class="sec-head"><h2>League points</h2></div><div class="panel"><p class="hint" style="margin-top:0"><b>New months use "By players"</b> (from December): the round winner gets 1 point for every paid player that month plus a bonus point, 2nd one fewer, and so on down to 1. You can change it in each month's settings. These fixed points are for months set to Fixed, like November:</p><div class="grid5"><label class="field"><span>1st</span>${n('s-pt1', k.points[0])}</label><label class="field"><span>2nd</span>${n('s-pt2', k.points[1])}</label><label class="field"><span>3rd</span>${n('s-pt3', k.points[2])}</label><label class="field"><span>4th</span>${n('s-pt4', k.points[3])}</label><label class="field"><span>Others</span>${n('s-pte', k.entryPoint)}</label></div><p class="hint">Given each weekend round, on that round's leaderboard, and each golfer's best rounds count (the same number as "Best cards count" below). "Others" is the point for every other signed card.</p></div></section>
-    <section data-tab="rules"><div class="sec-head"><h2>New months</h2></div><div class="panel"><div class="grid2"><label class="field"><span>Weekend rounds</span>${n('s-rounds', k.rounds, 'min="1" max="5"')}</label><label class="field"><span>Best cards count</span>${n('s-best', k.best, 'min="1" max="5"')}</label></div><p class="hint">Each round is open Friday to Sunday. One card per golfer per round.</p></div></section>
+      <p class="hint">Paid on Revolut before teeing off, and only paid golfers are in. A gross 2 on any hole wins, each 2 is a share of the pot, and a hole-in-one takes the whole pot. Shares are rounded down to the euro, with the leftover kept in the pot. With no 2s the pot rolls over to the next round.</p></div></section>
+    <section data-tab="rules"><div class="sec-head"><h2>League points</h2></div><div class="panel"><p class="hint" style="margin-top:0"><b>New months use "By players"</b> (from December): the round winner gets 1 point for every paid player that month plus a bonus point, 2nd one fewer, and so on down to 1. You can change it in each month's settings. These fixed points are for months set to Fixed, like November:</p><div class="grid5"><label class="field"><span>1st</span>${n('s-pt1', k.points[0])}</label><label class="field"><span>2nd</span>${n('s-pt2', k.points[1])}</label><label class="field"><span>3rd</span>${n('s-pt3', k.points[2])}</label><label class="field"><span>4th</span>${n('s-pt4', k.points[3])}</label><label class="field"><span>Others</span>${n('s-pte', k.entryPoint)}</label></div><p class="hint">Given each round, on that round's leaderboard, and each golfer's best rounds count (the same number as "Best cards count" below). "Others" is the point for every other signed card.</p></div></section>
+    <section data-tab="rules"><div class="sec-head"><h2>New months</h2></div><div class="panel"><div class="grid2"><label class="field"><span>Rounds</span>${n('s-rounds', k.rounds, 'min="1" max="5"')}</label><label class="field"><span>Best cards count</span>${n('s-best', k.best, 'min="1" max="5"')}</label>
+      <label class="field"><span>Rounds usually start on</span><select id="s-rday">${DOWL.map((d, i) => `<option value="${i}" ${roundDays().dow === i ? 'selected' : ''}>${d}</option>`).join('')}</select></label><label class="field"><span>Days each round is open</span>${n('s-rdays', roundDays().len, 'min="1" max="7"')}</label></div><p class="hint">Now: ${esc(usualDaysText())}, one round a week. This only fills in the dates for a new month: you can still change any round's first and last day. One card per golfer per round.</p></div></section>
     <section data-tab="rules"><div class="sec-head"><h2>Handicap changes</h2></div><div class="panel"><div class="bandedit"><span class="label">Handicap</span><span class="label">Winner cut</span><span class="label">Runner-up cut</span>
         <label class="bandlbl">Under ${n('s-b1', k.bands[0], 'min="0" step="0.1" aria-label="First band ends at"')}</label>${n('s-w1', k.cutWin[0], 'min="0" step="0.1" aria-label="Winner cut, lowest band"')}${n('s-r1', k.cutRun[0], 'min="0" step="0.1" aria-label="Runner-up cut, lowest band"')}
         <label class="bandlbl">${esc(String(k.bands[0]))} to under ${n('s-b2', k.bands[1], 'min="0" step="0.1" aria-label="Second band ends at"')}</label>${n('s-w2', k.cutWin[1], 'min="0" step="0.1" aria-label="Winner cut, middle band"')}${n('s-r2', k.cutRun[1], 'min="0" step="0.1" aria-label="Runner-up cut, middle band"')}
@@ -1430,7 +1438,7 @@ function sheetStart(){
   const c = D.comps[S.sheet.cid]; if (!c) return null; const n = S.sheet.round; const x = twosItem(c.id, n); const fee = twosFee();
   const mine = twosOf(c.id, n, S.myGid); const ps = twosPayState(mine);
   const only = !entryOf(c.id, S.myGid);
-  let h = `<h3>Start your round?</h3><p class="sub">${only ? `This is your 2's card for round ${n}. It's only for the 2's, not the monthly competition.` : `This is your round ${n} card for ${esc(c.name)}.`} You only get one this weekend. ${signRule('Enter your scores')} by midnight tonight, or the round won't count.</p>`;
+  let h = `<h3>Start your round?</h3><p class="sub">${only ? `This is your 2's card for round ${n}. It's only for the 2's, not the monthly competition.` : `This is your round ${n} card for ${esc(c.name)}.`} You only get one for this round. ${signRule('Enter your scores')} by midnight tonight, or the round won't count.</p>`;
   const pot = `Pot now ${euro(x ? x.pot : 0)}${x && x.carryIn > 0.004 ? `, including ${euro(x.carryIn)} rolled over` : ''}.`;
   if (mine && (ps === 'paid' || ps === 'claimed')) return h + `<div class="twos-ask in"><span class="twos-badge sm" aria-hidden="true">2</span><span><b>You're in the 2's club this round</b><small>${pot} ${ps === 'paid' ? (twosByCredit(mine) ? `Paid from your credit (${euro(twosCredit(S.myGid))} left).` : `Your ${euro(fee)} is paid.`) : 'The organiser is confirming your payment.'}</small></span></div>
     <div class="confirm-actions"><button class="btn" data-act="closeSheet">Cancel</button><button class="btn primary" data-act="startGo" data-twos="0">Start my round</button></div>`;
@@ -1491,13 +1499,13 @@ function sheetComp(){
   const preset = is(range(1,18)) ? '18' : is(range(1,14)) ? '14' : 'custom';
   const best = c ? compBest(c) : Math.min(k.best, rs.length);
   const perRound = !!(c && compRounds(c).some(r => r.format || r.tee || (Array.isArray(r.holes) && r.holes.length)));
-  return `<form data-form="comp"><h3>${c ? 'Edit competition' : 'New month'}</h3><p class="sub">${c ? esc(c.name) : 'Weekend rounds, open Friday to Sunday.'}</p>
+  return `<form data-form="comp"><h3>${c ? 'Edit competition' : 'New month'}</h3><p class="sub">${c ? esc(c.name) : `Rounds open ${esc(usualDaysText())} to start with. Change any round's days below.`}</p>
     <label class="field"><span>Name</span><input type="text" id="f-name" name="name" value="${esc(c ? c.name : '')}" placeholder="${esc(dParts(rs[0].from).month + ' ' + FORMATS[fmt].short)}"></label>
-    <div class="grid2"><label class="field"><span>Weekend rounds</span><select id="f-rcount" name="rcount">${range(1,5).map(i => `<option value="${i}" ${i === rs.length ? 'selected' : ''}>${i}</option>`).join('')}</select></label>
+    <div class="grid2"><label class="field"><span>Rounds</span><select id="f-rcount" name="rcount">${range(1,5).map(i => `<option value="${i}" ${i === rs.length ? 'selected' : ''}>${i}</option>`).join('')}</select></label>
     <label class="field"><span>Best cards count</span><select id="f-best" name="best">${range(1,5).map(i => `<option value="${i}" ${i === best ? 'selected' : ''}>${i}</option>`).join('')}</select></label></div>
     <label class="field"><span>League points</span><select id="f-points" name="pointsSystem">${(() => { const v = c ? (c.pointsSystem || 'fixed') : cfg().pointsSystem; return [['field', 'By players: winner gets 1 point per paid player + 1 bonus'], ['fixed', `Fixed: ${cfg().points.join(', ')}, others ${cfg().entryPoint}`]].map(([x, l]) => `<option value="${x}" ${v === x ? 'selected' : ''}>${l}</option>`).join(''); })()}</select></label>
-    <div class="field"><span>Rounds</span><div id="f-rounds" class="rrows">${rs.map(r => roundRow(r.n, r, perRound)).join('')}</div><p class="hint">Pick each round's Friday; it runs Friday, Saturday and Sunday.</p></div>
-    <label class="check toggle"><input type="checkbox" id="f-test" name="test" ${c && c.test ? 'checked' : ''}><span><b>Test month.</b> Rounds can start on any day, so you can try the app out. It never counts towards the league or handicaps. Delete it when you've finished.</span></label>
+    <div class="field"><span>Rounds</span><div id="f-rounds" class="rrows">${rs.map(r => roundRow(r.n, r, perRound)).join('')}</div><p class="hint">Pick each round's first and last day: any days you like, even just one. Golfers can play once in that time.</p></div>
+    <label class="check toggle"><input type="checkbox" id="f-test" name="test" ${c && c.test ? 'checked' : ''}><span><b>Test month.</b> For trying the app out. It never counts towards the league or handicaps. Delete it when you've finished.</span></label>
     <label class="check toggle"><input type="checkbox" id="f-perround" name="perround" ${perRound ? 'checked' : ''}><span>Different format, tees or holes for some rounds. "Default" uses the month's settings below.</span></label>
     <label class="field"><span>Entry fee for the month (€)</span><input type="number" id="f-fee" name="fee" min="0" step="1" value="${esc(c && c.fee != null ? c.fee : k.fee)}"></label>
     <div class="field"><span>Format${'' /* default */}</span><div class="radios">${Object.entries(FORMATS).map(([key,f]) => radio('format', key, f.name, fmt === key)).join('')}</div></div>
@@ -1515,7 +1523,7 @@ function roundRow(n, r, show){
   const locked = startedRounds(ec).includes(n);
   if (locked) { const eff = rcfg(ec, n); r = Object.assign({}, compRounds(ec).find(x => x.n === n), {format: eff.format, tee: eff.tee, holes: eff.holes}); }
   r = r || {}; const hv = Array.isArray(r.holes) && r.holes.length ? (r.holes.length === 18 ? '18' : '14') : ''; const dis = locked ? 'disabled' : '';
-  return `<div class="rrow ${locked ? 'locked' : ''}"><label class="rrow-top"><span class="rn">R${n}</span><input type="date" id="f-r-${n}" name="r${n}" value="${esc(r.from || '')}" required ${locked ? 'readonly' : ''} aria-label="Round ${n} Friday"></label>
+  return `<div class="rrow ${locked ? 'locked' : ''}"><div class="rrow-top"><span class="rn">R${n}</span><label class="rd"><small>First day</small><input type="date" id="f-r-${n}" name="r${n}" value="${esc(r.from || '')}" data-len="${r.from && r.to ? Math.max(0, Math.round((parseDate(r.to) - parseDate(r.from)) / 864e5)) : roundDays().len - 1}" required ${locked ? 'readonly' : ''} aria-label="Round ${n} first day"></label><label class="rd"><small>Last day</small><input type="date" id="f-re-${n}" name="re${n}" value="${esc(r.to || r.from || '')}" required ${locked ? 'readonly' : ''} aria-label="Round ${n} last day"></label></div>
     ${locked ? `<p class="hint" style="margin:6px 0 0">Started, so its date, format, tees and holes stay as they are.</p>` : ''}
     <div class="rrow-opts" ${show ? '' : 'hidden'}>
       <label><span>Format</span><select id="f-rf-${n}" name="rf${n}" ${dis} aria-label="Round ${n} format"><option value="">Default</option>${Object.entries(FORMATS).map(([k, f]) => `<option value="${k}" ${r.format === k ? 'selected' : ''}>${f.short}</option>`).join('')}</select></label>
@@ -2089,7 +2097,7 @@ function chaseData(){
       p => `Hi ${firstName(p.name)}, your round ${open.n} card is in, but I haven't got the photo of it yet. Tap Send my card to the organiser in the app before midnight, or it won't count. Thanks!`,
       names => `Pot of Gold round ${open.n}: ${names} – I haven't got the photo of your card yet. Tap Send my card to the organiser in the app before midnight, or it won't count.`);
     if (twosOn()) g('twos', "2's: not paid", `Round ${open.n} · joined the 2's but the ${euro(twosFee())} isn't paid`, twosFor(c.id, open.n).filter(t => twosPayState(t) === 'unpaid').map(t => D.golfers[t.golferId]).filter(Boolean).sort(byName),
-      p => `Hi ${firstName(p.name)}, you're down for the 2's this weekend but the ${euro(twosFee())} isn't paid yet. Pay ${rev} before you tee off (or within 10 minutes of starting), then tap I've paid in the app, or you're not in.`,
+      p => `Hi ${firstName(p.name)}, you're down for the 2's this round but the ${euro(twosFee())} isn't paid yet. Pay ${rev} before you tee off (or within 10 minutes of starting), then tap I've paid in the app, or you're not in.`,
       names => `2's club round ${open.n}: ${names} – your ${euro(twosFee())} isn't paid yet. Pay ${rev} before you tee off and tap I've paid in the app, or you're not in.`);
   }
   const L = chaseLists(c);
@@ -2142,7 +2150,7 @@ function roundResultsText(c, n){
   if (rb.ranked.length > 10) lines.push(`…and ${rb.ranked.length - 10} more`);
   if (!rb.ranked.length) lines.push('No cards in yet.');
   const x = twosOn() ? twosItem(c.id, n) : null;
-  if (x && (x.entrants.length || x.carryIn > 0.004)) lines.push(x.winners.length ? `2's: ${x.winners.map(w => twosWho(w, true)).join(', ')}${x.leftover > 0.004 ? ` · ${euro(x.leftover)} rolls on` : ''}` : `2's: no 2s, ${euro(x.pot)} rolls over to next weekend`);
+  if (x && (x.entrants.length || x.carryIn > 0.004)) lines.push(x.winners.length ? `2's: ${x.winners.map(w => twosWho(w, true)).join(', ')}${x.leftover > 0.004 ? ` · ${euro(x.leftover)} rolls on` : ''}` : `2's: no 2s, ${euro(x.pot)} rolls over to the next round`);
   const lb = leaderboard(c); const lead = lb.ranked && lb.ranked[0];
   if (lead) lines.push(`Month so far: ${lead.golfer ? lead.golfer.name : gName(lead.gid)} leads`);
   lines.push(appUrl());
@@ -2334,7 +2342,7 @@ const ACT = {
     const f = $('#' + id); closeSheetQuiet(); render(); if (!f) return; f.value = ''; f.click(); },
   startRound(el){ const cid = el.dataset.cid, round = Number(el.dataset.round); const c = D.comps[cid]; if (!c || !canStart(cid, round)) return;
     if (twosOn() && !c.test) { openSheet({type:'start', cid, round}); return; }
-    askConfirm('Start your round?', `This is your round ${round} card for ${c.name}. You only get one this weekend. ${signRule('Enter your scores')} by midnight tonight, or the round won't count.`, 'Start my round', () => doStartRound(cid, round, false)); },
+    askConfirm('Start your round?', `This is your round ${round} card for ${c.name}. You only get one for this round. ${signRule('Enter your scores')} by midnight tonight, or the round won't count.`, 'Start my round', () => doStartRound(cid, round, false)); },
   startGo(el){ const sh = S.sheet; if (!sh || sh.type !== 'start') return; const twos = el.dataset.twos === '1' && !twosOf(sh.cid, sh.round, S.myGid); closeSheetQuiet(); doStartRound(sh.cid, sh.round, twos, el.dataset.pay === '1'); },
   twosJoin(el){ const cid = el.dataset.cid, round = Number(el.dataset.round); if (canJoinTwos(cid, round)) joinTwos(cid, round); },
   twosPay(el){ openSheet({type:'twosPay', id: el.dataset.id}); },
@@ -2358,7 +2366,7 @@ const ACT = {
       const data = Object.assign({}, cur, {rounds}); if (L && !L.closed) data.twosClosed = Object.assign({}, cur.twosClosed || {}, {[String(n)]: twosRecord(L)}); delete data.id;
       if (await put(`comps/${c.id}`, data)) { localSet(`comps/${c.id}`, data); MEMO = {}; render(); toast(`Round ${n} closed.${L ? " The 2's is closed too." : ''}`); } }); },
   roundReopen(el){ const c = D.comps[el.dataset.cid || S.compId]; const n = Number(el.dataset.round); const r = c && compRounds(c).find(x => x.n === n); if (!S.isAdmin || !r || !r.closedAt) return;
-    askConfirm(`Reopen round ${n}?`, `Golfers can start, enter and send cards for round ${n} again until the weekend ends. The 2's stays closed: reopen it from the 2's club button if you need to.`, 'Reopen', async () => {
+    askConfirm(`Reopen round ${n}?`, `Golfers can start, enter and send cards for round ${n} again until the round ends. The 2's stays closed: reopen it from the 2's club button if you need to.`, 'Reopen', async () => {
       const cur = D.comps[c.id];
       const rounds = compRounds(cur).map(y => { if (y.n !== n) return y; const o = Object.assign({}, y, {closes: y.closesWas != null ? y.closesWas : be.stamp(parseDate(addDays(y.from, 3)))}); delete o.closedAt; delete o.closesWas; return o; });
       const data = Object.assign({}, cur, {rounds}); delete data.id;
@@ -2391,8 +2399,8 @@ const ACT = {
       if (m) sendNotify(`${gName(t.golferId)} is in the 2's`, `Says they paid ${euro(twosFee())} by ${METHODS[m]} · round ${t.round}. Check Revolut and confirm in the app.`, 'two'); } },
   twosShare(){ const sh = S.sheet; const c = sh && D.comps[sh.cid]; if (!c) return; const x = twosItem(c.id, sh.round); if (!x) return;
     const lines = [`Pot of Gold 2's club · ${c.name} round ${x.r.n}`];
-    if (x.winners.length) { lines.push(`${x.state === 'played' ? 'Pot' : 'Pot so far'}: ${euro(x.pot)}${x.carryIn > 0.004 ? ` (incl. ${euro(x.carryIn)} rolled over)` : ''}`); if (x.ace) lines.push('Hole-in-one! It takes the whole pot.'); x.winners.forEach(w => lines.push(`🎯 ${twosWho(w, true)}`)); if (x.leftover > 0.004) lines.push(`${euro(x.leftover)} left over rolls on to next weekend.`); }
-    else if (x.state === 'played') lines.push(`No 2s this weekend, so the ${euro(x.pot)} rolls over. Next weekend's pot starts at ${euro(x.pot)}!`);
+    if (x.winners.length) { lines.push(`${x.state === 'played' ? 'Pot' : 'Pot so far'}: ${euro(x.pot)}${x.carryIn > 0.004 ? ` (incl. ${euro(x.carryIn)} rolled over)` : ''}`); if (x.ace) lines.push('Hole-in-one! It takes the whole pot.'); x.winners.forEach(w => lines.push(`🎯 ${twosWho(w, true)}`)); if (x.leftover > 0.004) lines.push(`${euro(x.leftover)} left over rolls on to the next round.`); }
+    else if (x.state === 'played') lines.push(`No 2s this round, so the ${euro(x.pot)} rolls over. The next round's pot starts at ${euro(x.pot)}!`);
     else lines.push(`Pot so far: ${euro(x.pot)}${x.carryIn > 0.004 ? ` (incl. ${euro(x.carryIn)} rolled over)` : ''}. No 2s yet.`);
     lines.push(`${euro(twosFee())} to join, paid before you tee off: tap Join & pay on Home, or say yes when you tap Start my round. ${appUrl()}`);
     shareText(lines.join('\n')); },
@@ -2424,7 +2432,7 @@ const ACT = {
     if (L.notEntered.length) lines.push(`Not entered yet: ${names(L.notEntered)}. Open the app and tap Enter ${c.name}, then pay ${euro(compFee(c))}.`);
     if (L.unpaid.length) lines.push(`Entered but not paid: ${names(L.unpaid)}. Tap Pay now on Home, pay through Revolut, then tap I've paid.`);
     if (tw) { if (L.notEntered.length || L.unpaid.length) lines.push('');
-      lines.push(`🎯 2's club this weekend: ${euro(tw.pot)} in the pot${tw.carryIn > 0.004 ? ` (${euro(tw.carryIn)} rolled over)` : ''}. ${euro(twosFee())} to join, paid before you tee off: tap Join & pay on Home, or say yes when you tap Start my round.`);
+      lines.push(`🎯 2's club this round: ${euro(tw.pot)} in the pot${tw.carryIn > 0.004 ? ` (${euro(tw.carryIn)} rolled over)` : ''}. ${euro(twosFee())} to join, paid before you tee off: tap Join & pay on Home, or say yes when you tap Start my round.`);
       if (twUnpaid.length) lines.push(`Joined the 2's but not paid: ${names(twUnpaid)}. Pay before you tee off, or you're not in.`); }
     lines.push('', appUrl()); shareText(lines.join('\n')); },
   shareTable(el){ const c = D.comps[el.dataset.id || S.compId]; if (!c) return; const lb = leaderboard(c); const fin = c.status === 'final'; const u = monthUnit(c); const best = compBest(c);
@@ -2434,7 +2442,7 @@ const ACT = {
     if (!lb.ranked.length) lines.push('No signed cards yet.');
     const st = lb.stats; lines.push('', `Pot ${euro(st.pot)} · winner ${euro(st.prizes[0] || 0)} · runner-up ${euro(st.prizes[1] || 0)}`, appUrl());
     shareText(lines.join('\n')); },
-  invite(){ const k = cfg(); shareText(`Join the Pot of Gold, our monthly golf competition: ${euro(k.fee)} a month, ${k.rounds} weekend rounds, your best ${k.best} count. Open ${appUrl()} on your phone, sign in with Google or your email, and tap "Ask to join". Then add it to your home screen.`); },
+  invite(){ const k = cfg(); shareText(`Join the Pot of Gold, our monthly golf competition: ${euro(k.fee)} a month, ${k.rounds} rounds, your best ${k.best} count. Open ${appUrl()} on your phone, sign in with Google or your email, and tap "Ask to join". Then add it to your home screen.`); },
   joinList(){ S.view = 'golfers'; S.playerId = null; S.golferTab = 'list'; top(); render(); },
   reviewJoin(el){ openSheet({type:'joinReq', email: el.dataset.email}); },
   declineJoin(el){ const email = el.dataset.email; const r = (D.requests || {})[email];
@@ -2523,18 +2531,20 @@ const FORMS = {
     const holes = preset === '18' ? range(1,18) : preset === '14' ? range(1,14) : fd.getAll('h').map(Number).sort((a,b) => a-b);
     if (!holes.length) { toast('Pick at least one hole'); return; }
     const count = Math.max(1, Math.min(5, Number(fd.get('rcount')) || 4)); const per = !!fd.get('perround');
-    const rows = range(1, count).map(i => ({from: fd.get('r' + i), format: per ? fd.get('rf' + i) || null : null, tee: per ? fd.get('rt' + i) || null : null, holes: per ? ({'18': range(1,18), '14': range(1,14)})[fd.get('rh' + i)] || null : null}));
+    const rows = range(1, count).map(i => ({from: fd.get('r' + i), to: fd.get('re' + i) || fd.get('r' + i), format: per ? fd.get('rf' + i) || null : null, tee: per ? fd.get('rt' + i) || null : null, holes: per ? ({'18': range(1,18), '14': range(1,14)})[fd.get('rh' + i)] || null : null}));
     if (rows.some(r => !r.from)) { toast('Set a date for every round'); return; }
     const test = !!fd.get('test');
-    if (!test && rows.some(r => parseDate(r.from).getDay() !== 5)) { toast('Each round should start on a Friday (or tick Test month)'); return; }
+    if (rows.some(r => r.to < r.from)) { toast("A round's last day can't be before its first day"); return; }
+    if (rows.some(r => (parseDate(r.to) - parseDate(r.from)) / 864e5 > 13)) { toast('A round can be open for 14 days at most'); return; }
     rows.sort((a, b) => a.from.localeCompare(b.from)); const sorted = rows.map(r => r.from);
-    const rounds = rows.map((r, i) => ({n:i+1, from:r.from, to:addDays(r.from, 2), opens: be.stamp(parseDate(r.from)), closes: be.stamp(parseDate(addDays(r.from, 3))), format:r.format, tee:r.tee, holes:r.holes}));
+    const rounds = rows.map((r, i) => ({n:i+1, from:r.from, to:r.to, opens: be.stamp(parseDate(r.from)), closes: be.stamp(parseDate(addDays(r.to, 1))), format:r.format, tee:r.tee, holes:r.holes}));
     const ec = S.sheet.id ? D.comps[S.sheet.id] : null; const done = startedRounds(ec);
     if (done.length > count) { toast(`${done.length} rounds have already started, so the month needs at least ${done.length}.`); return; }
     done.forEach(n => { const pr = compRounds(ec).find(x => x.n === n); const eff = rcfg(ec, n);
       rounds[n - 1] = Object.assign({}, pr, {n, format: eff.format, tee: eff.tee, holes: eff.holes, allowance: eff.allowance}); });
     rounds.sort((a, b) => a.from.localeCompare(b.from)); rounds.forEach((r, i) => { if (i && r.from <= rounds[i - 1].from) r.bad = true; });
-    if (rounds.some(r => r.bad)) { toast('Each round needs a later date than the one before.'); return; }
+    rounds.forEach((r, i) => { if (i && r.from <= rounds[i - 1].to) r.bad = true; });
+    if (rounds.some(r => r.bad)) { toast("Rounds can't overlap: each one has to start after the one before ends."); return; }
     const best = Math.min(count, Math.max(1, Number(fd.get('best')) || count));
     const id = S.sheet.id || newId(); const prev = D.comps[id] || {}; const format = fd.get('format') || 'stableford';
     const pointsSystem = fd.get('pointsSystem') === 'field' ? 'field' : 'fixed';
@@ -2589,7 +2599,7 @@ function saveSettings(){
   const course = {parM:[], siM:[], parL:[], siL:[]};
   range(1,18).forEach(h => { course.parM.push(n('c-pm-'+h, k.course.parM[h-1])); course.siM.push(n('c-sm-'+h, k.course.siM[h-1])); course.parL.push(n('c-pl-'+h, k.course.parL[h-1])); course.siL.push(n('c-sl-'+h, k.course.siL[h-1])); });
   const rev = String((g('s-rev') || {}).value || '').trim().replace(/^https?:\/\/(www\.)?revolut\.me\//i, '').replace(/^@/, '').replace(/\/.*$/, '');
-  const data = { fee:n('s-fee', k.fee), revtag:rev, prize:[n('s-p1', k.prize[0]), n('s-p2', k.prize[1] != null ? k.prize[1] : 0)], points:[n('s-pt1', k.points[0]), n('s-pt2', k.points[1]), n('s-pt3', k.points[2]), n('s-pt4', k.points[3])], entryPoint:n('s-pte', k.entryPoint), rounds: Math.max(1, Math.min(5, n('s-rounds', k.rounds))), best: Math.max(1, Math.min(5, n('s-best', k.best))), allowance:n('s-allow', k.allowance), tee:(g('s-tee') || {}).value || k.tee, course, bands: (() => { const a = n('s-b1', k.bands[0]), b = n('s-b2', k.bands[1]); return a < b ? [a, b] : k.bands; })(), cutWin:[n('s-w1', k.cutWin[0]), n('s-w2', k.cutWin[1]), n('s-w3', k.cutWin[2])], cutRun:[n('s-r1', k.cutRun[0]), n('s-r2', k.cutRun[1]), n('s-r3', k.cutRun[2])], riseBy:n('s-rb', k.riseBy), riseAfter:Math.max(1, Math.round(n('s-ra', k.riseAfter))), holdMonths:Math.max(1, Math.round(n('s-hold', k.holdMonths))), hcpV:3, hcpMax:n('s-hm', k.hcpMax), twosOn: g('s-twosOn') ? g('s-twosOn').checked : !!k.twosOn, twosFee: Math.max(1, n('s-twosFee', k.twosFee)),
+  const data = { fee:n('s-fee', k.fee), revtag:rev, prize:[n('s-p1', k.prize[0]), n('s-p2', k.prize[1] != null ? k.prize[1] : 0)], points:[n('s-pt1', k.points[0]), n('s-pt2', k.points[1]), n('s-pt3', k.points[2]), n('s-pt4', k.points[3])], entryPoint:n('s-pte', k.entryPoint), rounds: Math.max(1, Math.min(5, n('s-rounds', k.rounds))), best: Math.max(1, Math.min(5, n('s-best', k.best))), roundDay: Math.max(0, Math.min(6, Math.round(n('s-rday', roundDays().dow)))), roundDays: Math.max(1, Math.min(7, Math.round(n('s-rdays', roundDays().len)))), allowance:n('s-allow', k.allowance), tee:(g('s-tee') || {}).value || k.tee, course, bands: (() => { const a = n('s-b1', k.bands[0]), b = n('s-b2', k.bands[1]); return a < b ? [a, b] : k.bands; })(), cutWin:[n('s-w1', k.cutWin[0]), n('s-w2', k.cutWin[1]), n('s-w3', k.cutWin[2])], cutRun:[n('s-r1', k.cutRun[0]), n('s-r2', k.cutRun[1]), n('s-r3', k.cutRun[2])], riseBy:n('s-rb', k.riseBy), riseAfter:Math.max(1, Math.round(n('s-ra', k.riseAfter))), holdMonths:Math.max(1, Math.round(n('s-hold', k.holdMonths))), hcpV:3, hcpMax:n('s-hm', k.hcpMax), twosOn: g('s-twosOn') ? g('s-twosOn').checked : !!k.twosOn, twosFee: Math.max(1, n('s-twosFee', k.twosFee)),
     photoRequired: g('s-photoReq') ? g('s-photoReq').checked : k.photoRequired !== false, photoFrom: (g('s-photoReq') && g('s-photoReq').checked && k.photoRequired === false) ? Date.now() : (k.photoFrom || null) };
   D.settings = data; MEMO = {};
   clearTimeout(settingsTimer); settingsTimer = setTimeout(async () => { if (await put('config/settings', data)) { syncHandicaps(); toast('Settings saved'); } }, 400);
@@ -2714,7 +2724,7 @@ function creditHomeNote(c){
 }
 function twosPanelHtml(x, big){
   const me = S.myGid; const open = x.state === 'open'; const early = twosEarly(x.c, x.r.n); const mine = me ? twosOf(x.c.id, x.r.n, me) : null; const fee = twosFee();
-  const lbl = x.state === 'upcoming' ? `Round ${x.r.n} opens ${dParts(x.r.from).dow} ${dParts(x.r.from).day} ${dParts(x.r.from).mon}` : `Round ${x.r.n}${open ? ' · this weekend' : ' · ' + esc(x.c.name)}`;
+  const lbl = x.state === 'upcoming' ? `Round ${x.r.n} opens ${dParts(x.r.from).dow} ${dParts(x.r.from).day} ${dParts(x.r.from).mon}` : `Round ${x.r.n}${open ? ' · open now' : ' · ' + esc(x.c.name)}`;
   let h = `<section class="twos ${big ? 'big' : ''}"><div class="twos-top"><span class="twos-badge" aria-hidden="true">2</span><div class="twos-main"><span class="label">2's club · ${lbl}</span><b class="twos-pot">${euro(x.pot)}</b>
     <small>${x.state === 'upcoming' ? `${euro(fee)} a round to join · ` : ''}${x.carryIn > 0.004 ? `${euro(x.carryIn)} rolled over` : 'Nothing rolled over'}${x.state !== 'upcoming' ? ` · ${x.state === 'played' ? x.paid : x.inCount} in` : ''}${S.isAdmin && x.toConfirm ? ` · ${x.toConfirm} to confirm` : ''}</small></div></div>`;
   if (x.closed && !big && x.r.to >= iso(new Date())) h += `<p class="hint" style="margin:0 0 6px"><b>Closed.</b> The organiser has closed the 2's for this round.</p>`;
@@ -2723,17 +2733,17 @@ function twosPanelHtml(x, big){
     if (prev) h += `<p class="hint" style="margin:0 0 6px">Round ${prev.r.n}${prev.c.id !== x.c.id ? ' · ' + esc(prev.c.name) : ''}: ${esc(twosResult(prev))}.</p>`; }
   const myHit = me && x.unpaidHits.find(w => w.gid === me);
   if (myHit && !S.isAdmin) h += `<p class="twos-warn">${myHit.ps === 'claimed' ? `Your ${esc(twosDesc(myHit))} counts once the organiser confirms your ${euro(fee)}.` : `Your ${esc(twosDesc(myHit))} doesn't count: your ${euro(fee)} wasn't paid before you teed off.`}</p>`;
-  else if (open) h += `<p class="hint">No 2s yet. A gross 2 on any hole wins the pot. If nobody gets one, it all rolls over to next weekend.</p>`;
-  else if (early) h += `<p class="hint">You can join next weekend's 2's now. A gross 2 on any hole wins the pot.</p>`;
+  else if (open) h += `<p class="hint">No 2s yet. A gross 2 on any hole wins the pot. If nobody gets one, it all rolls over to the next round.</p>`;
+  else if (early) h += `<p class="hint">You can join the next round's 2's now. A gross 2 on any hole wins the pot.</p>`;
   else if (x.state === 'played') h += `<p class="hint">No 2s, so the ${euro(x.pot)} rolled over.</p>`;
   if (me && (open || early) && !S.isAdmin) {
     const ps = twosPayState(mine); const id = `${x.c.id}/${x.r.n}_${me}`;
     const cr = twosCredit(me), lastNow = mine && twosByCredit(mine) && cr < fee - 1e-9, lastNext = !mine && canJoinTwos(x.c.id, x.r.n) && cr >= fee - 1e-9 && cr < 2 * fee - 1e-9;
-    if (lastNow || lastNext) h += `<p class="credit-note"><b>This is your last week's credit for the 2's.</b> ${lastNow ? 'After this weekend' : 'After you use it'}, pay the organiser again to keep being put in automatically.</p>`;
+    if (lastNow || lastNext) h += `<p class="credit-note"><b>This is your last round's credit for the 2's.</b> ${lastNow ? 'After this round' : 'After you use it'}, pay the organiser again to keep being put in automatically.</p>`;
     if (mine && ps === 'lapsed') h += `<p class="hint">You're not in the 2's this round: it wasn't paid before you teed off.</p>`;
     else if (mine) h += `<div class="twos-me ${ps}"><span>${ps === 'paid' ? (twosByCredit(mine) ? `You're in · paid from credit (${euro(twosCredit(me))} left)` : "You're in · paid") : ps === 'claimed' ? "You're in · the organiser is confirming your payment" : `Not in yet · pay ${euro(fee)} before you tee off`}</span>${ps === 'unpaid' ? `<button class="btn small primary" data-act="twosPay" data-id="${esc(id)}">Pay ${euro(fee)}</button>` : ''}</div>`;
     else if (canJoinTwos(x.c.id, x.r.n) && twosCredit(me) >= fee - 1e-9) h += `<div class="twos-me"><span>You've ${euro(twosCredit(me))} of 2's credit. You're put in automatically when you start your round${early ? ', or join now' : ''}.</span><button class="btn small primary" data-act="twosJoin" data-cid="${esc(x.c.id)}" data-round="${x.r.n}">Join now</button></div>`;
-    else if (canJoinTwos(x.c.id, x.r.n)) h += `<div class="twos-me"><span>${cardStarted(cardOf(x.c.id, x.r.n, me)) ? "Not in the 2's? You can still join for 10 minutes after starting." : !entryOf(x.c.id, me) ? `Not in ${esc(x.c.name)}? You can play the 2's on its own ${early ? 'next' : 'this'} weekend.` : early ? "Playing next weekend? Join the 2's now." : "Playing this weekend? Join the 2's before you tee off."}</span><button class="btn small primary" data-act="twosJoin" data-cid="${esc(x.c.id)}" data-round="${x.r.n}">Join &amp; pay ${euro(fee)}</button></div>`;
+    else if (canJoinTwos(x.c.id, x.r.n)) h += `<div class="twos-me"><span>${cardStarted(cardOf(x.c.id, x.r.n, me)) ? "Not in the 2's? You can still join for 10 minutes after starting." : !entryOf(x.c.id, me) ? `Not in ${esc(x.c.name)}? You can play the 2's on its own ${early ? 'next' : 'this'} round.` : early ? "Playing next round? Join the 2's now." : "Playing this round? Join the 2's before you tee off."}</span><button class="btn small primary" data-act="twosJoin" data-cid="${esc(x.c.id)}" data-round="${x.r.n}">Join &amp; pay ${euro(fee)}</button></div>`;
     else if (cardStarted(cardOf(x.c.id, x.r.n, me))) h += `<p class="hint">You're not in the 2's this round.</p>`;
   }
   if (!big) h += `<button class="textbtn" data-act="twosTable">2's club results and rules</button>`;
@@ -2743,7 +2753,7 @@ function twosTableHtml(){
   if (!twosOn()) return `<section class="empty"><p class="hint">The 2's club isn't running. The organiser can turn it on in Admin.</p></section>`;
   const L = twosLedger(); const x = twosNow(); const fee = twosFee();
   let h = x ? twosPanelHtml(x, true) : '';
-  h += `<div class="panel twos-rules"><b>How it works</b><ul><li>Open to everyone on the golfer list, weekend by weekend. You don't have to be in the monthly competition.</li><li>${euro(fee)} a round, <b>paid before you tee off</b>. Tap <b>Join &amp; pay</b> on Home, or say yes when you tap <b>Start my round</b>, then pay on Revolut and tap <b>I've paid</b>. Nobody is in without paying.</li><li>Not paid within 10 minutes of starting your round? You're not in that weekend.</li><li>The organiser checks each payment in Revolut. A 2 counts once it's confirmed.</li><li>A gross 2 on any hole wins the pot, on a signed card entered by midnight.</li><li>Two or more 2s? Each 2 is a share, so two 2s get a double share.</li><li><b>A hole-in-one takes the whole pot</b>, however many 2s there are. Two aces share it.</li><li>Shares are rounded down to the euro. Anything left over stays in the pot for next weekend.</li><li>No 2s that weekend? The whole pot rolls over to the next one.</li><li>The organiser pays winners on Revolut.</li></ul></div>`;
+  h += `<div class="panel twos-rules"><b>How it works</b><ul><li>Open to everyone on the golfer list, round by round. You don't have to be in the monthly competition.</li><li>${euro(fee)} a round, <b>paid before you tee off</b>. Tap <b>Join &amp; pay</b> on Home, or say yes when you tap <b>Start my round</b>, then pay on Revolut and tap <b>I've paid</b>. Nobody is in without paying.</li><li>Not paid within 10 minutes of starting your round? You're not in that round.</li><li>The organiser checks each payment in Revolut. A 2 counts once it's confirmed.</li><li>A gross 2 on any hole wins the pot, on a signed card entered by midnight.</li><li>Two or more 2s? Each 2 is a share, so two 2s get a double share.</li><li><b>A hole-in-one takes the whole pot</b>, however many 2s there are. Two aces share it.</li><li>Shares are rounded down to the euro. Anything left over stays in the pot for the next round.</li><li>No 2s that round? The whole pot rolls over to the next one.</li><li>The organiser pays winners on Revolut.</li></ul></div>`;
   const done = L.filter(i => i.state === 'played' && (i.entrants.length || i.carryIn > 0.004)).reverse();
   if (done.length) h += `<div class="sec-head"><h2>Results</h2></div><ul class="list">${done.map(i => `<li><div class="row twos-row"><span class="row-date"><b>R${i.r.n}</b>${esc(dParts(i.r.from).mon)}</span><span class="row-main"><span class="row-title">${i.ace ? 'Hole-in-one! ' : ''}${i.winners.length ? esc(i.winners.map(w => gName(w.gid)).join(', ')) : 'No 2s'}</span><span class="row-sub">${i.winners.length ? i.winners.map(w => `${esc(firstName(gName(w.gid)))}: ${esc(twosDesc(w))} · <b>${euro(w.won)}</b>`).join('<br>') : `${euro(i.pot)} rolled over`}${i.winners.length && i.leftover > 0.004 ? `<br>${euro(i.leftover)} left over, rolled on` : ''}<br>${i.entrants.length} in${i.carryIn > 0.004 ? ` · ${euro(i.carryIn)} rolled in` : ''}</span></span><span class="twos-amt ${i.winners.length ? 'won' : ''}">${euro(i.pot)}</span></div></li>`).join('')}</ul>`;
   const paidOut = L.filter(i => i.state === 'played').reduce((a, i) => a + i.winners.reduce((b, w) => b + w.won, 0), 0);
@@ -2761,7 +2771,7 @@ function sheetTwosPay(){
     if (!me) return h;
   }
   if (ps === 'paid') return h + `<p class="hint">Thanks, you're paid for the 2's this round.</p>`;
-  if (ps === 'lapsed') return h + `<p class="notebox">The 2's has to be paid before you tee off, so you're not in this round. You can join again next weekend.</p>`;
+  if (ps === 'lapsed') return h + `<p class="notebox">The 2's has to be paid before you tee off, so you're not in this round. You can join again next round.</p>`;
   if (ps === 'unpaid') h += `<p class="notebox">You're only in the 2's once you've paid. Pay now, before you tee off, then tap I've paid.</p>`;
   h += `<div class="revbox"><span class="label">Pay with Revolut</span><a class="btn primary block" href="${esc(revUrl())}" target="_blank" rel="noopener">Pay ${euro(fee)} · revolut.me/${esc(k.revtag)}</a>
     <p class="hint">Opens Revolut. No Revolut account? The same page takes a debit card, Apple Pay or Google Pay.</p>
@@ -2894,13 +2904,21 @@ document.addEventListener('change', ev => {
   if (t.closest('#setupForm')) { saveSettings(); return; }
   if (t.name === 'holes' && t.closest('form[data-form=comp]')) { $('#holepick').hidden = t.value !== 'custom'; return; }
   if (t.id === 'f-rcount') { const n = Number(t.value); const box = $('#f-rounds'); const show = !!($('#f-perround') || {}).checked;
-    const have = [...box.querySelectorAll('.rrow')].map((row, i) => { const v = id => (document.getElementById(id + (i + 1)) || {}).value || ''; const hv = v('f-rh-'); return {from:v('f-r-'), format:v('f-rf-') || null, tee:v('f-rt-') || null, holes: hv === '18' ? range(1,18) : hv === '14' ? range(1,14) : null}; });
+    const have = [...box.querySelectorAll('.rrow')].map((row, i) => { const v = id => (document.getElementById(id + (i + 1)) || {}).value || ''; const hv = v('f-rh-'); return {from:v('f-r-'), to:v('f-re-'), format:v('f-rf-') || null, tee:v('f-rt-') || null, holes: hv === '18' ? range(1,18) : hv === '14' ? range(1,14) : null}; });
     const first = (have[0] && have[0].from) || defaultFirstFri();
-    box.innerHTML = range(1, n).map(i => roundRow(i, have[i-1] && have[i-1].from ? have[i-1] : {from: addDays(first, 7*(i-1))}, show)).join(''); const b = $('#f-best'); if (b && Number(b.value) > n) b.value = String(n); return; }
+    const len = have[0] && have[0].from && have[0].to >= have[0].from ? Math.round((parseDate(have[0].to) - parseDate(have[0].from)) / 864e5) : roundDays().len - 1;
+    box.innerHTML = range(1, n).map(i => roundRow(i, have[i-1] && have[i-1].from ? have[i-1] : {from: addDays(first, 7*(i-1)), to: addDays(first, 7*(i-1) + len)}, show)).join(''); const b = $('#f-best'); if (b && Number(b.value) > n) b.value = String(n); return; }
   if (t.id === 'jq-link') { const box = $('#jq-new'); if (box) box.hidden = !!t.value; return; }
   if (t.id === 'f-test' && t.checked) { const r1 = $('#f-r-1'); if (r1) { r1.value = iso(new Date()); r1.dispatchEvent(new Event('change', {bubbles:true})); } const nm = $('#f-name'); if (nm && !nm.value) nm.value = 'Test month'; return; }
   if (t.id === 'f-perround') { document.querySelectorAll('#f-rounds .rrow-opts').forEach(x => { x.hidden = !t.checked; }); return; }
-  if (t.id === 'f-r-1') { const ins = [...document.querySelectorAll('#f-rounds input[type=date]')]; ins.slice(1).forEach((inp, i) => { inp.value = addDays(t.value, 7*(i+1)); }); }
+  // A round's first day moves: its last day moves with it, keeping the same number of days. Moving round 1 moves the
+  // later rounds too, a week apart. Changing a last day sets that round's length.
+  const rm = /^f-r(e?)-(\d+)$/.exec(t.id || '');
+  if (rm && t.value) { const n = Number(rm[2]); const from = $('#f-r-' + n), to = $('#f-re-' + n); if (!from || !to) return;
+    if (rm[1]) { if (from.value && to.value >= from.value) from.dataset.len = String(Math.round((parseDate(to.value) - parseDate(from.value)) / 864e5)); return; }
+    to.value = addDays(t.value, Number(t.dataset.len || 0));
+    if (n === 1) [...document.querySelectorAll('#f-rounds input[id^="f-r-"]')].forEach(inp => { const i = Number(inp.id.slice(4)); if (i <= 1 || inp.readOnly) return; inp.value = addDays(t.value, 7*(i-1)); const e = $('#f-re-' + i); if (e) e.value = addDays(inp.value, Number(inp.dataset.len || 0)); });
+    return; }
 });
 document.addEventListener('input', ev => { const m = /^sv-(\d+)-\d+$/.exec(ev.target.id || ''); if (m) refreshScanCheck(Number(m[1])); });
 document.addEventListener('toggle', ev => { if (ev.target.id === 'courseDetails') S.courseOpen = ev.target.open; }, true);

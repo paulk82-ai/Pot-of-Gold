@@ -10,12 +10,12 @@ An installable phone app for the Pot of Gold, a monthly golf competition played 
 
 **How the competition works**
 
-- Each month has 4 weekend rounds, open Friday to Sunday. The organiser can change the number of rounds and the dates per month.
+- Each month has 4 rounds, usually open Friday to Sunday, but the organiser picks the days. Each round has its own **first day** and **last day** (any days, one day up to 14, no overlaps), so a round can be midweek, a single Saturday, or a long weekend. Set the usual days for new months in **Admin → Rules → New months** ("Rounds usually start on" and "Days each round is open"); a new month fills in its rounds from that, a week apart, and you can change any of them.
 - Each round can have its own format (Stableford, Medal, Gross or v Par), tees and holes (18 or 14). Each round's own table uses its format. When a month mixes formats or hole counts, the monthly table adds up Stableford points from each golfer's best 3 cards.
 - The €10 entry covers the month. Each golfer gets one card per round, and their best 3 cards count.
 - Entries are paid through Revolut only (no cash): in the Revolut app, or by debit card, Apple Pay or Google Pay on the Revolut page for anyone without Revolut. The golfer taps **I've paid**, and the organiser confirms it under **Payments**. Only confirmed payments go into the pot.
 - Golfers with fewer than 3 counting cards are ranked on what they have, below anyone with 3.
-- Before teeing off, each player taps **Start my round** in the app. That's their one round for the weekend, and the start time is recorded.
+- Before teeing off, each player taps **Start my round** in the app. That's their one go at the round, and the start time is recorded.
 - After the round they get the paper card signed by their marker (anyone, not just players in the competition), then type their scores in, add the marker's name, tick **My marker has signed my card** and send a photo of the card to the organiser, all by **midnight that day**. Complete, signed cards that have been sent count.
 - At midnight the card locks. If it isn't complete, ticked as signed and sent by then, that round doesn't count and can't be re-entered.
 - **Close round** (organiser): when everyone's in, tap **Close round N** on the competition page (or on Home on the round's last day; To do reminds you from 6pm that Sunday). Golfers can't start, enter or send cards for that round after that, Home moves on to the next round, and the round's 2's closes too (so golfers can join next weekend's 2's straight away). The confirmation warns about cards that are started but not finished, signed cards not sent yet, and 2's payments still to confirm. You can still change cards yourself, and **Reopen round N** on the competition page undoes it until the weekend ends. Rounds you don't close end at midnight on the Sunday as before.
@@ -87,7 +87,7 @@ Without this step the app still works fully; Upload card shows the photo beside 
 2. The app offers **"I'm the organiser"**. Tap it. You are now the organiser; only the first person can do this.
 3. Open **Admin**, set your 4 to 8 digit admin code, and check the entry fee, Revolut username (`paul3d7qv` is filled in), prize split and points.
 4. On **Golfers**, add each golfer with their name, handicap index, and the email they will sign in with. Or tap **Invite** to share the app link on WhatsApp: anyone who signs in with an email that isn't on the list can **Ask to join**, and you let them in from the **To do** box (or decline).
-5. On **Comps**, tap **New competition**. The four Fridays are filled in for the next month; adjust them if needed.
+5. On **Comps**, tap **New competition**. The rounds are filled in on your usual days, a week apart; change any round's first or last day if needed. Moving round 1 moves the later rounds with it.
 6. Share the app address with the golfers.
 
 ## 5. Install it on phones
@@ -106,7 +106,7 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 
 1. Sign in with Google, or create an email and password account. If the organiser doesn't have that email yet, fill in **Ask to join** and wait to be let in.
 2. On **Home**, tap **Enter**, then **Pay €10** to open Revolut (the app, or a debit card, Apple Pay or Google Pay). Add the reference shown, then tap **I've paid**. The organiser confirms it.
-3. Before you tee off (Friday to Sunday), tap **Start my round** on **Home**. You get one round per weekend. A page confirms you're signed in for the round; **Enter my scores** there shows the Step 3 page (enter your scores, add your marker, send your card), and its **Enter my scores** opens your card on the keypad.
+3. Before you tee off (on the round's days, usually Friday to Sunday), tap **Start my round** on **Home**. You get one go at each round. A page confirms you're signed in for the round; **Enter my scores** there shows the Step 3 page (enter your scores, add your marker, send your card), and its **Enter my scores** opens your card on the keypad.
 4. Play, and get your marker to sign your paper card.
 5. By midnight that day, tap **Enter my scores** and enter your scores hole by hole.
 6. Add your marker's name and tick **My marker has signed my card**.
