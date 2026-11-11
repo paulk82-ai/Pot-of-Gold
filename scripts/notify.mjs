@@ -10,6 +10,10 @@ import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getMessaging } from 'firebase-admin/messaging';
 
+// The Firebase connection keeps Node running after the work is done, so the script always ends itself with
+// process.exit, and gives up after 4 minutes if anything hangs.
+setTimeout(() => { console.log('Gave up after 4 minutes.'); process.exit(1); }, 4 * 60 * 1000).unref();
+process.on('unhandledRejection', e => { console.log('Failed: ' + ((e && e.message) || e)); process.exit(1); });
 const sa = (() => { try { return JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}'); } catch (_) { return {}; } })();
 if (!sa.project_id) { console.log('No FIREBASE_SERVICE_ACCOUNT secret yet, so nothing was sent.'); process.exit(0); }
 initializeApp({ credential: cert(sa) });
@@ -29,6 +33,7 @@ const forced = String(process.env.MODE || '').trim();
 const mode = forced || (hour === 19 || hour === 20 ? 'eve' : hour === 21 || hour === 22 ? 'nudge' : '');
 if (!mode) { console.log(`It's ${hour}:00 in Ireland: no reminders due.`); process.exit(0); }
 const logRef = db.doc(`pushLog/${today}_${mode}`);
+console.log(`Irish time ${today} ${hour}:xx, sending: ${mode}`);
 if (mode !== 'test' && !forced && (await logRef.get()).exists) { console.log(`Already sent today's ${mode} reminders.`); process.exit(0); }
 
 const [compsSnap, pushSnap, settingsSnap, adminsSnap] = await Promise.all([
@@ -86,4 +91,5 @@ for (const m of out) {
 // Phones that have uninstalled the app or turned notifications off: tidy their tokens away.
 if (dead.size) await Promise.all(pushSnap.docs.filter(d => (d.data().tokens || []).some(t => dead.has(t))).map(d => d.ref.update({ tokens: FieldValue.arrayRemove(...[...dead].filter(t => (d.data().tokens || []).includes(t))) })));
 if (mode !== 'test') await logRef.set({ at: Date.now(), mode, messages: out.length, sent, failed });
-console.log(`${mode}: ${out.length} reminder${out.length === 1 ? '' : 's'}, ${sent} delivered to phones, ${failed} failed, ${dead.size} old token${dead.size === 1 ? '' : 's'} removed.`);
+console.log(`${mode}: ${out.length} reminder${out.length === 1 ? '' : 's'} for ${byGolfer.size} golfer${byGolfer.size === 1 ? '' : 's'} with reminders on, ${sent} delivered to phones, ${failed} failed, ${dead.size} old token${dead.size === 1 ? '' : 's'} removed.`);
+process.exit(0);
