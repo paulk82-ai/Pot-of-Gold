@@ -1,0 +1,36 @@
+# Golfers' phone reminders (see scripts/notify.mjs). Runs a few times each evening; the script checks the Irish time,
+# so 7pm and 9pm work in both winter and summer time. GitHub can start scheduled runs a little late, which is fine.
+# Needs the repository secret FIREBASE_SERVICE_ACCOUNT (Settings → Secrets and variables → Actions).
+name: Reminders
+on:
+  schedule:
+    - cron: '5,35 17-22 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'test = send a test to the organisers only (or eve / nudge to send those now)'
+        required: false
+        default: 'test'
+permissions:
+  contents: read
+concurrency:
+  group: reminders
+  cancel-in-progress: false
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install firebase-admin
+        working-directory: scripts
+        run: npm install --no-save --no-audit --no-fund firebase-admin@12.7.0
+      - name: Send reminders
+        working-directory: scripts
+        run: node notify.mjs
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || '' }}

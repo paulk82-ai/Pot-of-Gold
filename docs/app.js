@@ -619,9 +619,11 @@ function startData(){
   if (S.adminRole) { const tick = setInterval(() => { if (S.loaded.golfers && S.loaded.comps && S.loaded.entries) { clearInterval(tick); syncCredit(); } }, 900); dataUnsubs.push(() => clearInterval(tick)); }
   // The 2's club: quiet if the security rules for it haven't been added yet.
   dataUnsubs.push(be.watchGroup('twos', docs => { D.twos = {}; docs.forEach(d => { const s = d.path.split('/'); D.twos[s[1] + '/' + d.id] = Object.assign({}, d.data, {id:d.id, compId:s[1]}); }); MEMO = {}; render(); }, e => console.warn('2s club', e)));
+  if (S.user && S.user.uid) dataUnsubs.push(be.watch('push/' + S.user.uid, d => { S.push = d ? d.data : null; render(); }, () => { S.push = null; }));
   dataUnsubs.push(be.watch('config/settings', d => { D.settings = d ? d.data : null; S.loaded.settings = true; MEMO = {}; render(); }, err));
   if (S.adminRole) {
     dataUnsubs.push(be.watch('config/admin', d => { D.adminCode = d ? d.data : null; restoreAdmin(); S.loaded.adminCode = true; render(); }, () => { D.adminCode = null; S.loaded.adminCode = true; render(); }));
+    dataUnsubs.push(be.watch('push', docs => { D.pushAll = docs.map(d => d.data).filter(Boolean); render(); }, () => { D.pushAll = null; }));
     dataUnsubs.push(be.watch('members', docs => { D.members = {}; docs.forEach(d => D.members[d.id] = d.data); render(); }, () => {}));
     dataUnsubs.push(be.watch('requests', docs => { D.requests = {}; docs.forEach(d => D.requests[d.id] = d.data); render(); }, () => {}));
   }
@@ -1412,6 +1414,34 @@ function watchHtml(){
       <div class="watch-btns"><button class="btn small primary" data-act="watchCut" data-id="${esc(w.g.id)}" data-v="1">Cut 1.0</button><button class="btn small" data-act="watchCut" data-id="${esc(w.g.id)}" data-v="0.5">Cut 0.5</button><button class="btn small" data-act="watchOk" data-id="${esc(w.g.id)}" data-key="${esc(w.key)}">Leave it</button></div></div>`; });
   return h + `</div></section>`;
 }
+/* ---------- Phone reminders (golfers) ----------
+   Firebase Cloud Messaging. The phone's token goes in push/{uid} with the golfer's choices; a scheduled job
+   (scripts/notify.mjs, run by GitHub Actions) sends "round opens tomorrow" at 7pm the evening before and
+   "card not sent" at 9pm on the day. Needs the web push key in config.js (vapidKey). */
+function vapidKey(){ return (window.RGC_CONFIG && window.RGC_CONFIG.vapidKey) || (SAMPLE ? 'sample' : ''); }
+function pushSupported(){ return 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window; }
+function myPushToken(){ try { return localStorage.getItem('rgc-push-token') || ''; } catch (_) { return ''; } }
+function pushOnHere(){ const t = myPushToken(); return !!(t && S.push && Array.isArray(S.push.tokens) && S.push.tokens.includes(t) && (!('Notification' in window) || Notification.permission === 'granted')); }
+function pushPrefs(){ return Object.assign({eve: true, nudge: true}, (S.push && S.push.prefs) || {}); }
+function pushPanelHtml(){
+  if (!vapidKey() || !S.myGid) return '';
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent); const standalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+  let h = `<div class="sec-head"><h2>Reminders on this phone</h2>${pushOnHere() ? '<span class="pill open">On</span>' : ''}</div><div class="panel stack">`;
+  if (!pushSupported() || (ios && !standalone)) return h + `<p class="hint" style="margin:0">${ios ? 'On iPhone, add the app to your Home Screen first: tap the Share button in Safari, then <b>Add to Home Screen</b>. Open it from there and turn reminders on here.' : "This browser can't show notifications. Open the app in Chrome, or install it, to get reminders."}</p></div>`;
+  if (Notification.permission === 'denied') return h + `<p class="hint" style="margin:0">Notifications are blocked for this app. Allow them in your phone's settings (Settings → Notifications), then come back here.</p></div>`;
+  if (!pushOnHere()) return h + `<p class="hint" style="margin:0">Get a reminder the evening before each round opens (and if your entry still needs paying), and a nudge at 9pm if your card isn't finished or sent.</p><button class="btn primary block" data-act="pushOn">Turn on reminders</button></div>`;
+  const pr = pushPrefs(); const tg = (k, t, sub) => `<label class="check toggle"><input type="checkbox" data-pushpref="${k}" ${pr[k] ? 'checked' : ''}><span><b>${t}</b> ${sub}</span></label>`;
+  return h + tg('eve', 'Evening before a round opens.', '7pm: "Round 2 opens tomorrow". Also says if your entry is due that night.') + tg('nudge', 'Card not finished or sent by 9pm.', 'A nudge before the midnight deadline on the day you play.')
+    + `<button class="textbtn" data-act="pushOff">Turn reminders off on this phone</button></div>`;
+}
+function pushAdminHtml(){
+  let h = `<section class="setup"><div class="sec-head"><h2>Golfers' reminders</h2>${vapidKey() ? '<span class="pill open">On</span>' : ''}</div><div class="panel stack">`;
+  if (!vapidKey()) return h + `<p class="hint" style="margin:0">Phone reminders for golfers (the evening before a round, and at 9pm if a card isn't sent) aren't switched on yet. They need two things from the Firebase console: a web push key, and a service account key saved in GitHub. The README has the steps.</p></div></section>`;
+  const on = (D.pushAll || []).filter(x => x && Array.isArray(x.tokens) && x.tokens.length && x.golferId);
+  const ids = [...new Set(on.map(x => x.golferId))].filter(id => D.golfers[id]);
+  return h + `<p class="hint" style="margin:0"><b>${ids.length}</b> golfer${ids.length === 1 ? ' has' : 's have'} reminders on${ids.length ? ': ' + esc(ids.map(id => gName(id)).sort().join(', ')) : ''}. Golfers turn them on from their Me page.</p>
+    <p class="hint" style="margin:0">Sent automatically at 7pm the evening before each round (with "entry due tonight" for anyone unpaid) and at 9pm on round days to anyone whose card isn't finished or sent.</p></div></section>`;
+}
 function viewMe(){
   const p = D.golfers[S.myGid]; if (!p) return viewHome();
   let h = `<div class="phead"><span class="avatar">${esc(initials(p.name))}</span><div><h1>${esc(p.name)}</h1><p>Handicap ${fmtHi(curHcp(p.id))} · ${p.gender === 'L' ? "Ladies'" : "Men's"} card</p></div></div>`;
@@ -1419,6 +1449,7 @@ function viewMe(){
   h += hcpPanel(p.id);
   h += myStatsHtml(p.id);
   h += playerStatsHtml(p, S.isAdmin);
+  h += pushPanelHtml();
   const iosTip = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.matchMedia('(display-mode: standalone)').matches;
   h += `<div class="sec-head"><h2>Account</h2></div><div class="panel stack"><p class="hint" style="margin:0">Signed in as <b>${esc(S.user.email)}</b></p>
     ${S.installEvt ? '<button class="btn primary block" data-act="install">Install the app</button>' : iosTip ? '<p class="notebox" style="margin:0">To install on iPhone: tap the Share button in Safari, then <b>Add to Home Screen</b>.</p>' : ''}
@@ -1553,7 +1584,7 @@ function viewAdmin(){
   <div data-tab="money">${creditAdminHtml()}</div>
   <section class="setup" data-tab="setup"><div class="sec-head"><h2>Organisers</h2></div><div class="panel"><ul class="plain">${admins.map(e => `<li><span>${esc(e)}${e === S.user.email ? ' (you)' : ''}</span>${admins.length > 1 && e !== S.user.email ? `<button class="btn small danger" data-act="removeAdmin" data-email="${esc(e)}">Remove</button>` : ''}</li>`).join('')}</ul>
     <form data-form="addAdmin" class="inline"><input type="email" id="aa-email" name="email" placeholder="organiser@email.com" required aria-label="Organiser email"><button class="btn small" type="submit">Add</button></form><p class="hint">Organisers can manage golfers, competitions, payments and every card.</p></div></section>
-  <div data-tab="setup">${notifySettingsHtml()}</div>
+  <div data-tab="setup">${notifySettingsHtml()}${pushAdminHtml()}</div>
   <section class="setup" data-tab="setup"><div class="sec-head"><h2>Admin code</h2></div><div class="panel row-panel"><p class="hint">Anyone opening Admin needs the code. Locking also switches you to the golfer view; tap your initials (top right) to come back.</p><span style="display:flex;gap:8px"><button class="btn small" data-act="changePin">Change code</button><button class="btn small" data-act="lockAdmin">Lock now</button></span></div></section>
   ${SAMPLE ? '' : `<section class="setup" data-tab="setup"><div class="panel row-panel"><p class="hint">Try every screen with made-up golfers. Nothing is saved to the league.</p><a class="btn small" href="?sample=1">Sample data</a></div></section>`}</div>`;
 }
@@ -2675,6 +2706,20 @@ const ACT = {
       if (await put(`golfers/${g.id}`, data)) { localSet(`golfers/${g.id}`, data); await syncHandicaps(); render(); toast(`${firstName(g.name)} is now ${fmtHi(curHcp(g.id))}.`); } }); },
   async watchOk(el){ const g = D.golfers[el.dataset.id]; if (!g || !S.isAdmin) return; const data = Object.assign({}, g, {watchOk: el.dataset.key}); delete data.id;
     if (await put(`golfers/${g.id}`, data)) { localSet(`golfers/${g.id}`, data); render(); toast(`${firstName(g.name)} left as they are. They'll show again if their next cards are as good.`); } },
+  async pushOn(){
+    if (!pushSupported()) { toast("This phone can't show notifications."); return; }
+    let perm = Notification.permission; if (perm !== 'granted') { try { perm = await Notification.requestPermission(); } catch (_) {} }
+    if (perm !== 'granted') { toast('Notifications were not allowed.'); render(); return; }
+    let token; try { token = await be.pushToken(vapidKey()); } catch (e) { toast(e && e.code === 'unsupported' ? "This phone can't get reminders from the app." : "Couldn't turn reminders on: " + errText(e)); return; }
+    if (!token) { toast("Couldn't turn reminders on. Try again."); return; }
+    const cur = S.push || {}; const tokens = [token].concat((cur.tokens || []).filter(t => t !== token)).slice(0, 5);
+    const data = {uid: S.user.uid, golferId: S.myGid, email: S.user.email, tokens, prefs: pushPrefs(), updatedAt: Date.now()};
+    if (await put('push/' + S.user.uid, data)) { S.push = data; try { localStorage.setItem('rgc-push-token', token); } catch (_) {} render(); toast('Reminders are on.');
+      try { const reg = await navigator.serviceWorker.ready; reg.showNotification('Reminders are on', {body: "You'll get one the evening before each round, and at 9pm if your card isn't sent.", icon: './icons/icon-192.png'}); } catch (_) {} } },
+  async pushOff(){ const t = myPushToken(); const cur = S.push || {}; const data = Object.assign({}, cur, {tokens: (cur.tokens || []).filter(x => x !== t), updatedAt: Date.now()});
+    if (await put('push/' + S.user.uid, data)) { S.push = data; try { localStorage.removeItem('rgc-push-token'); } catch (_) {} be.pushDrop && be.pushDrop(); render(); toast('Reminders are off on this phone.'); } },
+  async pushPref(el){ const k = el.dataset.pushpref; const pr = pushPrefs(); pr[k] = el.checked; const data = Object.assign({}, S.push || {}, {prefs: pr, updatedAt: Date.now()});
+    if (await put('push/' + S.user.uid, data)) { S.push = data; render(); } },
   allowSet(el){ const i = $('#f-allow'); if (i) { i.value = el.dataset.v; refreshAllowTable(); } },
   async letPlay(el){ if (!S.isAdmin) return; const id = el.dataset.id; const n = String(Number(el.dataset.round)); const e = D.entries[id]; if (!e) return;
     const lp = Object.assign({}, e.letPlay || {}); if (lp[n]) delete lp[n]; else lp[n] = true;
@@ -3149,6 +3194,7 @@ function sampleData(){
 document.addEventListener('click', ev => { const el = ev.target.closest('[data-act]'); if (!el) return; const fn = ACT[el.dataset.act]; if (!fn) return; if (el.tagName === 'A') return; ev.preventDefault(); fn(el); });
 document.addEventListener('submit', ev => { const f = ev.target; const k = f.dataset && f.dataset.form; if (!k) return; ev.preventDefault(); if (FORMS[k]) FORMS[k](f); });
 document.addEventListener('change', ev => {
+  if (ev.target && ev.target.dataset && ev.target.dataset.pushpref) { ACT.pushPref(ev.target); return; }
   const t = ev.target;
   if (t.id === 'season') { S.season = t.value; render(); return; }
   if (t.id === 'leagueMonth') { S.leagueMonth = t.value; S.boardSel = 'month'; t.blur(); render(); return; }

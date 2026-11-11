@@ -155,6 +155,25 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 
 Golfers see one **Your next step** card at the top of Home: the single thing to do now, with one big button, and a progress bar (Enter, Pay, Start, Scores, Signed, Sent). It goes: Enter the month, then Start round N (at the course, before teeing off), then Enter your scores (straight onto the keypad, and Carry on entering if they stop partway), then Add your marker, then Send your card to the organiser, then All done (with a tick). Before a round opens it says when the next one starts. An unpaid entry shows a second **Pay my €10 entry** button, without stopping them playing. The round box underneath just shows where their card is, with a plain Open my card.
 
+## Golfers' phone reminders
+
+Golfers can turn on reminders from their **Me** page (on iPhone, the app has to be added to the Home Screen first). Then:
+
+- **7pm the evening before each round:** "Round 2 opens tomorrow". Anyone whose entry isn't paid gets "Round 2 tomorrow: entry due tonight" instead. Golfers who haven't entered are told the round is on and what entry costs.
+- **9pm on a round day:** anyone who started a card that day that isn't finished, signed or sent gets a nudge before the midnight deadline.
+
+Each golfer can switch either one off. **Admin → Setup → Golfers' reminders** shows who has them on.
+
+The reminders are sent by a small job in this repository (`scripts/notify.mjs`), which GitHub runs each evening (`.github/workflows/reminders.yml`). It's free and doesn't need the paid Firebase plan. Setting it up, once:
+
+1. **Web push key.** In the Firebase console: **Project settings → Cloud Messaging → Web Push certificates → Generate key pair**. Copy the key (it starts with B and is about 88 characters) into `docs/config.js` as `vapidKey: "…"`. It isn't secret.
+2. **Service account key.** In the Firebase console: **Project settings → Service accounts → Generate new private key**. A `.json` file downloads. This one *is* secret: don't send it to anyone or put it in the app.
+3. **Save it in GitHub.** In this repository on GitHub: **Settings → Secrets and variables → Actions → New repository secret**. Name it `FIREBASE_SERVICE_ACCOUNT` and paste in everything from the `.json` file. Then delete the file from your computer.
+4. **Publish the updated `firestore.rules`.** They add the `push` collection, where each golfer's phone details are kept.
+5. **Test it.** Turn reminders on from your own Me page. Then on GitHub: **Actions → Reminders → Run workflow** (leave it on `test`). A "Pot of Gold test" notification arrives on organisers' phones.
+
+GitHub turns off scheduled jobs in a repository that has had no changes for 60 days. If the reminders stop after a long quiet spell, open **Actions → Reminders** and click **Enable workflow**.
+
 ## Tables, stats and sharing
 
 - **Leaderboard.** Each golfer's round scores sit under their name: solid green when the round counts, a dashed box once it's dropped. Arrows by the position show who's moved up or down since the last round. The leader's row is gold. Names typed in all lower case or all capitals are shown with proper capitals ("gordon cronin" shows as "Gordon Cronin").
@@ -219,3 +238,4 @@ When a new version is put online, phones that have the app open show **A new ver
 | `docs/config.js` | Your Firebase details |
 | `docs/sw.js`, `docs/manifest.webmanifest`, `docs/icons/` | Install and offline support |
 | `firestore.rules` | Security rules for Firestore |
+| `scripts/notify.mjs`, `.github/workflows/reminders.yml` | Golfers' phone reminders, sent each evening by GitHub |

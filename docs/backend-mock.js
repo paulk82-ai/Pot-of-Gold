@@ -33,6 +33,8 @@ export async function init(cfg){
     const s = segs(path);
     if (isAdmin()) return;
     if (path === 'config/admins' && !store[path] && data && JSON.stringify(data.emails) === JSON.stringify([email()]) && user.emailVerified) return;
+    // Phone reminders: each signed-in person keeps their own push/{uid} doc (tokens and choices).
+    if (s[0] === 'push' && s.length === 2) { if (s[1] !== user.uid) throw deny(); return; }
     // Asking to join: anyone with a confirmed email can send (or cancel) their own request.
     if (s[0] === 'requests' && s.length === 2) {
       if (!user.emailVerified || s[1] !== email()) throw deny();
@@ -136,6 +138,7 @@ export async function init(cfg){
     async del(path){ check(path, null); delete store[path]; persist(); fire(path); },
     async batch(ops){ ops.forEach(o => check(o.path, o.del ? null : o.data)); ops.forEach(o => { if (o.del) delete store[o.path]; else store[o.path] = JSON.parse(JSON.stringify(o.data)); }); persist(); ops.forEach(o => fire(o.path)); },
     newId: () => Math.random().toString(36).slice(2, 12) + Date.now().toString(36).slice(-4),
+    async pushToken(){ return 'mock-token-' + (user ? user.uid : 'x'); }, async pushDrop(){},
     stamp: date => date.getTime(),
     async scan(promptText, _img, _mime, _check, onTry){
       if (window.__mockSlow) { if (onTry) onTry(1, 3); await new Promise(r => setTimeout(r, window.__mockSlow)); }

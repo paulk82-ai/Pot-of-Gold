@@ -5,7 +5,7 @@ rules_version = '2';
 // - Golfers sign in with the email the organiser saved for them (members/{email}),
 //   or ask to join (requests/{email}) and wait for an organiser to let them in.
 // - Entry fees are paid through Revolut. Golfers can say they've paid; organisers confirm it.
-// - Players tap Start my round before teeing off (Fri-Sun), then enter their card by midnight that day,
+// - Players tap Start my round before teeing off (on the round's days), then enter their card by midnight that day,
 //   with their marker's name and a tick to say the paper card is signed. Complete, signed cards count.
 // - New cards are played off the golfer's current competition handicap (golfers/{id}.hcp, kept up to date by the organiser's app).
 service cloud.firestore {
@@ -31,6 +31,18 @@ service cloud.firestore {
     // Admin page code (stored as a salted hash).
     match /config/admin {
       allow read, write: if isAdmin();
+    }
+
+    // Phone reminders: each person keeps their own phones' notification tokens and choices.
+    // The reminders job (scripts/notify.mjs) reads these with a service account, which isn't bound by these rules.
+    match /push/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid && canRead()
+        && request.resource.data.keys().hasOnly(['uid', 'golferId', 'email', 'tokens', 'prefs', 'updatedAt'])
+        && request.resource.data.uid == uid
+        && request.resource.data.golferId == myGid()
+        && request.resource.data.tokens is list && request.resource.data.tokens.size() <= 5;
     }
 
     // Entry fee, Revolut link, prizes, points, course card.

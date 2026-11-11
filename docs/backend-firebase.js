@@ -90,6 +90,14 @@ export async function init(cfg){
       await b.commit();
     },
     newId: () => F.doc(F.collection(db, '_ids')).id,
+    // Phone reminders (Firebase Cloud Messaging): a token for this phone, tied to the app's own service worker.
+    async pushToken(vapidKey){
+      const M = await import(`${base}/firebase-messaging.js`);
+      if (!(await M.isSupported())) { const e = new Error('Notifications are not supported on this phone or browser.'); e.code = 'unsupported'; throw e; }
+      const reg = await navigator.serviceWorker.ready;
+      return M.getToken(M.getMessaging(app), { vapidKey, serviceWorkerRegistration: reg });
+    },
+    async pushDrop(){ try { const M = await import(`${base}/firebase-messaging.js`); await M.deleteToken(M.getMessaging(app)); } catch (_) {} },
     stamp: date => F.Timestamp.fromDate(date),
     // check(text) says whether the reply is usable; if not, the next model has a go. Any failure moves on to the next
     // model except ones every model would hit (offline, App Check). The final error lists what each model said.
