@@ -103,6 +103,8 @@ export async function init(cfg){
         const now = Date.now();
         if (!cur) {
           if (typeof data.startedAt !== 'number' || Math.abs(data.startedAt - now) > 600000) throw deny('Tap Start my round first.');
+          const en = store[`comps/${s[1]}/entries/${g}`];
+          if (en && comp.payDeadline !== false && !comp.test && !en.paid && !en.claimed && !(en.letPlay && en.letPlay[String(data.round)])) throw deny('Pay your entry first.');
           if (typeof data.deadline !== 'number' || data.deadline <= now || data.deadline > now + 864e5) throw deny();
           if (!!data.twosOnly !== !entered(g)) throw deny();
         } else {

@@ -142,6 +142,28 @@ function revUrl(){ return 'https://revolut.me/' + encodeURIComponent(cfg().revta
 function payRef(c, g){ return `${dParts(c.date).mon} comp - ${g ? g.name : ''}`; }
 function shortDay(ms){ const d = new Date(ms); return isFinite(d) ? `${DOW3[d.getDay()]} ${d.getDate()} ${MON3[d.getMonth()]}` : ''; }
 function payState(e){ return !e ? 'none' : e.paid ? 'paid' : e.claimed ? 'claimed' : 'unpaid'; }
+/* ---------- Payment deadline ----------
+   Entry is due by the night before each round. Once a round opens, a golfer whose entry isn't paid (or at least
+   marked "I've paid") can't start it, unless the organiser lets them play that round (entry.letPlay[round]).
+   The month form can switch the deadline off (comp.payDeadline === false). Test months never have one. */
+function payDeadlineOn(c){ return !!c && !c.test && c.payDeadline !== false; }
+function letPlay(e, n){ return !!(e && e.letPlay && e.letPlay[String(n)]); }
+function payLocked(cid, n, gid){ const c = D.comps[cid]; const e = entryOf(cid, gid); return !!(payDeadlineOn(c) && e && payState(e) === 'unpaid' && !letPlay(e, n)); }
+function payDueRound(c){ const rs = compRounds(c); return rs.find(r => roundState(r) === 'open') || rs.find(r => roundState(r) === 'upcoming') || null; }
+function payByText(r){ const d = addDays(r.from, -1); const x = parseDate(d); return `${DOWL[x.getDay()]} night (${dParts(d).day} ${dParts(d).mon})`; }
+// The red warning on a golfer's page (and the organiser's view of it) while their entry isn't paid.
+function payWarnHtml(c, gid){
+  const e = c && entryOf(c.id, gid); if (!payDeadlineOn(c) || c.status !== 'open' || !e || payState(e) !== 'unpaid') return '';
+  const r = payDueRound(c); if (!r) return '';
+  const mine = gid === S.myGid && !S.isAdmin; const fee = euro(compFee(c)); const nm = firstName(gName(gid));
+  const open = roundState(r) === 'open'; let t;
+  if (open && letPlay(e, r.n)) t = `${mine ? 'Your' : nm + "'s"} ${fee} entry isn't paid. The organiser has let ${mine ? 'you' : 'them'} play round ${r.n}, but it still needs paying.`;
+  else if (open) t = `${mine ? 'Your' : nm + "'s"} ${fee} entry isn't paid, so round ${r.n} is locked. ${mine ? 'Pay now and you can start straight away.' : 'They can start once they pay, or you can let them play.'}`;
+  else t = `${mine ? 'Your' : nm + "'s"} ${fee} entry isn't paid. ${mine ? 'Pay' : 'It has to be paid'} by ${payByText(r)} to play round ${r.n}.`;
+  const btn = mine ? `<button class="btn small primary" data-act="pay" data-id="${esc(c.id + '/' + gid)}">Pay now</button>`
+    : S.isAdmin ? `<button class="btn small" data-act="letPlay" data-id="${esc(c.id + '/' + gid)}" data-round="${r.n}">${letPlay(e, r.n) ? `Lock round ${r.n} again` : `Let them play round ${r.n}`}</button>` : '';
+  return `<div class="paywarn" role="alert"><b>${mine ? 'Pay your entry' : 'Entry not paid'}</b><span>${esc(t)}</span>${btn}</div>`;
+}
 function claimText(e){ return `Says paid${e.claimMethod && METHODS[e.claimMethod] ? ' by ' + METHODS[e.claimMethod] : ''}${e.claimedAt ? ' · ' + shortDay(e.claimedAt) : ''}`; }
 
 /* ---------- Handicaps & scoring ---------- */
@@ -506,7 +528,7 @@ function canEnter(cid, round, gid){
 }
 function canStart(cid, round){
   const c = D.comps[cid]; const card = cardOf(cid, round, S.myGid);
-  return !!(c && S.myGid && c.status === 'open' && roundOpenNow(c, round) && (entryOf(cid, S.myGid) || (twosOn() && twosOf(cid, round, S.myGid))) && !cardStarted(card) && !(card && card.scores && Object.keys(card.scores).length));
+  return !!(c && S.myGid && c.status === 'open' && roundOpenNow(c, round) && (entryOf(cid, S.myGid) || (twosOn() && twosOf(cid, round, S.myGid))) && !payLocked(cid, round, S.myGid) && !cardStarted(card) && !(card && card.scores && Object.keys(card.scores).length));
 }
 function errText(e){
   const code = e && e.code || '';
@@ -837,10 +859,11 @@ function nextStep(c){
   const mk = (at, title, text, btn, extra) => ({at: only ? Math.max(0, at - 2) : at, steps, title, text, btn: btn && at > 1 && at < 6 && !btn.includes('data-act="pay"') ? btn + payBtn : btn, extra, unpaid: !only && ps === 'unpaid'});
   const cid = esc(c.id);
   if (!e && !tw) return stillToPlay(c) ? mk(0, `Enter ${c.name}`, `${euro(compFee(c))} covers all ${rs.length} rounds, and your best ${compBest(c)} count.`, `<button class="btn primary block big" data-act="selfEnter" data-cid="${cid}">Enter now</button>`) : null;
-  if (e && ps === 'unpaid' && !open) return mk(1, `Pay your ${euro(compFee(c))} entry`, 'Pay on Revolut, then tap I\'ve paid.', `<button class="btn primary block big" data-act="pay" data-id="${esc(c.id + '/' + me)}">Pay now</button>`);
+  if (e && ps === 'unpaid' && !open) return mk(1, `Pay your ${euro(compFee(c))} entry`, payDeadlineOn(c) && next ? `Pay by ${payByText(next)} to play round ${next.n}. Pay on Revolut, then tap I've paid.` : 'Pay on Revolut, then tap I\'ve paid.', `<button class="btn primary block big" data-act="pay" data-id="${esc(c.id + '/' + me)}">Pay now</button>`);
   if (!open) return next ? mk(2, `Next: round ${next.n}, ${dParts(next.from).dow} ${dParts(next.from).day} ${dParts(next.from).mon}`, 'When you get to the course, tap Start my round here before you tee off.', '', 'wait') : null;
   const card = cardOf(c.id, open.n, me); const sc = scoreCard(c, open.n, me); const at = `data-cid="${cid}" data-round="${open.n}" data-gid="${esc(me)}"`;
   const tw2 = twosOn() ? (twosIn(twosOf(c.id, open.n, me)) ? " You're in the 2's this round." : twosWindowOpen(c.id, open.n, me) ? " It'll ask about the 2's club." : '') : '';
+  if (!cardStarted(card) && payLocked(c.id, open.n, me)) return Object.assign(mk(1, `Pay to play round ${open.n}`, `Your ${euro(compFee(c))} entry was due by the night before. Pay now, tap I've paid, and you can start straight away.`, `<button class="btn primary block big" data-act="pay" data-id="${esc(c.id + '/' + me)}">Pay now</button>`), {locked:true});
   if (!cardStarted(card)) return canStart(c.id, open.n) ? mk(2, `Start round ${open.n}`, `Tap this at the course, before you tee off. You get one go at this round.${tw2}`, `<button class="btn primary block big" data-act="startRound" data-cid="${cid}" data-round="${open.n}">Start my round</button>`) : null;
   if (cardLocked(card) || roundShut(card)) return sc.valid || cardCounts(c.id, open.n, me) ? mk(6, `Round ${open.n} done`, 'Your card counts. Well played!', '', 'done') : mk(6, `Round ${open.n} is closed`, "Your card wasn't finished in time, so this round doesn't count. Your best rounds still count.", '', 'missed');
   if (!sc.complete) return mk(3, 'Enter your scores', sc.filled ? `${sc.filled} of ${sc.rc.holes.length} holes in. Carry on from where you left off.` : `Type in your score for each hole, by ${deadlineText(card) || 'midnight'}.`, `<button class="btn primary block big" data-act="nextScores" ${at}>${sc.filled ? 'Carry on entering' : 'Enter my scores'}</button>`);
@@ -870,7 +893,7 @@ function homeHero(c){
   } else if (me && e) {
     if (open) h += myRoundHtml(c, open, false);
     const ps = payState(e);
-    if (ps === 'unpaid' && !ns) h += `<div class="paynote"><span>Your ${euro(fee)} entry isn't paid yet.</span><button class="btn small primary" data-act="pay" data-id="${esc(c.id + '/' + me)}">Pay now</button></div>`;
+    if (ps === 'unpaid' && !ns) h += payWarnHtml(c, me) || `<div class="paynote"><span>Your ${euro(fee)} entry isn't paid yet.</span><button class="btn small primary" data-act="pay" data-id="${esc(c.id + '/' + me)}">Pay now</button></div>`;
     else if (ps === 'claimed') h += `<p class="hint">Payment sent. The organiser is checking it.</p>`;
     h += positionHtml(c);
   } else if (S.isAdmin) {
@@ -1230,6 +1253,7 @@ function viewPlayer(){
   const p = D.golfers[S.playerId]; if (!p) { S.playerId = null; return viewGolfers(); }
   let h = backBtn('All golfers', 'closePlayer');
   h += `<div class="phead"><span class="avatar">${esc(initials(p.name))}</span><div><h1>${esc(p.name)}</h1><p>Handicap ${fmtHi(curHcp(p.id))} · ${p.gender === 'L' ? "Ladies'" : "Men's"} card</p></div></div>`;
+  const cc = currentComp(); if (cc && (S.isAdmin || p.id === S.myGid)) h += payWarnHtml(cc, p.id);
   h += hcpPanel(p.id);
   return h + playerStatsHtml(p, S.isAdmin);
 }
@@ -1256,7 +1280,7 @@ function playerStatsHtml(p, canEdit){
 function viewMe(){
   const p = D.golfers[S.myGid]; if (!p) return viewHome();
   let h = `<div class="phead"><span class="avatar">${esc(initials(p.name))}</span><div><h1>${esc(p.name)}</h1><p>Handicap ${fmtHi(curHcp(p.id))} · ${p.gender === 'L' ? "Ladies'" : "Men's"} card</p></div></div>`;
-  const c = currentComp(); if (c) h += meMonthHtml(c);
+  const c = currentComp(); if (c) h += payWarnHtml(c, p.id) + meMonthHtml(c);
   h += hcpPanel(p.id);
   h += playerStatsHtml(p, S.isAdmin);
   const iosTip = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.matchMedia('(display-mode: standalone)').matches;
@@ -1505,6 +1529,7 @@ function sheetComp(){
     <label class="field"><span>Best cards count</span><select id="f-best" name="best">${range(1,5).map(i => `<option value="${i}" ${i === best ? 'selected' : ''}>${i}</option>`).join('')}</select></label></div>
     <label class="field"><span>League points</span><select id="f-points" name="pointsSystem">${(() => { const v = c ? (c.pointsSystem || 'fixed') : cfg().pointsSystem; return [['field', 'By players: winner gets 1 point per paid player + 1 bonus'], ['fixed', `Fixed: ${cfg().points.join(', ')}, others ${cfg().entryPoint}`]].map(([x, l]) => `<option value="${x}" ${v === x ? 'selected' : ''}>${l}</option>`).join(''); })()}</select></label>
     <div class="field"><span>Rounds</span><div id="f-rounds" class="rrows">${rs.map(r => roundRow(r.n, r, perRound)).join('')}</div><p class="hint">Pick each round's first and last day: any days you like, even just one. Golfers can play once in that time.</p></div>
+    <label class="check toggle"><input type="checkbox" id="f-paydl" name="payDeadline" ${!c || c.payDeadline !== false ? 'checked' : ''}><span><b>Pay by the night before each round.</b> Once a round opens, anyone who hasn't paid can't start it until they pay (you can let someone play from their payment).</span></label>
     <label class="check toggle"><input type="checkbox" id="f-test" name="test" ${c && c.test ? 'checked' : ''}><span><b>Test month.</b> For trying the app out. It never counts towards the league or handicaps. Delete it when you've finished.</span></label>
     <label class="check toggle"><input type="checkbox" id="f-perround" name="perround" ${perRound ? 'checked' : ''}><span>Different format, tees or holes for some rounds. "Default" uses the month's settings below.</span></label>
     <label class="field"><span>Entry fee for the month (€)</span><input type="number" id="f-fee" name="fee" min="0" step="1" value="${esc(c && c.fee != null ? c.fee : k.fee)}"></label>
@@ -1548,6 +1573,8 @@ function sheetPay(){
   if (S.isAdmin) {
     if (ps === 'claimed') h += `<p class="notebox">${esc(firstName(g.name))} says they paid${e.claimMethod && METHODS[e.claimMethod] ? ' by ' + esc(METHODS[e.claimMethod]) : ''}. Look for <b>${esc(ref)}</b> or their name in your Revolut, then mark it below.</p>`;
     h += `<span class="label">Mark as</span><div class="paygrid three">${[['revolut','Revolut app'],['card','Card (Revolut)'],['','Not paid']].map(([m,l]) => `<button class="paybtn ${(m ? (e.paid && e.method === m) : !e.paid) ? 'on' : ''}" data-act="setPay" data-m="${m}">${l}</button>`).join('')}</div>`;
+    const dr = payDeadlineOn(c) && c.status === 'open' && ps === 'unpaid' ? payDueRound(c) : null;
+    if (dr) h += `<span class="label">Payment deadline</span><p class="hint" style="margin-top:0">${roundState(dr) === 'open' ? `Round ${dr.n} is open, so ${esc(firstName(g.name))} can't start it until they pay.` : `Due by ${esc(payByText(dr))} for round ${dr.n}.`}${letPlay(e, dr.n) ? ` You've let them play round ${dr.n} unpaid.` : ''}</p><button class="btn block" data-act="letPlay" data-id="${esc(S.sheet.id)}" data-round="${dr.n}">${letPlay(e, dr.n) ? `Lock round ${dr.n} again` : `Let them play round ${dr.n} unpaid`}</button>`;
     if (!me) return h;
   }
   if (ps === 'paid') return h + `<p class="hint">Thanks, you're all paid for ${esc(c.name)}.</p>`;
@@ -2100,10 +2127,11 @@ function chaseData(){
       p => `Hi ${firstName(p.name)}, you're down for the 2's this round but the ${euro(twosFee())} isn't paid yet. Pay ${rev} before you tee off (or within 10 minutes of starting), then tap I've paid in the app, or you're not in.`,
       names => `2's club round ${open.n}: ${names} – your ${euro(twosFee())} isn't paid yet. Pay ${rev} before you tee off and tap I've paid in the app, or you're not in.`);
   }
-  const L = chaseLists(c);
+  const L = chaseLists(c); const dr = payDeadlineOn(c) ? payDueRound(c) : null;
+  const dueTxt = !dr ? '' : roundState(dr) === 'open' ? ` You can't start round ${dr.n} until it's paid.` : ` It's due by ${payByText(dr)} to play round ${dr.n}.`;
   g('unpaid', 'Entry not paid', `${c.name} · ${fee} entry`, L.unpaid,
-    p => `Hi ${firstName(p.name)}, just a reminder your ${fee} entry for ${c.name} isn't paid yet. Pay ${rev}, then tap I've paid in the app. Thanks!`,
-    names => `${c.name}: ${names} – your ${fee} entry isn't paid yet. Pay ${rev}, then tap I've paid in the app. Thanks!`);
+    p => `Hi ${firstName(p.name)}, just a reminder your ${fee} entry for ${c.name} isn't paid yet. Pay ${rev}, then tap I've paid in the app.${dueTxt} Thanks!`,
+    names => `${c.name}: ${names} – your ${fee} entry isn't paid yet. Pay ${rev}, then tap I've paid in the app.${dueTxt} Thanks!`);
   g('notin', 'Not entered', `${c.name} · still rounds to play`, L.notEntered,
     p => `Hi ${firstName(p.name)}, ${c.name} is on: ${fee} covers all ${compRounds(c).length} rounds and your best ${compBest(c)} count. Enter in the app: ${url}`,
     names => `${c.name} is on: ${fee} covers all ${compRounds(c).length} rounds and your best ${compBest(c)} count. Not in yet: ${names}. Enter in the app: ${url}`);
@@ -2413,6 +2441,10 @@ const ACT = {
   async selfEnter(el){ const c = D.comps[(el && el.dataset.cid) || S.compId]; if (!c) return; const path = `comps/${c.id}/entries/${S.myGid}`; const data = {compId:c.id, golferId:S.myGid, paid:false, method:null, paidAt:null, createdAt:Date.now()};
     if (await put(path, data)) { localSet(path, data); openSheet({type:'pay', id:c.id + '/' + S.myGid}); render(); toast("You're entered. Now pay your entry."); sendNotify(`${gName(S.myGid)} entered`, `${c.name} · not paid yet`, 'ticket'); } },
   pay(el){ openSheet({type:'pay', id:el.dataset.id}); },
+  async letPlay(el){ if (!S.isAdmin) return; const id = el.dataset.id; const n = String(Number(el.dataset.round)); const e = D.entries[id]; if (!e) return;
+    const lp = Object.assign({}, e.letPlay || {}); if (lp[n]) delete lp[n]; else lp[n] = true;
+    const data = Object.assign({}, e, {letPlay: lp}); delete data.id; const path = `comps/${e.compId}/entries/${e.golferId}`;
+    if (await put(path, data)) { localSet(path, data); render(); toast(lp[n] ? `${firstName(gName(e.golferId))} can play round ${n} unpaid.` : `Round ${n} is locked for ${firstName(gName(e.golferId))} until they pay.`); } },
   setPay(el){ const e = D.entries[S.sheet && S.sheet.id]; if (e) markPaid(e.compId, e.golferId, el.dataset.m); },
   payments(el){ openSheet({type:'payments', id: el.dataset.id || S.compId}); },
   payMark(el){ const cid = S.sheet && S.sheet.id; if (cid) markPaid(cid, el.dataset.gid, el.dataset.m); },
@@ -2548,7 +2580,7 @@ const FORMS = {
     const best = Math.min(count, Math.max(1, Number(fd.get('best')) || count));
     const id = S.sheet.id || newId(); const prev = D.comps[id] || {}; const format = fd.get('format') || 'stableford';
     const pointsSystem = fd.get('pointsSystem') === 'field' ? 'field' : 'fixed';
-    const data = Object.assign({}, prev, {test, pointsSystem, name: String(fd.get('name') || '').trim() || (test ? 'Test month' : `${dParts(sorted[0]).month} ${FORMATS[format].short}`), date: sorted[0], rounds, best, format, holes, tee: fd.get('tee') || k.tee, fee: num(fd.get('fee'), k.fee), allowance: num(fd.get('allowance'), k.allowance), status: prev.status || 'open', createdAt: prev.createdAt || Date.now()});
+    const data = Object.assign({}, prev, {test, pointsSystem, payDeadline: !!fd.get('payDeadline'), name: String(fd.get('name') || '').trim() || (test ? 'Test month' : `${dParts(sorted[0]).month} ${FORMATS[format].short}`), date: sorted[0], rounds, best, format, holes, tee: fd.get('tee') || k.tee, fee: num(fd.get('fee'), k.fee), allowance: num(fd.get('allowance'), k.allowance), status: prev.status || 'open', createdAt: prev.createdAt || Date.now()});
     delete data.id;
     if (await put(`comps/${id}`, data)) { localSet(`comps/${id}`, data); closeSheetQuiet(); S.view = 'comps'; S.compId = id; S.card = null; S.compTab = 'entries'; top(); render(); toast(prev.name ? 'Competition updated' : 'Month created'); }
   },

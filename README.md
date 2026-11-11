@@ -139,6 +139,14 @@ The app has four tabs for golfers: **Home** (this weekend's round, your card, yo
 
 ## Payments through Revolut
 
+### Payment deadline: the night before each round
+
+- The entry fee is due by the night before each round. Golfers who haven't paid see a red warning on Home and on their Me page ("Pay by Thursday night (12 Nov) to play round 2"), and the chase list reminder says the same.
+- Once the round opens, anyone whose entry still isn't paid can't tap **Start my round**. Paying and tapping **I've paid** unlocks it straight away; you then confirm the payment as usual.
+- To let someone play anyway, open their golfer page (or their payment in Entries) and tap **Let them play round N unpaid**. Tap it again to lock it.
+- To switch the deadline off for a month, untick **Pay by the night before each round** in the month's settings. Test months never have one.
+- The Firebase security rules check this too, so publish the updated `firestore.rules`.
+
 - Golfers pay at `revolut.me/paul3d7qv`. Change the username in **Admin → Entry & payments** if needed.
 - So people without Revolut can pay by card, turn on **Revtag discoverability** in your Revolut app's privacy settings.
 - Revolut limits how much you can receive by card through your link each week; the limit is shown in your Revolut app. Payments from other Revolut users have no limit. If a lot of people pay by card in the same week, some may need to wait or pay Revolut to Revolut.

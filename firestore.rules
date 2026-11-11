@@ -72,6 +72,14 @@ service cloud.firestore {
         return request.time >= r.opens && request.time < r.closes;
       }
       function entered(gid) { return exists(/databases/$(database)/documents/comps/$(cid)/entries/$(gid)); }
+      // Payment deadline: entry paid (or marked "I've paid") by the time the round opens, unless the organiser has
+      // let them play that round, or the month has no deadline.
+      function paidUp(gid, n) {
+        let e = get(/databases/$(database)/documents/comps/$(cid)/entries/$(gid)).data;
+        return comp().get('payDeadline', true) == false || comp().get('test', false) == true
+          || e.get('paid', false) == true || e.get('claimed', false) == true
+          || e.get('letPlay', {}).get(string(n), false) == true;
+      }
       // The 2's for a round opens early once the organiser has closed the round before it.
       function twosEarly(n) {
         return n > 1 && n <= comp().rounds.size() && request.time < comp().rounds[n - 1].opens
@@ -164,6 +172,7 @@ service cloud.firestore {
             && (resource == null
                   ? (c.shots == null && c.hi == golfer.get('hcp', golfer.get('hi', null))
                      && c.get('twosOnly', false) == !entered(me)
+                     && (!entered(me) || paidUp(me, c.round))
                      && math.abs(c.startedAt - now) < 600000
                      && c.deadline > now && c.deadline <= now + 86400000)
                   : (resource.data.golferId == c.golferId && resource.data.round == c.round
