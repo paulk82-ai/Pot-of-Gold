@@ -95,6 +95,9 @@ function cfg(){
 }
 function freshSi(a, k){ return JSON.stringify(a) === JSON.stringify(OLD_SI[k]) ? COURSE[k] : a; }
 function gName(gid){ const g = D.golfers[gid]; return g ? g.name : 'Unknown golfer'; }
+// Names typed in all lower case (or all capitals) shown with proper capitals: "gordon cronin" → "Gordon Cronin",
+// "o'brien" → "O'Brien". A word with its own mix of capitals ("McDonald") is left alone.
+function nice(name){ return String(name || '').replace(/[^\s'’-]+/g, w => (w === w.toLowerCase() || (w === w.toUpperCase() && w.length > 2)) && /[a-z]/i.test(w) ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w); }
 function sortedGolfers(){ return Object.values(D.golfers).sort(byName); }
 function inSeason(c, season){ return season === 'all' || String(c.date||'').slice(0,4) === season; }
 function seasonList(){ const ys = new Set(Object.values(D.comps).map(c => String(c.date||'').slice(0,4)).filter(Boolean)); ys.add(String(new Date().getFullYear())); return [...ys].sort().reverse(); }
@@ -188,7 +191,7 @@ function allocShots(holes, si, total){
 }
 // A card counts once it's complete and the paper card is signed by a marker (anyone).
 // The player adds the marker's name and ticks that it's signed. Older cards used markerId/approved.
-function markerName(card){ return card ? String(card.marker || (card.markerId ? gName(card.markerId) : '') || '').trim() : ''; }
+function markerName(card){ return card ? nice(String(card.marker || (card.markerId ? gName(card.markerId) : '') || '').trim()) : ''; }
 function isSigned(card){ return !!card && (card.signed === true || card.approved === true); }
 function markedOK(card){ return isSigned(card) && !!markerName(card); }
 function signText(card){
@@ -459,7 +462,13 @@ function hcpLedger(){
     const before = l.current; l.current = r1(v); 
     l.events.push({compId: c ? c.id : null, date: c ? c.date : day, name: c ? c.name : '', change: r1(l.current - before), reason: `Back after missing ${missed} month${missed === 1 ? '' : 's'}. Golf Ireland ${fmtHi(v)} is lower`, before, after: l.current, back: true, pending: !c});
   };
+  // Cuts the organiser makes from the watch list (golfers/{id}.hcpAdj), applied in date order among the months.
+  const adj = (upTo) => Object.values(D.golfers).forEach(g => { const l = L[g.id]; if (!l || l.base === null) return; l.adjAt = l.adjAt || 0;
+    const list = (Array.isArray(g.hcpAdj) ? g.hcpAdj : []).filter(a => a && isNum(a.change) && a.at).sort((a, b) => String(a.at).localeCompare(String(b.at)));
+    while (l.adjAt < list.length && (upTo === null || list[l.adjAt].at <= upTo)) { const a = list[l.adjAt++]; const before = l.current; l.current = r1(Math.max(-10, Math.min(R.max, before + Number(a.change))));
+      l.events.push({compId:null, date:a.at, name:'', change:r1(l.current - before), reason: a.note || 'Organiser review', before, after:l.current, review:true}); } });
   Object.values(D.comps).filter(c => c.status === 'final' && !c.test).sort((a,b) => String(a.date||'').localeCompare(String(b.date||''))).forEach(c => {
+    adj(c.date);
     leaderboard(c).all.forEach(r => {
       // Played = at least one card that counts. Entering and handing in nothing is a missed month.
       const l = L[r.gid]; const g = D.golfers[r.gid]; if (!l || l.base === null || !(r.count > 0)) return;
@@ -473,6 +482,7 @@ function hcpLedger(){
       l.since = l.lastPlayed = c.date;
     });
   });
+  adj(null);
   Object.values(D.golfers).forEach(g => { const l = L[g.id]; if (!l || l.base === null) return;
     l.toRise = R.after - l.streak;
     // Held: the handicap stays put however long they're away. Back after the hold: the lower one, ready for their next card.
@@ -542,7 +552,7 @@ async function drop(path){ try { await be.del(path); return true; } catch (e) { 
 async function batch(ops){ try { await be.batch(ops.map(o => o.del ? o : Object.assign({}, o, {data: noId(o.data)}))); return true; } catch (e) { toast(errText(e)); return false; } }
 function localSet(path, data){
   const s = path.split('/');
-  if (s[0] === 'golfers') D.golfers[s[1]] = Object.assign({}, data, {id:s[1]});
+  if (s[0] === 'golfers') D.golfers[s[1]] = Object.assign({}, data, {id:s[1]}, data && data.name ? {name: nice(data.name)} : {});
   else if (s[0] === 'comps' && s.length === 2) D.comps[s[1]] = Object.assign({}, data, {id:s[1]});
   else if (s[0] === 'comps' && s[2] === 'cards') D.cards[`${s[1]}/${s[3]}`] = Object.assign({}, data, {id:s[3]});
   else if (s[0] === 'comps' && s[2] === 'entries') D.entries[`${s[1]}/${s[3]}`] = Object.assign({}, data, {id:s[3], compId:s[1]});
@@ -601,7 +611,7 @@ function stopDataOnly(){ dataUnsubs.forEach(f => { try { f(); } catch (_) {} });
 function startData(){
   stopDataOnly();
   const err = e => { console.warn(e); toast('Some data could not load. Pull to refresh or reopen the app.'); };
-  const coll = (path, key) => dataUnsubs.push(be.watch(path, docs => { D[key] = {}; docs.forEach(d => D[key][d.id] = Object.assign({}, d.data, {id:d.id})); S.loaded[key] = true; MEMO = {}; render(); if (key === 'comps' || key === 'golfers') scheduleCreditSync(); }, err));
+  const coll = (path, key) => dataUnsubs.push(be.watch(path, docs => { D[key] = {}; docs.forEach(d => D[key][d.id] = Object.assign({}, d.data, {id:d.id}, key === 'golfers' && d.data && d.data.name ? {name: nice(d.data.name)} : {})); S.loaded[key] = true; MEMO = {}; render(); if (key === 'comps' || key === 'golfers') scheduleCreditSync(); }, err));
   const group = (name, key) => dataUnsubs.push(be.watchGroup(name, docs => { D[key] = {}; docs.forEach(d => { const s = d.path.split('/'); const cid = s[1]; D[key][cid + '/' + d.id] = Object.assign({}, d.data, {id:d.id, compId:cid}); }); S.loaded[key] = true; MEMO = {}; render(); if (key === 'entries') scheduleCreditSync(); }, err));
   coll('golfers', 'golfers'); coll('comps', 'comps');
   if (S.adminRole) { const wait = setInterval(() => { if (S.loaded.golfers && S.loaded.comps && S.loaded.entries && S.loaded.cards && S.loaded.settings) { clearInterval(wait); if (!S.hcpSynced) { S.hcpSynced = true; syncHandicaps(); } } }, 800); dataUnsubs.push(() => clearInterval(wait)); }
@@ -937,7 +947,28 @@ function positionHtml(c){
   let lead = '';
   if (row.pos === 1 && !row.tied) { const second = lb.ranked.find(r => r.pos === 2); lead = second ? `Ahead of ${second.golfer.name}, ${monthText(second, c)}${u ? ' ' + u : ''}` : ''; }
   else if (leader && leader.gid !== row.gid) lead = `Leader: ${leader.golfer.name}, ${monthText(leader, c)}${u ? ' ' + u : ''}`;
-  return `<div class="mypos"><span class="label">This month</span><div class="mypos-line"><b class="mypos-place">${row.tied ? 'T' : ''}${ord(row.pos)}</b><span class="mypos-sub">${esc(sub)}</span></div><div class="rcells">${roundCells(c, row)}</div>${lead ? `<p class="hint">${esc(lead)}</p>` : ''}</div>`;
+  return `<div class="mypos"><span class="label">This month</span><div class="mypos-line"><b class="mypos-place">${row.tied ? 'T' : ''}${ord(row.pos)}</b><span class="mypos-sub">${esc(sub)}</span></div><div class="rcells">${roundCells(c, row)}</div>${lead ? `<p class="hint">${esc(lead)}</p>` : ''}${needHtml(c)}</div>`;
+}
+// "What you need": the score in the next round that would take this golfer past the place above them, as the table
+// stands now (others still to play, so it's a target, not a promise). Only for formats where a higher score is better.
+function needText(c){
+  const lb = leaderboard(c); const row = lb.ranked.find(r => r.gid === S.myGid); const mf = {format: monthMode(c).format};
+  if (!row || !higher(mf) || c.status !== 'open' || row.pos === 1) return null;
+  const nr = compRounds(c).find(r => { const st = roundState(r); const card = cardOf(c.id, r.n, S.myGid); return (st === 'open' && !cardStarted(card)) || st === 'upcoming'; }); if (!nr) return null;
+  const T = row.pos > 3 ? lb.ranked.find(r => r.pos <= 3 && r.pos === Math.max(...lb.ranked.filter(x => x.pos <= 3).map(x => x.pos))) : lb.ranked.find(r => r.pos === 1);
+  if (!T || T.gid === row.gid) return null;
+  const best = compBest(c); const vals = row.counted.map(x => x.v); const worst = vals.length ? Math.min(...vals) : 0;
+  const full = row.count >= best; const nCount = full ? row.count : row.count + 1; const base = full ? row.total - worst : row.total;
+  if (nCount < T.count) return null;
+  const goal = T.pos === 1 ? 'top of the table' : `${ord(T.pos)} place`; const u = unitFor(rcfg(c, nr.n).format) || 'points';
+  if (nCount > T.count) return {x: null, text: `As it stands, any card that counts in round ${nr.n} would take you past ${T.golfer.name} into ${goal}.`};
+  let x = Math.floor(T.total - base) + 1; if (full) x = Math.max(x, Math.floor(worst) + 1);
+  const max = Math.round(rcfg(c, nr.n).holes.length * 2.6); if (x > max) return null;
+  return {x, text: `As it stands, ${x} ${u} in round ${nr.n} would take you past ${T.golfer.name} into ${goal}.`};
+}
+function needHtml(c){
+  const n = needText(c); if (!n) return '';
+  return `<div class="need"><span class="label">What you need</span><b>${esc(n.text)}</b><span class="hint">Others still have rounds to play, so treat it as a target.${n.x !== null && compBest(c) > 1 ? ` Your best ${compBest(c)} count.` : ''}</span></div>`;
 }
 function miniTable(c){
   const lb = leaderboard(c); const fin = c.status === 'final'; const u = monthUnit(c);
@@ -1037,7 +1068,8 @@ function payNote(c){
 function roundCells(c, row){
   const mixed = monthMode(c).mixed; const val = sc => mixed ? String(sc.pts) : cardValueText(sc);
   return compRounds(c).map(r => { const sc = row.cards.find(x => x.round === r.n); let v = '–', cls = '';
-    if (sc && sc.filled) { if (sc.counts) { v = val(sc); if (!row.countedNs.has(r.n)) { v = '(' + v + ')'; cls = 'dropped'; } } else { v = sc.complete && (!sc.marked || !sc.photoOk) && (mixed || !sc.nr) ? val(sc) + '*' : (!mixed && sc.nr) ? 'NR' : '…'; cls = 'pending'; } }
+    if (!(sc && sc.filled)) cls = 'none';
+    if (sc && sc.filled) { if (sc.counts) { v = val(sc); cls = 'counts'; if (!row.countedNs.has(r.n)) { cls = 'dropped'; } } else { v = sc.complete && (!sc.marked || !sc.photoOk) && (mixed || !sc.nr) ? val(sc) + '*' : (!mixed && sc.nr) ? 'NR' : '…'; cls = 'pending'; } }
     return `<span class="rc ${cls}"><i>R${r.n}</i>${esc(v)}</span>`; }).join('');
 }
 function entriesHtml(c, lb){
@@ -1049,7 +1081,7 @@ function entriesHtml(c, lb){
     if (o) h += `<button class="btn block" style="margin-top:8px" data-act="roundClose" data-cid="${esc(c.id)}" data-round="${o.n}">Close round ${o.n}</button>`;
     shut.forEach(r => { h += `<p class="hint" style="margin:8px 0 0">Round ${r.n} was closed ${esc(whenText(r.closedAt))}. <button class="textbtn" data-act="roundReopen" data-cid="${esc(c.id)}" data-round="${r.n}">Reopen round ${r.n}</button></p>`; }); }
   if (!all.length) return h + `<div class="empty" style="margin-top:12px"><p class="hint">No entries yet.</p></div>`;
-  h += `<p class="hint entry-hint">Tap a golfer to see their cards. A * means the card isn't ticked as signed by a marker yet${photoRule() ? " or hasn't been sent to the organiser" : ''}, so it doesn't count. Brackets show a dropped round.</p>`;
+  h += `<p class="hint entry-hint">Tap a golfer to see their cards. A * means the card isn't ticked as signed by a marker yet${photoRule() ? " or hasn't been sent to the organiser" : ''}, so it doesn't count. Scores in dashed boxes are dropped rounds.</p>`;
   h += '<ul class="list">' + all.map(r => {
     const e = r.entry; const ps = payState(e); const own = r.gid === S.myGid;
     const label = ps === 'paid' ? (A ? METHODS[e.method] || 'Paid' : 'Paid') : ps === 'claimed' ? (A ? 'Check' : 'Checking') : 'Unpaid';
@@ -1057,6 +1089,36 @@ function entriesHtml(c, lb){
     return `<li class="entry"><button class="entry-main" data-act="openCard" data-cid="${esc(c.id)}" data-round="${cur}" data-gid="${esc(r.gid)}"><span class="entry-name">${esc(r.golfer.name)}<span class="rcells">${roundCells(c, r)}</span></span><span class="entry-score ${r.count ? '' : 'dim'}">${r.count ? esc(monthText(r, c)) + (monthUnit(c) ? `<small>${monthUnit(c)}</small>` : '') : 'No total'}</span></button>${pay}</li>`;
   }).join('') + '</ul>';
   return h;
+}
+// Countback, spelled out: for a pair level on the main score, each step until one is ahead.
+function cbSteps(a, b, nHoles, firstLabel){
+  const segs = cbSegments(nHoles); const labels = [firstLabel].concat(segs.map(k => k === 1 ? 'Last hole' : `Last ${k} holes`));
+  const out = []; for (let i = 0; i < Math.min(a.length, b.length, labels.length); i++) { out.push({label: labels[i], a: a[i], b: b[i]}); if (a[i] !== b[i]) break; }
+  return out.length && out[out.length - 1].a !== out[out.length - 1].b ? out : [];
+}
+function cbHtml(top, bottom, steps, unit){
+  if (!steps.length) return '';
+  const f = v => Number.isInteger(v) ? String(v) : (Math.round(v * 10) / 10).toFixed(1);
+  return `<li class="lb-cb"><details><summary>How the countback went</summary><table><thead><tr><th></th><th>${esc(firstName(top))}</th><th>${esc(firstName(bottom))}</th></tr></thead><tbody>${steps.map((x, i) => `<tr class="${i === steps.length - 1 ? 'dec' : ''}"><td>${esc(x.label)}</td><td>${f(x.a)}</td><td>${f(x.b)}</td></tr>`).join('')}</tbody></table><p class="hint">${steps.length > 1 ? 'Level until the ' + esc(steps[steps.length - 1].label.toLowerCase()) + ', where ' : ''}${esc(firstName(top))} was ahead${unit === 'nett' ? ' (lower nett wins)' : ''}.</p></details></li>`;
+}
+// Where each golfer stood before the latest round with cards in, to show who's moved up or down.
+function monthMoves(c, lb){
+  const key = 'mv:' + c.id; if (MEMO[key]) return MEMO[key];
+  const out = {}; const last = Math.max(0, ...lb.ranked.map(r => Math.max(0, ...[...r.countedNs]))); if (last < 2) return (MEMO[key] = out);
+  const best = compBest(c); const hi = higher({format: monthMode(c).format});
+  const prev = lb.all.map(r => { const v = r.cards.filter(sc => sc.counts && sc.round < last).map(sc => metric({format: monthMode(c).format}, sc.rows)).sort((a, b) => hi ? b - a : a - b).slice(0, best);
+    return {gid: r.gid, count: v.length, total: v.reduce((a, x) => a + x, 0)}; }).filter(x => x.count);
+  prev.sort((a, b) => b.count - a.count || (hi ? b.total - a.total : a.total - b.total));
+  let pos = 0; prev.forEach((x, i) => { if (!i || prev[i-1].count !== x.count || prev[i-1].total !== x.total) pos = i + 1; x.pos = pos; });
+  const was = {}; prev.forEach(x => was[x.gid] = x.pos);
+  lb.ranked.forEach(r => { out[r.gid] = was[r.gid] ? was[r.gid] - r.pos : null; });
+  return (MEMO[key] = out);
+}
+function moveHtml(m){
+  if (m === undefined) return '';
+  if (m === null) return '<span class="mv new">new</span>';
+  if (!m) return '<span class="mv same" aria-label="same place">–</span>';
+  return m > 0 ? `<span class="mv up" aria-label="up ${m}"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1 9 8H1z"/></svg>${m}</span>` : `<span class="mv down" aria-label="down ${-m}"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 9 9 2H1z"/></svg>${-m}</span>`;
 }
 function boardHtml(c, lb){
   const rs = compRounds(c); const sel = S.boardSel;
@@ -1069,10 +1131,13 @@ function monthListHtml(c, lb){
   if (!lb.all.length) return '<div class="empty"><p class="hint">The table fills in as marked cards come in.</p></div>';
   const fin = c.status === 'final';
   const head = `<div class="lb-head"><span>Pos</span><span>Golfer</span><span>${rs.length > 1 ? 'Best ' + compBest(c) : 'Score'}</span><span>League</span></div>`;
-  const rows = lb.ranked.map(r => {
+  const mv = rs.length > 1 ? monthMoves(c, lb) : {};
+  const rows = lb.ranked.map((r, i) => {
+    const nx = lb.ranked[i + 1]; const cb = nx && !r.tied && nx.pos !== r.pos && nx.count === r.count && nx.total === r.total && r.keys.length
+      ? cbHtml(r.golfer.name, nx.golfer.name, cbSteps(r.keys, nx.keys, (r.counted.slice().sort((a, b) => b.sc.round - a.sc.round)[0] || {sc:{rows:[]}}).sc.rows.length, 'Last counting card'), monthUnit(c)) : '';
     const tag = r.pos === 1 ? (fin ? 'Winner' : 'Leading') : r.pos === 2 ? 'Runner-up' : '';
     const note = r.count < compBest(c) ? `${r.count} of ${compBest(c)} rounds` : r.onCb ? 'on countback' : r.tied ? 'tied' : '';
-    return `<li class="lb-row ${r.pos === 1 ? 'first' : ''} ${r.gid === S.myGid ? 'me' : ''}"><span class="lb-pos">${r.tied ? 'T' : ''}${r.pos}</span><button class="lb-name" data-act="openPlayer" data-id="${esc(r.gid)}">${esc(r.golfer.name)}${rs.length > 1 ? `<span class="rcells">${roundCells(c, r)}</span>` : ''}${note ? `<small>${note}</small>` : ''}${tag ? `<span class="tag">${tag}</span>` : ''}</button><span class="lb-score">${esc(monthText(r, c))}<small>${monthUnit(c)}</small></span><span class="lb-pts"><b>${r.points} pt${r.points === 1 ? '' : 's'}</b>${r.prize > 0.004 ? euro(r.prize) : ''}</span></li>`;
+    return `<li class="lb-row ${r.pos === 1 ? 'first' : ''} ${r.gid === S.myGid ? 'me' : ''}"><span class="lb-pos">${r.tied ? 'T' : ''}${r.pos}${moveHtml(mv[r.gid])}</span><button class="lb-name" data-act="openPlayer" data-id="${esc(r.gid)}">${esc(r.golfer.name)}${rs.length > 1 ? `<span class="rcells">${roundCells(c, r)}</span>` : ''}${note ? `<small>${note}</small>` : ''}${tag ? `<span class="tag">${tag}</span>` : ''}</button><span class="lb-score">${esc(monthText(r, c))}<small>${monthUnit(c)}</small></span><span class="lb-pts"><b>${r.points} pt${r.points === 1 ? '' : 's'}</b>${r.prize > 0.004 ? euro(r.prize) : ''}</span></li>${cb}`;
   }).join('');
   const rest = lb.rest.map(r => `<li class="lb-row lb-rest"><span class="lb-pos">–</span><button class="lb-name" data-act="openPlayer" data-id="${esc(r.gid)}">${esc(r.golfer.name)}<small>${esc(r.status)}</small></button><span class="lb-score"></span><span class="lb-pts"><b>${r.points} pt${r.points === 1 ? '' : 's'}</b></span></li>`).join('');
   const mixNote = lb.mode && lb.mode.mixed ? `<p class="hint" style="margin-top:10px">Rounds use different formats, so this table adds up Stableford points from each golfer's best ${compBest(c)} cards.</p>` : '';
@@ -1083,8 +1148,8 @@ function roundBoardHtml(c, n){
   const rb = roundBoard(c, n); const lb = leaderboard(c); const rc = rcfg(c, n); const r = compRounds(c).find(x => x.n === n);
   const info = `<p class="hint" style="margin-bottom:10px">Round ${n}${r ? ' · ' + esc(roundLabel(r)) : ''} · ${esc((FORMATS[rc.format] || FORMATS.stableford).name)} · ${rc.holes.length} holes · ${esc((TEES[rc.tee] || TEES.white).name)} tees</p><p class="hint" style="margin:-6px 0 10px">League points: ${pointsKeyText(c)}. Each golfer's best ${compBest(c)} rounds count; brackets show points that don't. Counts or dropped is for the month total.</p>`;
   const head = `<div class="lb-head"><span>Pos</span><span>Golfer</span><span>Score</span><span>League</span></div>`; const rp = roundPoints(c, n); const mp = monthPoints(c);
-  const rows = rb.ranked.map(sc => { const row = lb.all.find(r => r.gid === sc.gid); const counts = row && row.countedNs.has(n); const pp = rp[sc.gid] || 0; const lgIn = mp[sc.gid] && mp[sc.gid].counted.has(n); const ptxt = `${pp} pt${pp === 1 ? '' : 's'}`;
-    return `<li class="lb-row ${sc.pos === 1 ? 'first' : ''}"><span class="lb-pos">${sc.tied ? 'T' : ''}${sc.pos}</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>Marker ${esc(markerName(sc.card))}${cardStarted(sc.card) ? ' · started ' + esc(whenText(sc.card.startedAt)) : ''}${sc.onCb ? ' · on countback' : ''}${S.isAdmin && cardCheck(sc) ? ' · <span class="cardpts">⚠ check card</span>' : ''}</small></button><span class="lb-score">${esc(cardValueText(sc))}<small>${unitFor(rc.format)}</small></span><span class="lb-pts"><b>${lgIn ? ptxt : '(' + ptxt + ')'}</b>${counts ? 'counts' : 'dropped'}</span></li>`; }).join('');
+  const rows = rb.ranked.map((sc, i) => { const nx = rb.ranked[i + 1]; const cb = nx && !sc.tied && nx.pos !== sc.pos && nx.keys[0] === sc.keys[0] ? cbHtml(sc.golfer.name, nx.golfer.name, cbSteps(sc.keys, nx.keys, sc.rows.length, 'Whole card'), unitFor(rc.format)) : ''; const row = lb.all.find(r => r.gid === sc.gid); const counts = row && row.countedNs.has(n); const pp = rp[sc.gid] || 0; const lgIn = mp[sc.gid] && mp[sc.gid].counted.has(n); const ptxt = `${pp} pt${pp === 1 ? '' : 's'}`;
+    return `<li class="lb-row ${sc.pos === 1 ? 'first' : ''}"><span class="lb-pos">${sc.tied ? 'T' : ''}${sc.pos}</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>Marker ${esc(markerName(sc.card))}${cardStarted(sc.card) ? ' · started ' + esc(whenText(sc.card.startedAt)) : ''}${sc.onCb ? ' · on countback' : ''}${S.isAdmin && cardCheck(sc) ? ' · <span class="cardpts">⚠ check card</span>' : ''}</small></button><span class="lb-score">${esc(cardValueText(sc))}<small>${unitFor(rc.format)}</small></span><span class="lb-pts"><b>${lgIn ? ptxt : '(' + ptxt + ')'}</b>${counts ? 'counts' : 'dropped'}</span></li>${cb}`; }).join('');
   const rest = rb.rest.map(sc => `<li class="lb-row lb-rest"><span class="lb-pos">–</span><button class="lb-name" data-act="openCard" data-cid="${esc(c.id)}" data-round="${n}" data-gid="${esc(sc.gid)}">${esc(sc.golfer.name)}<small>${esc(cardStatus(sc))}${S.isAdmin && cardCheck(sc) ? ' · <span class="cardpts">⚠ check card</span>' : ''}</small></button><span class="lb-score"></span><span class="lb-pts"></span></li>`).join('');
   return `${info}<ul class="list">${head}${rows}${rest}</ul>${S.isAdmin && rb.ranked.length ? `<button class="btn block" style="margin-top:12px" data-act="shareRound" data-cid="${esc(c.id)}" data-round="${n}">${ICONS.share}Share round ${n} results</button>` : ''}`;
 }
@@ -1255,6 +1320,7 @@ function viewPlayer(){
   h += `<div class="phead"><span class="avatar">${esc(initials(p.name))}</span><div><h1>${esc(p.name)}</h1><p>Handicap ${fmtHi(curHcp(p.id))} · ${p.gender === 'L' ? "Ladies'" : "Men's"} card</p></div></div>`;
   const cc = currentComp(); if (cc && (S.isAdmin || p.id === S.myGid)) h += payWarnHtml(cc, p.id);
   h += hcpPanel(p.id);
+  if (S.isAdmin || p.id === S.myGid) h += myStatsHtml(p.id);
   return h + playerStatsHtml(p, S.isAdmin);
 }
 function playerStatsHtml(p, canEdit){
@@ -1277,11 +1343,81 @@ function playerStatsHtml(p, canEdit){
 }
 
 /* ----- Me: this month's cards and payment, handicap, stats, account ----- */
+/* ---------- Card statistics ----------
+   Every complete card (test months left out), worked in Stableford points per hole so 14- and 18-hole rounds mix. */
+function allCards(filter){
+  const out = []; Object.values(D.cards).forEach(k => { if (!k || !k.golferId || !D.golfers[k.golferId]) return; const c = D.comps[k.compId]; if (!c || c.test) return;
+    if (filter && !filter(k, c)) return; const sc = scoreCard(c, Number(k.round), k.golferId); if (sc.complete && !sc.twosOnly) out.push(sc); });
+  return out;
+}
+const per18 = sc => sc.rows.length ? sc.pts * 18 / sc.rows.length : 0;
+function myStats(gid){
+  const cards = allCards(k => k.golferId === gid); if (cards.length < 2) return null;
+  const rows = cards.flatMap(sc => sc.rows.filter(r => r.pts != null)); const holes = rows.length;
+  const byPar = {}; [3, 4, 5].forEach(p => { const rr = rows.filter(r => r.par === p); byPar[p] = rr.length ? rr.reduce((a, r) => a + r.pts, 0) / rr.length : null; });
+  const byHole = {}; rows.forEach(r => { const o = byHole[r.h] || (byHole[r.h] = {h:r.h, par:r.par, n:0, pts:0}); o.n++; o.pts += r.pts; });
+  const hs = Object.values(byHole).filter(o => o.n >= 2).map(o => Object.assign(o, {avg: o.pts / o.n})).sort((a, b) => b.avg - a.avg || a.h - b.h);
+  const half = f => { const rr = rows.filter(r => f(r.h)); return rr.length ? rr.reduce((a, r) => a + r.pts, 0) / rr.length * 9 : null; };
+  return {cards: cards.length, avg18: rows.reduce((a, r) => a + r.pts, 0) / holes * 18, blobs: rows.filter(r => r.pts === 0).length / holes * 18,
+    birdies: rows.filter(r => typeof r.g === 'number' && r.g < r.par).length, byPar, best: hs.slice(0, 3), worst: hs.slice(-3).reverse(), front: half(h => h <= 9), back: half(h => h > 9)};
+}
+function myStatsHtml(gid){
+  const st = myStats(gid); const mine = gid === S.myGid;
+  if (!st) return mine ? `<div class="sec-head"><h2>My game</h2></div><div class="panel"><p class="hint" style="margin:0">Your stats show here once you have 2 finished cards.</p></div>` : '';
+  const f1 = v => v === null ? '–' : (Math.round(v * 10) / 10).toFixed(1); const ord3 = n => ord(n);
+  const bar = (label, v) => `<div class="pbar"><span>${label}</span><span class="pbar-t"><span style="width:${v === null ? 0 : Math.min(100, v / 3 * 100)}%"></span></span><b>${f1(v)}</b></div>`;
+  const best = st.byPar[5] !== null && st.byPar[5] >= Math.max(st.byPar[3] || 0, st.byPar[4] || 0) ? 'Par 5s are your scoring holes.' : st.byPar[3] !== null && st.byPar[3] >= Math.max(st.byPar[4] || 0, st.byPar[5] || 0) ? 'Par 3s are your scoring holes.' : 'Par 4s are your scoring holes.';
+  const diff = st.front !== null && st.back !== null ? st.back - st.front : null;
+  return `<div class="sec-head"><h2>${mine ? 'My game' : 'Their game'}</h2><span class="hint" style="margin:0">From ${st.cards} cards</span></div><div class="panel stack mystats">
+    <div class="tiles3"><div><b>${f1(st.avg18)}</b><span>avg points per 18</span></div><div><b>${f1(st.blobs)}</b><span>blobs per 18 (0 pts)</span></div><div><b>${st.birdies}</b><span>birdies or better</span></div></div>
+    <div><span class="label">Points a hole, by par</span>${bar('Par 3s', st.byPar[3])}${bar('Par 4s', st.byPar[4])}${bar('Par 5s', st.byPar[5])}<p class="hint" style="margin:4px 0 0">${best}</p></div>
+    ${st.best.length >= 3 ? `<div class="grid2 holes2"><div><span class="label">Best holes</span>${st.best.map(o => `<p><span>${ord3(o.h)} · par ${o.par}</span><b>${f1(o.avg)}</b></p>`).join('')}</div><div><span class="label">Hardest for ${mine ? 'you' : 'them'}</span>${st.worst.map(o => `<p><span>${ord3(o.h)} · par ${o.par}</span><b>${f1(o.avg)}</b></p>`).join('')}</div></div>` : ''}
+    ${diff !== null ? `<p class="hint" style="margin:0">Front 9: <b>${f1(st.front)}</b> · Back 9: <b>${f1(st.back)}</b> points on average. ${Math.abs(diff) < 0.5 ? 'Steady all the way round.' : diff < 0 ? `${mine ? 'You drop' : 'They drop'} about ${f1(-diff)} coming home.` : `${mine ? 'You finish' : 'They finish'} stronger, about ${f1(diff)} better on the back.`}</p>` : ''}</div>`;
+}
+// How the holes really play: the field's average points on each hole against its stroke index (men's card).
+function holePlayHtml(){
+  const cards = allCards(k => (D.golfers[k.golferId] || {}).gender !== 'L');
+  let h = `<section><div class="sec-head"><h2>How the holes play</h2></div><div class="panel">`;
+  const by = {}; cards.forEach(sc => sc.rows.forEach(r => { if (r.pts == null) return; const o = by[r.h] || (by[r.h] = {h:r.h, par:r.par, si:r.si, n:0, pts:0}); o.n++; o.pts += r.pts; }));
+  const list = Object.values(by).filter(o => o.n >= 5);
+  if (cards.length < 10 || list.length < 9) return h + `<p class="hint" style="margin:0">Needs at least 10 finished men's cards (${cards.length} so far). Then this shows how the field actually scores on each hole next to the stroke index on the card.</p></div></section>`;
+  list.forEach(o => o.avg = o.pts / o.n); const hard = list.slice().sort((a, b) => a.avg - b.avg || a.si - b.si); hard.forEach((o, i) => o.rank = i + 1);
+  const siRank = list.slice().sort((a, b) => a.si - b.si); siRank.forEach((o, i) => o.siRank = i + 1);
+  const flagged = hard.filter(o => Math.abs(o.rank - o.siRank) >= 6);
+  h += `<p class="hint" style="margin-top:0">From ${cards.length} men's cards. Average Stableford points on each hole, hardest first, next to its stroke index. Holes playing 6 or more places away from their index are marked.</p>
+    <table class="holetab"><thead><tr><th>Hole</th><th>Par</th><th>Avg pts</th><th>Card SI</th><th>Plays</th></tr></thead><tbody>${hard.map(o => { const fl = Math.abs(o.rank - o.siRank) >= 6 ? (o.rank < o.siRank ? 'harder' : 'easier') : '';
+      return `<tr class="${fl}"><td>${ord(o.h)}</td><td>${o.par}</td><td>${(Math.round(o.avg * 10) / 10).toFixed(1)}</td><td>${o.si}</td><td>${ord(o.rank)}${fl ? ` · ${fl}` : ''}</td></tr>`; }).join('')}</tbody></table>`;
+  h += flagged.length ? `<p class="notebox" style="margin:10px 0 0">${flagged.length} hole${flagged.length === 1 ? ' plays' : 's play'} very differently from the card: ${flagged.map(o => `the ${ord(o.h)} (SI ${o.si}, plays ${ord(o.rank)})`).join(', ')}. Worth raising with the club. The app keeps using the official card.</p>` : `<p class="hint" style="margin:10px 0 0">Every hole plays close to its stroke index.</p>`;
+  return h + `</div></section>`;
+}
+// Handicap watch: golfers averaging 37+ points per 18 over their last 3 finished cards. Nothing changes unless the
+// organiser cuts them (golfers/{id}.hcpAdj) or taps Leave it (hidden until their next card).
+const WATCH_AT = 37;
+function watchList(){
+  const out = [];
+  Object.values(D.golfers).forEach(g => { const cards = allCards(k => k.golferId === g.id).filter(sc => sc.marked).sort((a, b) => String(a.comp.date || '').localeCompare(String(b.comp.date || '')) || a.round - b.round).slice(-3);
+    if (cards.length < 3) return; const v = cards.map(per18); const avg = v.reduce((a, x) => a + x, 0) / v.length; if (avg < WATCH_AT) return;
+    const key = cards.map(sc => sc.comp.id + ':' + sc.round).join('|'); if (g.watchOk === key) return;
+    out.push({g, avg, v, key, cards}); });
+  return out.sort((a, b) => b.avg - a.avg);
+}
+function watchHtml(){
+  const L = watchList(); const led = hcpLedger();
+  let h = `<section><div class="sec-head"><h2>Handicap watch</h2></div><div class="panel">`;
+  if (!L.length) return h + `<p class="hint" style="margin:0">Nobody to look at. This lists golfers averaging ${WATCH_AT} or more points per 18 holes over their last 3 cards.</p></div></section>`;
+  h += `<p class="hint" style="margin-top:0">Golfers averaging <b>${WATCH_AT} or more per 18</b> over their last 3 cards. Nothing changes unless you tap.</p>`;
+  L.forEach(w => { const l = led[w.g.id] || {}; const last = (l.events || []).slice(-1)[0];
+    h += `<div class="watch"><div class="watch-top"><span><b>${esc(w.g.name)}</b><small>Handicap ${fmtHi(curHcp(w.g.id))}${last ? ` · last change ${last.change > 0 ? '+' : ''}${last.change} (${esc(last.reason)})` : ''}</small></span><span class="watch-avg"><b>${(Math.round(w.avg * 10) / 10).toFixed(1)}</b><small>avg per 18</small></span></div>
+      <p class="hint" style="margin:4px 0 8px">Last 3 cards: ${w.v.map(x => (Math.round(x * 10) / 10).toFixed(1)).join(', ')} per 18</p>
+      <div class="watch-btns"><button class="btn small primary" data-act="watchCut" data-id="${esc(w.g.id)}" data-v="1">Cut 1.0</button><button class="btn small" data-act="watchCut" data-id="${esc(w.g.id)}" data-v="0.5">Cut 0.5</button><button class="btn small" data-act="watchOk" data-id="${esc(w.g.id)}" data-key="${esc(w.key)}">Leave it</button></div></div>`; });
+  return h + `</div></section>`;
+}
 function viewMe(){
   const p = D.golfers[S.myGid]; if (!p) return viewHome();
   let h = `<div class="phead"><span class="avatar">${esc(initials(p.name))}</span><div><h1>${esc(p.name)}</h1><p>Handicap ${fmtHi(curHcp(p.id))} · ${p.gender === 'L' ? "Ladies'" : "Men's"} card</p></div></div>`;
   const c = currentComp(); if (c) h += payWarnHtml(c, p.id) + meMonthHtml(c);
   h += hcpPanel(p.id);
+  h += myStatsHtml(p.id);
   h += playerStatsHtml(p, S.isAdmin);
   const iosTip = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.matchMedia('(display-mode: standalone)').matches;
   h += `<div class="sec-head"><h2>Account</h2></div><div class="panel stack"><p class="hint" style="margin:0">Signed in as <b>${esc(S.user.email)}</b></p>
@@ -1382,7 +1518,8 @@ function viewAdmin(){
   <div class="seg admintabs" role="tablist">${[["cards","Cards"],["money","Money"],["rules","Rules"],["setup","Setup"]].map(([k2, l]) => `<button data-act="adminTab" data-v="${k2}" aria-pressed="${(S.adminTab || "cards") === k2}">${l}</button>`).join("")}</div>
   <div class="admin-tabs" data-show="${S.adminTab || 'cards'}">
   <div data-tab="cards">${chaseHtml()}${checkCardsHtml()}${startForHtml()}</div>
-  <div data-tab="setup">${testCompHtml()}</div>
+  <div data-tab="setup">${testCompHtml()}${holePlayHtml()}</div>
+  <div data-tab="rules">${watchHtml()}</div>
   <div data-tab="money">${moneyShortcutsHtml()}${prizesHtml()}</div>
   <p class="hint" data-tab="money rules" style="margin:14px 0 14px">Settings: changes save as you go, and you'll see "Settings saved" each time. The button at the bottom saves everything again if you want to be sure.</p>
   <form id="setupForm" class="setup" onsubmit="return false">
@@ -1437,6 +1574,7 @@ function renderSheet(){
     case 'comp': h = sheetComp(); break;
     case 'addEntry': h = sheetAddEntry(); break;
     case 'pay': h = sheetPay(); break;
+    case 'resultsPic': h = sheetResultsPic(); break;
     case 'twosPay': h = sheetTwosPay(); break;
     case 'credit': h = sheetCredit(); break;
     case 'pickSrc': h = sheetPickSrc(); break;
@@ -1538,7 +1676,24 @@ function sheetComp(){
       <div class="holepick" id="holepick" ${preset === 'custom' ? '' : 'hidden'}>${range(1,18).map(h => `<label class="hp"><input type="checkbox" id="f-h-${h}" name="h" value="${h}" ${holes.includes(h) ? 'checked' : ''}><span>${h}</span></label>`).join('')}</div></div>
     <div class="grid2"><label class="field"><span>Men's tees</span><select id="f-tee" name="tee">${Object.entries(TEES).map(([key,t]) => `<option value="${key}" ${((c && c.tee) || k.tee) === key ? 'selected' : ''}>${t.name}</option>`).join('')}</select></label>
     <label class="field"><span>Allowance %</span><input type="number" id="f-allow" name="allowance" min="0" max="100" value="${esc(c && c.allowance != null ? c.allowance : k.allowance)}"></label></div>
+    <div class="field allowpick"><span>Handicap allowance</span><div class="seg3" role="group" aria-label="Allowance">${[85, 90, 95].map(v => `<button type="button" data-act="allowSet" data-v="${v}" aria-pressed="${Number(c && c.allowance != null ? c.allowance : k.allowance) === v}">${v}%${v === 95 ? '<small>Recommended</small>' : ''}</button>`).join('')}</div>
+      <p class="hint">World Handicap System guidance for individual Stableford is 95%. A lower allowance takes more shots off the higher handicaps.</p>
+      <div id="f-shots">${allowTableHtml(c && c.allowance != null ? c.allowance : k.allowance, (c && c.tee) || k.tee, holes.length)}</div></div>
     <button class="btn primary block" type="submit">${c ? 'Save changes' : 'Create month'}</button></form>`;
+}
+// What a month's allowance means in shots, for a few handicaps, so the organiser sees who it affects before saving.
+function allowTableHtml(allow, tee, nholes){
+  const a = Number(allow); if (!isFinite(a) || !nholes) return ''; const t = TEES[tee] || TEES.white;
+  const shots = (hi, pct) => Math.round((hi * t.slope / 113 + (t.cr - t.par)) * pct / 100 * nholes / 18);
+  const cmp = a !== 95;
+  return `<table class="allowtab"><caption>Shots on ${nholes} holes, ${esc(t.name)} tees (${t.cr.toFixed(1)} / ${t.slope})</caption><thead><tr><th>Index</th><th>At ${a}%</th>${cmp ? '<th>At 95%</th>' : ''}</tr></thead><tbody>${[4.4, 12, 18, 24].map(hi => `<tr><td>${fmtHi(hi)}</td><td>${shots(hi, a)}</td>${cmp ? `<td>${shots(hi, 95)}</td>` : ''}</tr>`).join('')}</tbody></table>`;
+}
+function refreshAllowTable(){
+  const box = $('#f-shots'); const f = box && box.closest('form'); if (!box || !f) return;
+  const pick = f.querySelector('input[name=holes]:checked'); const v = pick ? pick.value : '18';
+  const n = v === '18' ? 18 : v === '14' ? 14 : f.querySelectorAll('input[name=h]:checked').length;
+  const a = Number(($('#f-allow') || {}).value); box.innerHTML = allowTableHtml(a, ($('#f-tee') || {}).value, n);
+  f.querySelectorAll('[data-act=allowSet]').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.v) === a)));
 }
 // Rounds of the month being edited that have already started: their date and settings can't change,
 // so scores already in are never re-scored by an edit.
@@ -2248,6 +2403,73 @@ async function markPaid(cid, gid, m){
 // The app's own address, for messages shared to WhatsApp.
 function appUrl(){ return location.origin + location.pathname.replace(/index\.html$/, ''); }
 // Opens the phone's share menu (WhatsApp, Messages...). Computers without one go straight to WhatsApp.
+/* ---------- Results picture (for WhatsApp) ----------
+   A 1080×1350 picture of a round's results: winner, top 5, the 2's, and a QR code to join. Built on a canvas when the
+   organiser opens Share round results, so the Share button can hand it to the phone straight away. */
+const QR_PATH = 'M4 4h7v1h-7zM13 4h1v1h-1zM15 4h2v1h-2zM19 4h1v1h-1zM21 4h1v1h-1zM25 4h1v1h-1zM28 4h1v1h-1zM30 4h7v1h-7zM4 5h1v1h-1zM10 5h1v1h-1zM12 5h1v1h-1zM16 5h1v1h-1zM19 5h2v1h-2zM22 5h2v1h-2zM25 5h2v1h-2zM30 5h1v1h-1zM36 5h1v1h-1zM4 6h1v1h-1zM6 6h3v1h-3zM10 6h1v1h-1zM13 6h4v1h-4zM19 6h2v1h-2zM23 6h1v1h-1zM25 6h1v1h-1zM27 6h2v1h-2zM30 6h1v1h-1zM32 6h3v1h-3zM36 6h1v1h-1zM4 7h1v1h-1zM6 7h3v1h-3zM10 7h1v1h-1zM12 7h1v1h-1zM14 7h2v1h-2zM18 7h3v1h-3zM22 7h4v1h-4zM27 7h2v1h-2zM30 7h1v1h-1zM32 7h3v1h-3zM36 7h1v1h-1zM4 8h1v1h-1zM6 8h3v1h-3zM10 8h1v1h-1zM12 8h1v1h-1zM16 8h1v1h-1zM18 8h2v1h-2zM21 8h1v1h-1zM27 8h1v1h-1zM30 8h1v1h-1zM32 8h3v1h-3zM36 8h1v1h-1zM4 9h1v1h-1zM10 9h1v1h-1zM14 9h2v1h-2zM17 9h1v1h-1zM20 9h2v1h-2zM23 9h1v1h-1zM26 9h2v1h-2zM30 9h1v1h-1zM36 9h1v1h-1zM4 10h7v1h-7zM12 10h1v1h-1zM14 10h1v1h-1zM16 10h1v1h-1zM18 10h1v1h-1zM20 10h1v1h-1zM22 10h1v1h-1zM24 10h1v1h-1zM26 10h1v1h-1zM28 10h1v1h-1zM30 10h7v1h-7zM12 11h2v1h-2zM15 11h2v1h-2zM22 11h1v1h-1zM5 12h1v1h-1zM7 12h4v1h-4zM12 12h4v1h-4zM20 12h2v1h-2zM26 12h5v1h-5zM32 12h2v1h-2zM35 12h1v1h-1zM5 13h1v1h-1zM7 13h1v1h-1zM9 13h1v1h-1zM12 13h1v1h-1zM15 13h1v1h-1zM18 13h1v1h-1zM21 13h3v1h-3zM25 13h1v1h-1zM27 13h1v1h-1zM32 13h3v1h-3zM6 14h2v1h-2zM10 14h1v1h-1zM13 14h3v1h-3zM19 14h2v1h-2zM26 14h4v1h-4zM32 14h3v1h-3zM36 14h1v1h-1zM6 15h3v1h-3zM12 15h2v1h-2zM15 15h1v1h-1zM17 15h1v1h-1zM22 15h3v1h-3zM27 15h1v1h-1zM29 15h3v1h-3zM34 15h1v1h-1zM36 15h1v1h-1zM8 16h1v1h-1zM10 16h1v1h-1zM12 16h2v1h-2zM15 16h4v1h-4zM21 16h1v1h-1zM23 16h1v1h-1zM28 16h1v1h-1zM30 16h2v1h-2zM35 16h2v1h-2zM4 17h2v1h-2zM7 17h1v1h-1zM9 17h1v1h-1zM12 17h3v1h-3zM16 17h4v1h-4zM21 17h4v1h-4zM27 17h2v1h-2zM31 17h1v1h-1zM33 17h1v1h-1zM4 18h1v1h-1zM7 18h1v1h-1zM9 18h3v1h-3zM14 18h1v1h-1zM16 18h1v1h-1zM18 18h2v1h-2zM23 18h2v1h-2zM26 18h1v1h-1zM28 18h1v1h-1zM30 18h3v1h-3zM5 19h3v1h-3zM12 19h1v1h-1zM14 19h1v1h-1zM17 19h1v1h-1zM21 19h2v1h-2zM24 19h1v1h-1zM26 19h2v1h-2zM29 19h1v1h-1zM32 19h3v1h-3zM36 19h1v1h-1zM4 20h1v1h-1zM6 20h2v1h-2zM10 20h2v1h-2zM16 20h1v1h-1zM18 20h4v1h-4zM24 20h1v1h-1zM27 20h7v1h-7zM4 21h1v1h-1zM7 21h1v1h-1zM11 21h1v1h-1zM13 21h1v1h-1zM19 21h1v1h-1zM21 21h6v1h-6zM29 21h2v1h-2zM32 21h1v1h-1zM34 21h1v1h-1zM36 21h1v1h-1zM4 22h1v1h-1zM6 22h1v1h-1zM8 22h1v1h-1zM10 22h1v1h-1zM13 22h2v1h-2zM21 22h5v1h-5zM27 22h1v1h-1zM30 22h2v1h-2zM33 22h2v1h-2zM36 22h1v1h-1zM4 23h1v1h-1zM6 23h2v1h-2zM12 23h1v1h-1zM14 23h2v1h-2zM17 23h2v1h-2zM22 23h1v1h-1zM29 23h2v1h-2zM32 23h3v1h-3zM36 23h1v1h-1zM5 24h1v1h-1zM7 24h1v1h-1zM10 24h2v1h-2zM13 24h1v1h-1zM15 24h3v1h-3zM19 24h2v1h-2zM22 24h1v1h-1zM28 24h2v1h-2zM32 24h2v1h-2zM4 25h2v1h-2zM8 25h1v1h-1zM11 25h2v1h-2zM15 25h1v1h-1zM17 25h3v1h-3zM21 25h1v1h-1zM25 25h3v1h-3zM31 25h2v1h-2zM4 26h1v1h-1zM6 26h2v1h-2zM10 26h1v1h-1zM16 26h2v1h-2zM19 26h3v1h-3zM23 26h5v1h-5zM30 26h1v1h-1zM32 26h1v1h-1zM34 26h3v1h-3zM4 27h1v1h-1zM7 27h2v1h-2zM12 27h1v1h-1zM14 27h4v1h-4zM20 27h1v1h-1zM23 27h2v1h-2zM31 27h1v1h-1zM34 27h2v1h-2zM4 28h3v1h-3zM8 28h1v1h-1zM10 28h3v1h-3zM14 28h1v1h-1zM16 28h2v1h-2zM20 28h1v1h-1zM24 28h1v1h-1zM28 28h6v1h-6zM35 28h1v1h-1zM12 29h1v1h-1zM17 29h6v1h-6zM24 29h1v1h-1zM27 29h2v1h-2zM32 29h1v1h-1zM34 29h1v1h-1zM4 30h7v1h-7zM13 30h6v1h-6zM22 30h4v1h-4zM27 30h2v1h-2zM30 30h1v1h-1zM32 30h1v1h-1zM34 30h1v1h-1zM4 31h1v1h-1zM10 31h1v1h-1zM12 31h1v1h-1zM15 31h1v1h-1zM20 31h1v1h-1zM22 31h1v1h-1zM24 31h1v1h-1zM26 31h3v1h-3zM32 31h3v1h-3zM36 31h1v1h-1zM4 32h1v1h-1zM6 32h3v1h-3zM10 32h1v1h-1zM12 32h3v1h-3zM16 32h1v1h-1zM18 32h2v1h-2zM22 32h3v1h-3zM27 32h6v1h-6zM4 33h1v1h-1zM6 33h3v1h-3zM10 33h1v1h-1zM12 33h1v1h-1zM15 33h1v1h-1zM18 33h1v1h-1zM21 33h1v1h-1zM26 33h1v1h-1zM28 33h2v1h-2zM31 33h1v1h-1zM36 33h1v1h-1zM4 34h1v1h-1zM6 34h3v1h-3zM10 34h1v1h-1zM13 34h3v1h-3zM17 34h4v1h-4zM23 34h1v1h-1zM25 34h5v1h-5zM31 34h2v1h-2zM35 34h2v1h-2zM4 35h1v1h-1zM10 35h1v1h-1zM12 35h4v1h-4zM17 35h1v1h-1zM21 35h2v1h-2zM26 35h1v1h-1zM31 35h2v1h-2zM34 35h3v1h-3zM4 36h7v1h-7zM13 36h1v1h-1zM17 36h1v1h-1zM20 36h1v1h-1zM27 36h2v1h-2zM31 36h2v1h-2z'; // 41×41 grid, opens https://paulk82-ai.github.io/Pot-of-Gold/
+async function resultsPic(c, n){
+  try { await Promise.all(['800 60px Archivo', '600 30px Archivo', '400 30px Archivo'].map(f => document.fonts.load(f))); } catch (_) {}
+  const W = 1080, H = 1350; const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const x = cv.getContext('2d');
+  const C = {band:'#123A25', deep:'#09220F', ink:'#12231A', paper:'#F1F5F0', gold:'#E8B84A', goldDark:'#8A6206', mute:'#A3BFAD', line:'#2A5340', soft:'#E3ECE4'};
+  const font = (w, size, cond) => { x.font = `${w} ${size}px Archivo, "Arial Narrow", Arial, sans-serif`; try { x.fontStretch = cond ? 'condensed' : 'normal'; } catch (_) {} };
+  const fit = (t, w, size, max, cond) => { let s2 = size; font(w, s2, cond); while (x.measureText(t).width > max && s2 > 18) { s2 -= 2; font(w, s2, cond); } return s2; };
+  const rr = (X, Y, w, h, r, fill) => { x.beginPath(); x.moveTo(X + r, Y); x.arcTo(X + w, Y, X + w, Y + h, r); x.arcTo(X + w, Y + h, X, Y + h, r); x.arcTo(X, Y + h, X, Y, r); x.arcTo(X, Y, X + w, Y, r); x.closePath(); x.fillStyle = fill; x.fill(); };
+  const wrap = (t, X, Y, max, lh) => { const words = t.split(' '); let line = ''; let y = Y; words.forEach(w => { const test = line ? line + ' ' + w : w; if (x.measureText(test).width > max && line) { x.fillText(line, X, y); line = w; y += lh; } else line = test; }); if (line) x.fillText(line, X, y); return y; };
+  const rb = roundBoard(c, n); const rc = rcfg(c, n); const u = unitFor(rc.format) || ''; const L = 68;
+  x.fillStyle = C.band; x.fillRect(0, 0, W, H); x.textBaseline = 'alphabetic';
+  font(700, 26); x.fillStyle = C.gold; x.fillText('POT OF GOLD · RATHSALLAGH', L, 96);
+  fit(`ROUND ${n} RESULTS`, 800, 124, W - 2 * L, true); x.fillStyle = '#FFFFFF'; x.fillText(`ROUND ${n} RESULTS`, L, 214);
+  font(400, 30); x.fillStyle = C.mute; x.fillText(`${c.name} · ${rc.holes.length} holes · ${rb.ranked.length} card${rb.ranked.length === 1 ? '' : 's'} in`, L, 266);
+  const top = rb.ranked[0]; let y = 310;
+  if (top) {
+    rr(L, y, W - 2 * L, 180, 24, C.paper);
+    font(700, 24); x.fillStyle = C.goldDark; x.fillText(top.tied ? 'JOINT WINNERS' : 'WINNER', L + 36, y + 56);
+    const names = rb.ranked.filter(r => r.pos === 1).map(r => r.golfer.name.toUpperCase()).join(' & ');
+    fit(names, 800, 76, W - 2 * L - 300, true); x.fillStyle = C.ink; x.fillText(names, L + 36, y + 138);
+    font(800, 120, true); x.textAlign = 'right'; x.fillText(cardValueText(top), W - L - 36, y + 130);
+    font(400, 26); x.fillStyle = '#45574B'; x.fillText(u || 'score', W - L - 36, y + 164); x.textAlign = 'left';
+    y += 220;
+  }
+  const rest = rb.ranked.filter(r => r.pos > 1).slice(0, 4); const colW = (W - 2 * L - 48) / 2;
+  rest.forEach((r, i) => { const col = i < 2 ? 0 : 1; const row = i % 2; const X = L + col * (colW + 48); const Y = y + row * 76;
+    font(800, 48, true); x.fillStyle = C.gold; x.fillText(`${r.tied ? 'T' : ''}${r.pos}`, X, Y + 50);
+    const nm = r.golfer.name; fit(nm, 600, 32, colW - 150); x.fillStyle = '#FFFFFF'; x.fillText(nm, X + 70, Y + 46);
+    font(700, 32); x.textAlign = 'right'; x.fillText(cardValueText(r), X + colW, Y + 46); x.textAlign = 'left';
+    if (row === 0 && rest.length > (col === 0 ? 1 : 3)) { x.fillStyle = C.line; x.fillRect(X, Y + 72, colW, 2); } });
+  if (rest.length) y += (rest.length > 1 ? 2 : 1) * 76 + 24;
+  const tw = twosOn() ? twosItem(c.id, n) : null;
+  if (tw && (tw.entrants.length || tw.carryIn > 0.004)) {
+    const t = tw.winners.length ? `2's Club: ${euro(tw.winners[0].won)} each to ${tw.winners.map(w => gName(w.gid)).join(', ').replace(/, ([^,]*)$/, ' and $1')}` : `2's Club: no 2s, so ${euro(tw.pot)} rolls on to the next round`;
+    x.strokeStyle = C.line; x.lineWidth = 2; x.beginPath(); x.roundRect ? x.roundRect(L, y, W - 2 * L, 120, 20) : x.rect(L, y, W - 2 * L, 120); x.stroke();
+    x.fillStyle = C.gold; x.beginPath(); x.arc(L + 66, y + 60, 36, 0, Math.PI * 2); x.fill();
+    font(800, 52, true); x.fillStyle = C.ink; x.textAlign = 'center'; x.fillText('2', L + 66, y + 78); x.textAlign = 'left';
+    font(600, 30); x.fillStyle = C.soft; const end = wrap(t, L + 124, y + 52, W - 2 * L - 160, 40); if (end > y + 100) {}
+    y += 150;
+  }
+  const lbm = leaderboard(c); const lead = lbm.ranked[0]; const nx = compRounds(c).find(r => r.n > n);
+  if (lead && compRounds(c).length > 1) {
+    const yy = Math.max(y + 20, H - 330); x.fillStyle = C.line; x.fillRect(L, yy - 52, W - 2 * L, 2);
+    font(700, 24); x.fillStyle = C.mute; x.fillText('THE MONTH SO FAR', L, yy);
+    const leaders = lbm.ranked.filter(r => r.pos === 1).map(r => r.golfer.name).join(' & ');
+    font(600, 34); x.fillStyle = '#FFFFFF'; wrap(`${leaders} lead${lbm.ranked.filter(r => r.pos === 1).length > 1 ? '' : 's'} on ${monthText(lead, c)}${monthUnit(c) ? ' ' + monthUnit(c) : ''}${nx ? ` · round ${nx.n} is next` : ''}`, L, yy + 48, W - 2 * L, 42);
+  }
+  x.fillStyle = C.deep; x.fillRect(0, H - 220, W, 220);
+  rr(L, H - 190, 160, 160, 14, '#FFFFFF'); x.save(); x.translate(L + 4, H - 186); x.scale(152 / 41, 152 / 41); x.fillStyle = C.ink; x.fill(new Path2D(QR_PATH)); x.restore();
+  fit('NOT IN YET? SCAN TO JOIN', 800, 60, W - L - 270, true); x.fillStyle = C.gold; x.fillText('NOT IN YET? SCAN TO JOIN', L + 196, H - 120);
+  font(400, 28); x.fillStyle = C.soft; x.fillText(`${euro(compFee(c))} a month · best ${compBest(c)} of ${compRounds(c).length} rounds count`, L + 196, H - 70);
+  const blob = await new Promise(res => cv.toBlob(res, 'image/png'));
+  return new File([blob], `pot-of-gold-round-${n}-results.png`, {type:'image/png'});
+}
+function sheetResultsPic(){
+  const sh = S.sheet; const c = D.comps[sh.cid]; if (!c) return null;
+  let h = `<h3>Share round ${sh.round} results</h3><p class="sub">${esc(c.name)} · a picture for the WhatsApp group, with a QR code to join</p>`;
+  if (!sh.url) return h + `<p class="hint">Making the picture…</p>`;
+  h += `<img class="respic" src="${esc(sh.url)}" alt="Round ${sh.round} results picture">`;
+  h += `<button class="btn primary block big" data-act="sharePic">${ICONS.share}Share the picture</button>`;
+  h += `<a class="btn block" style="margin-top:8px" href="${esc(sh.url)}" download="${esc(sh.file.name)}">Save the picture</a>`;
+  h += `<button class="textbtn" style="margin-top:10px" data-act="shareRoundText" data-cid="${esc(sh.cid)}" data-round="${sh.round}">Share as text instead</button>`;
+  return h;
+}
 function shareText(text){
   if (navigator.share) { navigator.share({text}).catch(() => {}); return; }
   window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank', 'noopener');
@@ -2337,7 +2559,13 @@ const ACT = {
       const ops = [].concat(entriesFor(t.id).map(e => ({path: `comps/${t.id}/entries/${e.golferId}`, del: true})), cards.map(x => ({path: `comps/${t.id}/cards/${x.id}`, del: true})), cards.map(x => ({path: `comps/${t.id}/photos/${x.id}`, del: true})), [{path: `comps/${t.id}`, del: true}]);
       for (let i = 0; i < ops.length; i += 400) { if (!(await batch(ops.slice(i, i + 400)))) return; }
       S.testFocus = false; try { sessionStorage.removeItem('rgc-test-focus'); } catch (_) {} if (S.compId === t.id) S.compId = null; MEMO = {}; render(); toast('Test competition deleted'); }, true); },
-  shareRound(el){ const c = D.comps[el.dataset.cid]; if (c) shareText(roundResultsText(c, Number(el.dataset.round))); },
+  shareRound(el){ const c = D.comps[el.dataset.cid]; if (!c) return; const n = Number(el.dataset.round); openSheet({type:'resultsPic', cid:c.id, round:n});
+    resultsPic(c, n).then(file => { if (!S.sheet || S.sheet.type !== 'resultsPic') return; S.sheet.file = file; S.sheet.url = URL.createObjectURL(file); renderSheet(); }).catch(e => { console.warn(e); closeSheetQuiet(); shareText(roundResultsText(c, n)); }); },
+  shareRoundText(el){ const c = D.comps[el.dataset.cid]; if (!c) return; if (S.sheet) closeSheetQuiet(); shareText(roundResultsText(c, Number(el.dataset.round))); },
+  async sharePic(){ const sh = S.sheet; if (!sh || !sh.file) return; const c = D.comps[sh.cid];
+    const d = {files:[sh.file], text:`Pot of Gold round ${sh.round} results · ${appUrl()}`};
+    if (navigator.share && (!navigator.canShare || navigator.canShare({files:[sh.file]}))) { try { await navigator.share(d); } catch (_) {} return; }
+    const a = document.createElement('a'); a.href = sh.url; a.download = sh.file.name; document.body.appendChild(a); a.click(); a.remove(); toast('Picture saved. Send it in WhatsApp from your photos.'); },
   shareSeason(){ shareText(seasonText(S.season)); },
   async prizePaid(el){ const c = D.comps[el.dataset.cid]; if (!c || !S.isAdmin) return; const k2 = el.dataset.k; const m = Object.assign({}, c.prizesPaid || {});
     if (m[k2]) delete m[k2]; else m[k2] = Date.now(); const data = Object.assign({}, c, {prizesPaid: m}); delete data.id;
@@ -2441,6 +2669,13 @@ const ACT = {
   async selfEnter(el){ const c = D.comps[(el && el.dataset.cid) || S.compId]; if (!c) return; const path = `comps/${c.id}/entries/${S.myGid}`; const data = {compId:c.id, golferId:S.myGid, paid:false, method:null, paidAt:null, createdAt:Date.now()};
     if (await put(path, data)) { localSet(path, data); openSheet({type:'pay', id:c.id + '/' + S.myGid}); render(); toast("You're entered. Now pay your entry."); sendNotify(`${gName(S.myGid)} entered`, `${c.name} · not paid yet`, 'ticket'); } },
   pay(el){ openSheet({type:'pay', id:el.dataset.id}); },
+  watchCut(el){ const g = D.golfers[el.dataset.id]; const v = Number(el.dataset.v); if (!g || !S.isAdmin || !(v > 0)) return;
+    askConfirm(`Cut ${firstName(g.name)} by ${v.toFixed(1)}?`, `${g.name} goes from ${fmtHi(curHcp(g.id))} to ${fmtHi(r1(curHcp(g.id) - v))}. It shows on their handicap history as "Organiser review", dated today.`, `Cut ${v.toFixed(1)}`, async () => {
+      const data = Object.assign({}, g, {hcpAdj: (Array.isArray(g.hcpAdj) ? g.hcpAdj : []).concat({at: todayIso(), change: -v, note: `Organiser review: cut ${v.toFixed(1)}`, by: S.user.uid}), watchOk: (watchList().find(w => w.g.id === g.id) || {}).key || null}); delete data.id;
+      if (await put(`golfers/${g.id}`, data)) { localSet(`golfers/${g.id}`, data); await syncHandicaps(); render(); toast(`${firstName(g.name)} is now ${fmtHi(curHcp(g.id))}.`); } }); },
+  async watchOk(el){ const g = D.golfers[el.dataset.id]; if (!g || !S.isAdmin) return; const data = Object.assign({}, g, {watchOk: el.dataset.key}); delete data.id;
+    if (await put(`golfers/${g.id}`, data)) { localSet(`golfers/${g.id}`, data); render(); toast(`${firstName(g.name)} left as they are. They'll show again if their next cards are as good.`); } },
+  allowSet(el){ const i = $('#f-allow'); if (i) { i.value = el.dataset.v; refreshAllowTable(); } },
   async letPlay(el){ if (!S.isAdmin) return; const id = el.dataset.id; const n = String(Number(el.dataset.round)); const e = D.entries[id]; if (!e) return;
     const lp = Object.assign({}, e.letPlay || {}); if (lp[n]) delete lp[n]; else lp[n] = true;
     const data = Object.assign({}, e, {letPlay: lp}); delete data.id; const path = `comps/${e.compId}/entries/${e.golferId}`;
@@ -2934,7 +3169,8 @@ document.addEventListener('change', ev => {
     // Typing the name then tapping the tick: wait a moment before redrawing so the tap isn't lost.
     localSet(path, data); notifyIfDone(cid, round, gid, before); if (t.id === 'signedChk') render(); else setTimeout(render, 350); put(path, data).then(ok => ok && t.id === 'signedChk' && toast(signed ? (markedOK(data) && scoreCard(D.comps[cid], round, gid).complete ? 'Signed. Your card counts now.' : 'Ticked as signed.') : 'Unticked. The card won\'t count until it\'s ticked as signed.')); return; }
   if (t.closest('#setupForm')) { saveSettings(); return; }
-  if (t.name === 'holes' && t.closest('form[data-form=comp]')) { $('#holepick').hidden = t.value !== 'custom'; return; }
+  if (t.name === 'holes' && t.closest('form[data-form=comp]')) { $('#holepick').hidden = t.value !== 'custom'; refreshAllowTable(); return; }
+  if (['f-allow', 'f-tee'].includes(t.id) || (t.name === 'h' && t.closest('form[data-form=comp]'))) refreshAllowTable();
   if (t.id === 'f-rcount') { const n = Number(t.value); const box = $('#f-rounds'); const show = !!($('#f-perround') || {}).checked;
     const have = [...box.querySelectorAll('.rrow')].map((row, i) => { const v = id => (document.getElementById(id + (i + 1)) || {}).value || ''; const hv = v('f-rh-'); return {from:v('f-r-'), to:v('f-re-'), format:v('f-rf-') || null, tee:v('f-rt-') || null, holes: hv === '18' ? range(1,18) : hv === '14' ? range(1,14) : null}; });
     const first = (have[0] && have[0].from) || defaultFirstFri();
@@ -2952,7 +3188,7 @@ document.addEventListener('change', ev => {
     if (n === 1) [...document.querySelectorAll('#f-rounds input[id^="f-r-"]')].forEach(inp => { const i = Number(inp.id.slice(4)); if (i <= 1 || inp.readOnly) return; inp.value = addDays(t.value, 7*(i-1)); const e = $('#f-re-' + i); if (e) e.value = addDays(inp.value, Number(inp.dataset.len || 0)); });
     return; }
 });
-document.addEventListener('input', ev => { const m = /^sv-(\d+)-\d+$/.exec(ev.target.id || ''); if (m) refreshScanCheck(Number(m[1])); });
+document.addEventListener('input', ev => { const m = /^sv-(\d+)-\d+$/.exec(ev.target.id || ''); if (m) refreshScanCheck(Number(m[1])); if (ev.target.id === 'f-allow') refreshAllowTable(); });
 document.addEventListener('toggle', ev => { if (ev.target.id === 'courseDetails') S.courseOpen = ev.target.open; }, true);
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && S.sheet) closeSheet(); });
 document.addEventListener('focusout', () => { if (deferred) { deferred = false; setTimeout(render, 350); } });
@@ -2970,5 +3206,5 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 setInterval(() => { if (document.visibilityState === 'visible') checkVersion(); }, 30 * 60e3);
 checkVersion();
 const hv = (location.hash || '').slice(1); if (['home','table','me','comps','golfers','admin'].includes(hv)) S.view = hv; else if (hv === 'league') S.view = 'table';
-window.__rgc = {S, D, hcpLedger, hcpRules, scoreCard, leaderboard, roundBoard, roundPoints, league, allocShots, checkVersion, twosLedger, cardCounts};
+window.__rgc = {S, D, watchList, myStats, curHcp, hcpLedger, hcpRules, scoreCard, leaderboard, roundBoard, roundPoints, league, allocShots, checkVersion, twosLedger, cardCounts};
 boot();
