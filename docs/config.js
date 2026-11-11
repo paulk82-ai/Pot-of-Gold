@@ -13,5 +13,7 @@ window.RGC_CONFIG = {
   // App Check site key (reCAPTCHA Enterprise). Needed for card scanning with Gemini.
   recaptchaEnterpriseSiteKey: "6LfRXgMuAAAAABEfqGNLN-Le2u-KgrTx0vCoTn-j",
   // The Gemini model that reads scorecard photos.
-  geminiModel: "gemini-3.8-flash"
+  geminiModel: "gemini-3.8-flash",
+  // Web push key for golfers' phone reminders (Project settings > Cloud Messaging > Web Push certificates). Not secret.
+  vapidKey: "BJOwG7XVdmtwJY9jszqhv3Jvwgo3h103F5KMRyLJGe1wLEaFn_yAuBR7btSYNMBuSGSIe8-sg0Mz3zRL-sDTYoI"
 };
