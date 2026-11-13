@@ -1728,7 +1728,10 @@ function refreshAllowTable(){
 }
 // Rounds of the month being edited that have already started: their date and settings can't change,
 // so scores already in are never re-scored by an edit.
-function startedRounds(c){ return c ? compRounds(c).filter(r => roundState(r) !== 'upcoming').map(r => r.n) : []; }
+// Rounds whose days can't be changed any more: finished ones, and open ones where someone has already started a card.
+// An open round nobody has started can still be moved (say it opened on the Friday but should start Saturday).
+function startedRounds(c){ return c ? compRounds(c).filter(r => { const st = roundState(r); if (st === 'upcoming') return false; if (st !== 'open') return true;
+  return Object.values(D.cards).some(k => k && k.compId === c.id && Number(k.round) === r.n && (cardStarted(k) || (k.scores && Object.keys(k.scores).length))); }).map(r => r.n) : []; }
 function roundRow(n, r, show){
   const ec = S.sheet && S.sheet.type === 'comp' && S.sheet.id ? D.comps[S.sheet.id] : null;
   const locked = startedRounds(ec).includes(n);
