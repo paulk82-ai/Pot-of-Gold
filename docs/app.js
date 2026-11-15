@@ -2057,6 +2057,15 @@ async function compressImage(file, maxSide, maxChars){
     return out;
   } finally { URL.revokeObjectURL(url); }
 }
+// A photo picked from the gallery can stop being readable a few minutes later on Android (the phone only lends it
+// to the app for a while), so the app keeps its own copy as soon as it's picked: a JPEG up to 2000px, in memory.
+// If that fails the original is used as before.
+async function memPhoto(file){
+  if (!file || file._mem) return file;
+  try { const ph = await compressImage(file, 2000, 3000000); const bin = atob(ph.img.split(',')[1]); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    const f = new File([u8], (String(file.name || 'card').replace(/\.[^.]+$/, '') || 'card') + '.jpg', {type: 'image/jpeg', lastModified: Date.now()}); f._mem = true; return f; }
+  catch (e) { console.warn('Keeping the original photo', e); return file; }
+}
 async function saveCardPhoto(cid, round, gid, file, quiet){
   const lim = SAMPLE ? [800, 160000] : [1400, 700000]; let ph;
   try { ph = await compressImage(file, lim[0], lim[1]); } catch (e) { toast("Couldn't read that photo. Try taking it again."); return false; }
@@ -2183,6 +2192,7 @@ async function runBulk(){
   const sh = S.sheet; if (!sh || !sh.bulk) return; const B = sh.bulk; const c = D.comps[sh.ctx.cid]; if (!c) { closeSheet(); return; }
   const ctl = {aborted: false}; SCAN_CTL = ctl; const holes = range(1, 18); renderSheet();
   const okReply = t => { const r = parseJSON(String(t || '')); return !!(r && Array.isArray(r.golfers)); };
+  if (!B.copied) { B.copying = true; renderSheet(); const mem = []; for (const f of B.files) { if (ctl.aborted || S.sheet !== sh) return; mem.push(await memPhoto(f)); } B.files = mem; B.copied = true; B.copying = false; if (S.sheet === sh) renderSheet(); }
   for (const file of B.files) {
     if (ctl.aborted || S.sheet !== sh) return; let thumb = ''; try { thumb = URL.createObjectURL(file); } catch (_) {}
     sh.attempt = 0; startScanTick(sh); if (S.sheet === sh) renderSheet();
@@ -2220,6 +2230,7 @@ function uploadCompare(sh){
 function sheetUpload(){
   const sh = S.sheet; const c = D.comps[sh.ctx.cid]; if (!c) return null; const {round, gid} = sh.ctx; const g = D.golfers[gid]; const fn = firstName(gName(gid));
   const test = !!sh.ctx.test; const B = sh.bulk;
+  if (B && sh.phase === 'bulkreading' && B.copying) return `<h3>Upload cards</h3><p class="sub">${esc(c.name)} · Round ${round}</p><div class="reading"><span class="pulse"></span><p><b>Getting ${B.files.length} photo${B.files.length === 1 ? '' : 's'} ready…</b></p></div>`;
   if (B && sh.phase === 'bulkreading') return `<h3>Upload cards</h3><p class="sub">${esc(c.name)} · Round ${round}</p><div class="reading"><span class="pulse"></span><p><b>Reading photo ${Math.min(B.read + 1, B.files.length)} of ${B.files.length}…</b> About 10 to 30 seconds each. You can check each card as soon as they're all read.${sh.attempt ? ' Using the backup scanner.' : ''} <span id="scanSecs" style="opacity:.6"></span></p></div><button class="btn block" data-act="stopScan">Stop</button>`;
   if (B && sh.phase === 'bulkdone') { const fix = B.items.filter(x => x.result === 'fix');
     return `<h3>All cards done</h3><p class="sub">${esc(c.name)} · Round ${round}</p><p class="notebox ok"><b>${B.done} card${B.done === 1 ? '' : 's'} checked</b>${B.skipped ? `, ${B.skipped} skipped` : ''} from ${B.files.length} photo${B.files.length === 1 ? '' : 's'}.</p>${fix.length ? `<p class="hint">Photo saved, scores to fix:</p>${fix.map(x => `<button class="btn block" style="margin-top:6px" data-act="openCard" data-cid="${esc(c.id)}" data-round="${round}" data-gid="${esc(x.gid)}">Fix ${esc(gName(x.gid))}'s card</button>`).join('')}` : ''}<button class="btn primary block" style="margin-top:12px" data-act="closeSheet">Done</button>`; }
@@ -3196,7 +3207,7 @@ function sampleData(){
 /* ---------- Wiring ---------- */
 document.addEventListener('click', ev => { const el = ev.target.closest('[data-act]'); if (!el) return; const fn = ACT[el.dataset.act]; if (!fn) return; if (el.tagName === 'A') return; ev.preventDefault(); fn(el); });
 document.addEventListener('submit', ev => { const f = ev.target; const k = f.dataset && f.dataset.form; if (!k) return; ev.preventDefault(); if (FORMS[k]) FORMS[k](f); });
-document.addEventListener('change', ev => {
+document.addEventListener('change', async ev => {
   if (ev.target && ev.target.dataset && ev.target.dataset.pushpref) { ACT.pushPref(ev.target); return; }
   const t = ev.target;
   if (t.id === 'season') { S.season = t.value; render(); return; }
@@ -3204,7 +3215,8 @@ document.addEventListener('change', ev => {
   if (t.id === 'scanFile' || t.id === 'scanCam') { startScan(t.files); return; }
   if (t.id === 'bulkFile') { const ctx = BULK_CTX; BULK_CTX = null; const files = [...(t.files || [])].slice(0, 30); if (!ctx || !files.length) return;
     openSheet({type:'upload', ctx: {cid: ctx.cid, round: ctx.round, gid: null}, bulk: {files, items: [], i: 0, read: 0, done: 0, skipped: 0}, phase: 'bulkreading'}); runBulk(); return; }
-  if (t.id === 'photoFile' || t.id === 'photoCam') { const ctx = PHOTO_PENDING; PHOTO_PENDING = null; const file = t.files && t.files[0]; if (!ctx || !file) return;
+  if (t.id === 'photoFile' || t.id === 'photoCam') { const ctx = PHOTO_PENDING; PHOTO_PENDING = null; const picked = t.files && t.files[0]; if (!ctx || !picked) return;
+    toast('Getting the photo…'); const file = await memPhoto(picked);
     let thumbs = []; try { thumbs = [URL.createObjectURL(file)]; } catch (_) {}
     if (ctx.mode === 'send') { openSheet({type:'send', ctx, file, thumbs, phase:'preparing'}); prepareShare(S.sheet); return; }
     if (ctx.mode === 'upload') { openSheet({type:'upload', ctx, file, thumbs, phase:'reading'}); runUpload(); return; }
