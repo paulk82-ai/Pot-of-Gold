@@ -1072,7 +1072,10 @@ function roundCells(c, row){
   return compRounds(c).map(r => { const sc = row.cards.find(x => x.round === r.n); let v = '–', cls = '';
     if (!(sc && sc.filled)) cls = 'none';
     if (sc && sc.filled) { if (sc.counts) { v = val(sc); cls = 'counts'; if (!row.countedNs.has(r.n)) { cls = 'dropped'; } } else { v = sc.complete && (!sc.marked || !sc.photoOk) && (mixed || !sc.nr) ? val(sc) + '*' : (!mixed && sc.nr) ? 'NR' : '…'; cls = 'pending'; } }
-    return `<span class="rc ${cls}"><i>R${r.n}</i>${esc(v)}</span>`; }).join('');
+    // The golfer's place in that round, once their card counts ("1st", or "T2" when level after countback too).
+    const rp = sc && sc.counts ? roundBoard(c, r.n).ranked.find(x => x.gid === row.gid) : null;
+    const pl = rp ? `<b class="rp" aria-label="${rp.tied ? 'tied ' : ''}${ord(rp.pos)} in round ${r.n}">${rp.tied ? 'T' + rp.pos : ord(rp.pos)}</b>` : '';
+    return `<span class="rc ${cls}"><i>R${r.n}</i>${esc(v)}${pl}</span>`; }).join('');
 }
 function entriesHtml(c, lb){
   const A = S.isAdmin; const fin = c.status === 'final'; const cur = currentRound(c);
