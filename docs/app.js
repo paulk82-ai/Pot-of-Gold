@@ -360,17 +360,24 @@ function leaderboard(comp){
     return {entry:e, gid:e.golferId, golfer:D.golfers[e.golferId], cards, counted, countedNs, count:counted.length, total, keys: last ? cbKeys(mf, last.sc) : [], parSum: counted.reduce((a,x) => a + x.sc.runPar, 0), started: cards.some(c => c.filled > 0)};
   });
   const ranked = rows.filter(r => r.count > 0);
-  const cmp = (a,b) => { if (b.count !== a.count) return b.count - a.count; if (a.total !== b.total) return hi ? b.total - a.total : a.total - b.total; for (let i = 0; i < Math.min(a.keys.length, b.keys.length); i++) { const d = b.keys[i] - a.keys[i]; if (d) return hi ? d : -d; } return 0; };
+  const mp = monthPoints(comp); rows.forEach(r => { r.points = mp[r.gid] ? mp[r.gid].pts : 0; r.prize = 0; });
+  // The month is decided by league points earned round by round (comp.rankBy 'league', the default), level on
+  // points by the best rounds' total, then countback. comp.rankBy 'score' puts the best rounds' total first instead.
+  const byLeague = rankByLeague(comp);
+  const cmp = (a,b) => { if (byLeague && b.points !== a.points) return b.points - a.points; if (b.count !== a.count) return b.count - a.count; if (a.total !== b.total) return hi ? b.total - a.total : a.total - b.total; for (let i = 0; i < Math.min(a.keys.length, b.keys.length); i++) { const d = b.keys[i] - a.keys[i]; if (d) return hi ? d : -d; } return 0; };
   ranked.sort((a,b) => cmp(a,b) || byName(a.golfer, b.golfer));
   let pos = 0; ranked.forEach((r,i) => { if (i === 0 || cmp(ranked[i-1], r) !== 0) pos = i + 1; r.pos = pos; });
-  ranked.forEach((r,i) => { const p = ranked[i-1], q = ranked[i+1]; r.tied = (p && p.pos === r.pos) || (q && q.pos === r.pos); r.onCb = !r.tied && ((p && p.count === r.count && p.total === r.total) || (q && q.count === r.count && q.total === r.total)); });
+  const level = (x, y) => x && y && (!byLeague || x.points === y.points) && x.count === y.count && x.total === y.total;
+  ranked.forEach((r,i) => { const p = ranked[i-1], q = ranked[i+1]; r.tied = (p && p.pos === r.pos) || (q && q.pos === r.pos); r.onCb = !r.tied && (level(p, r) || level(q, r)); });
   const rest = rows.filter(r => r.count === 0).sort((a,b) => byName(a.golfer, b.golfer));
   rest.forEach(r => r.status = final ? 'No counting cards' : r.started ? 'Cards in progress' : 'No cards yet');
-  const mp = monthPoints(comp); rows.forEach(r => { r.points = mp[r.gid] ? mp[r.gid].pts : 0; r.prize = 0; });
   const st = compStats(comp);
   for (let i = 0; i < ranked.length;) { const p = ranked[i].pos; const grp = ranked.filter(r => r.pos === p); const cov = st.prizes.slice(p-1, p-1+grp.length).reduce((a,b) => a+b, 0); grp.forEach(r => r.prize = cov / grp.length); i += grp.length; }
   return (MEMO[key] = {ranked, rest, all: ranked.concat(rest), stats: st, best, rounds: rs, mode: mm});
 }
+function rankByLeague(comp){ return !!comp && comp.rankBy !== 'score'; }
+// League points a golfer would get for finishing in place p of a round.
+function pointsForPlace(comp, p){ const k = cfg(); if (comp.pointsSystem === 'field') return Math.max(1, fieldSize(comp) - p + 1) + (p === 1 ? 1 : 0); return p <= k.points.length ? Math.max(k.points[p-1], k.entryPoint) : k.entryPoint; }
 function monthText(r, comp){
   if (!r.count) return '–';
   if (monthMode(comp).format === 'parbogey') return pbStr(r.total);
@@ -945,10 +952,11 @@ function positionHtml(c){
   const lb = leaderboard(c); const row = lb.all.find(r => r.gid === S.myGid); if (!row) return '';
   if (!row.count) return `<div class="mypos"><span class="label">This month</span><b class="mypos-none">No counting cards yet</b></div>`;
   const u = monthUnit(c); const best = compBest(c); const leader = lb.ranked[0];
-  const sub = `${monthText(row, c)}${u ? ' ' + u : ''} from ${row.count} of ${best} card${best === 1 ? '' : 's'}`;
+  const lg = rankByLeague(c); const val = r => lg ? `${r.points} league pt${r.points === 1 ? '' : 's'}` : `${monthText(r, c)}${u ? ' ' + u : ''}`;
+  const sub = lg ? `${val(row)} · ${monthText(row, c)}${u ? ' ' + u : ''} from ${row.count} of ${best} card${best === 1 ? '' : 's'}` : `${monthText(row, c)}${u ? ' ' + u : ''} from ${row.count} of ${best} card${best === 1 ? '' : 's'}`;
   let lead = '';
-  if (row.pos === 1 && !row.tied) { const second = lb.ranked.find(r => r.pos === 2); lead = second ? `Ahead of ${second.golfer.name}, ${monthText(second, c)}${u ? ' ' + u : ''}` : ''; }
-  else if (leader && leader.gid !== row.gid) lead = `Leader: ${leader.golfer.name}, ${monthText(leader, c)}${u ? ' ' + u : ''}`;
+  if (row.pos === 1 && !row.tied) { const second = lb.ranked.find(r => r.pos === 2); lead = second ? `Ahead of ${second.golfer.name}, ${val(second)}` : ''; }
+  else if (leader && leader.gid !== row.gid) lead = `Leader: ${leader.golfer.name}, ${val(leader)}`;
   return `<div class="mypos"><span class="label">This month</span><div class="mypos-line"><b class="mypos-place">${row.tied ? 'T' : ''}${ord(row.pos)}</b><span class="mypos-sub">${esc(sub)}</span></div><div class="rcells">${roundCells(c, row)}</div>${lead ? `<p class="hint">${esc(lead)}</p>` : ''}${needHtml(c)}</div>`;
 }
 // "What you need": the score in the next round that would take this golfer past the place above them, as the table
@@ -959,6 +967,17 @@ function needText(c){
   const nr = compRounds(c).find(r => { const st = roundState(r); const card = cardOf(c.id, r.n, S.myGid); return (st === 'open' && !cardStarted(card)) || st === 'upcoming'; }); if (!nr) return null;
   const T = row.pos > 3 ? lb.ranked.find(r => r.pos <= 3 && r.pos === Math.max(...lb.ranked.filter(x => x.pos <= 3).map(x => x.pos))) : lb.ranked.find(r => r.pos === 1);
   if (!T || T.gid === row.gid) return null;
+  const goal0 = T.pos === 1 ? 'top of the table' : `${ord(T.pos)} place`;
+  if (rankByLeague(c)) {
+    // League points: the worst place in the next round that would lift this golfer's points above the target's,
+    // using their best rounds' points (the new round only counts if it's one of their best).
+    const mine = monthPoints(c)[row.gid] || {byRound: {}}; const best = compBest(c);
+    const total = p => Object.values(Object.assign({}, mine.byRound, {[nr.n]: pointsForPlace(c, p)})).sort((a, b) => b - a).slice(0, best).reduce((a, x) => a + x, 0);
+    const field = Math.max(1, roundBoard(c, compRounds(c)[0].n).ranked.length, fieldSize(c));
+    let place = 0; for (let p = field; p >= 1; p--) if (total(p) > T.points) { place = p; break; }
+    if (!place) return null;
+    return {x: null, place, text: place >= field ? `As it stands, any card that counts in round ${nr.n} would take you past ${T.golfer.name} into ${goal0}.` : `As it stands, finishing ${place === 1 ? '1st' : ord(place) + ' or better'} in round ${nr.n} would take you past ${T.golfer.name} into ${goal0}.`};
+  }
   const best = compBest(c); const vals = row.counted.map(x => x.v); const worst = vals.length ? Math.min(...vals) : 0;
   const full = row.count >= best; const nCount = full ? row.count : row.count + 1; const base = full ? row.total - worst : row.total;
   if (nCount < T.count) return null;
@@ -1111,10 +1130,12 @@ function monthMoves(c, lb){
   const key = 'mv:' + c.id; if (MEMO[key]) return MEMO[key];
   const out = {}; const last = Math.max(0, ...lb.ranked.map(r => Math.max(0, ...[...r.countedNs]))); if (last < 2) return (MEMO[key] = out);
   const best = compBest(c); const hi = higher({format: monthMode(c).format});
+  const lg = rankByLeague(c);
   const prev = lb.all.map(r => { const v = r.cards.filter(sc => sc.counts && sc.round < last).map(sc => metric({format: monthMode(c).format}, sc.rows)).sort((a, b) => hi ? b - a : a - b).slice(0, best);
-    return {gid: r.gid, count: v.length, total: v.reduce((a, x) => a + x, 0)}; }).filter(x => x.count);
-  prev.sort((a, b) => b.count - a.count || (hi ? b.total - a.total : a.total - b.total));
-  let pos = 0; prev.forEach((x, i) => { if (!i || prev[i-1].count !== x.count || prev[i-1].total !== x.total) pos = i + 1; x.pos = pos; });
+    const pts = lg ? compRounds(c).filter(x => x.n < last).map(x => roundPoints(c, x.n)[r.gid] || 0).sort((a, b) => b - a).slice(0, best).reduce((a, x) => a + x, 0) : 0;
+    return {gid: r.gid, count: v.length, total: v.reduce((a, x) => a + x, 0), pts}; }).filter(x => x.count);
+  prev.sort((a, b) => b.pts - a.pts || b.count - a.count || (hi ? b.total - a.total : a.total - b.total));
+  let pos = 0; prev.forEach((x, i) => { if (!i || prev[i-1].pts !== x.pts || prev[i-1].count !== x.count || prev[i-1].total !== x.total) pos = i + 1; x.pos = pos; });
   const was = {}; prev.forEach(x => was[x.gid] = x.pos);
   lb.ranked.forEach(r => { out[r.gid] = was[r.gid] ? was[r.gid] - r.pos : null; });
   return (MEMO[key] = out);
@@ -1135,10 +1156,11 @@ function monthListHtml(c, lb){
   const rs = compRounds(c);
   if (!lb.all.length) return '<div class="empty"><p class="hint">The table fills in as marked cards come in.</p></div>';
   const fin = c.status === 'final';
-  const head = `<div class="lb-head"><span>Pos</span><span>Golfer</span><span>${rs.length > 1 ? 'Best ' + compBest(c) : 'Score'}</span><span>League</span></div>`;
+  const lgSort = rankByLeague(c) ? ' class="sorted" aria-sort="descending"' : '';
+  const head = `<div class="lb-head"><span>Pos</span><span>Golfer</span><span${lgSort ? '' : ' class="sorted"'}>${rs.length > 1 ? 'Best ' + compBest(c) : 'Score'}</span><span${lgSort}>League</span></div>`;
   const mv = rs.length > 1 ? monthMoves(c, lb) : {};
   const rows = lb.ranked.map((r, i) => {
-    const nx = lb.ranked[i + 1]; const cb = nx && !r.tied && nx.pos !== r.pos && nx.count === r.count && nx.total === r.total && r.keys.length
+    const nx = lb.ranked[i + 1]; const cb = nx && !r.tied && nx.pos !== r.pos && (!rankByLeague(c) || nx.points === r.points) && nx.count === r.count && nx.total === r.total && r.keys.length
       ? cbHtml(r.golfer.name, nx.golfer.name, cbSteps(r.keys, nx.keys, (r.counted.slice().sort((a, b) => b.sc.round - a.sc.round)[0] || {sc:{rows:[]}}).sc.rows.length, 'Last counting card'), monthUnit(c)) : '';
     const tag = r.pos === 1 ? (fin ? 'Winner' : 'Leading') : r.pos === 2 ? 'Runner-up' : '';
     const note = r.count < compBest(c) ? `${r.count} of ${compBest(c)} rounds` : r.onCb ? 'on countback' : r.tied ? 'tied' : '';
@@ -1260,7 +1282,7 @@ function monthTableHtml(){
   const lb = leaderboard(c); const rs = compRounds(c); const fin = c.status === 'final';
   const played = rs.filter(r => roundState(r) !== 'upcoming').length;
   let h = `<div class="mt-head"><label class="field" style="margin:0"><span>Month</span><select id="leagueMonth">${comps.map(x => `<option value="${esc(x.id)}" ${x.id === c.id ? 'selected' : ''}>${esc(x.name)}${x.status === 'final' ? '' : ' (open)'}</option>`).join('')}</select></label>
-    <div class="mt-meta"><span class="pill ${fin ? 'final' : 'open'}">${fin ? 'Final' : 'Provisional'}</span><span class="hint">${rs.length > 1 ? `${played} of ${rs.length} rounds started · best ${compBest(c)} count` : esc((FORMATS[rcfg(c, rs[0].n).format] || FORMATS.stableford).short)}${lb.mode.mixed ? ' · Stableford points' : ''}</span></div>
+    <div class="mt-meta"><span class="pill ${fin ? 'final' : 'open'}">${fin ? 'Final' : 'Provisional'}</span><span class="hint">${rs.length > 1 ? `${played} of ${rs.length} rounds started · best ${compBest(c)} count${rankByLeague(c) ? ' · ranked on league points' : ''}` : esc((FORMATS[rcfg(c, rs[0].n).format] || FORMATS.stableford).short)}${lb.mode.mixed ? ' · Stableford points' : ''}</span></div>
     <p class="potline left">${esc(potLine(c))}</p></div>`;
   h += boardHtml(c, lb);
   if (S.isAdmin) h += `<button class="btn block" style="margin-top:10px" data-act="openComp" data-id="${esc(c.id)}">Manage ${esc(c.name)}</button>`;
@@ -1700,6 +1722,7 @@ function sheetComp(){
     <div class="grid2"><label class="field"><span>Rounds</span><select id="f-rcount" name="rcount">${range(1,5).map(i => `<option value="${i}" ${i === rs.length ? 'selected' : ''}>${i}</option>`).join('')}</select></label>
     <label class="field"><span>Best cards count</span><select id="f-best" name="best">${range(1,5).map(i => `<option value="${i}" ${i === best ? 'selected' : ''}>${i}</option>`).join('')}</select></label></div>
     <label class="field"><span>League points</span><select id="f-points" name="pointsSystem">${(() => { const v = c ? (c.pointsSystem || 'fixed') : cfg().pointsSystem; return [['field', 'By players: winner gets 1 point per paid player + 1 bonus'], ['fixed', `Fixed: ${cfg().points.join(', ')}, others ${cfg().entryPoint}`]].map(([x, l]) => `<option value="${x}" ${v === x ? 'selected' : ''}>${l}</option>`).join(''); })()}</select></label>
+    <label class="field"><span>Month won on</span><select id="f-rankby" name="rankBy">${[['league', 'League points from each round (level: best rounds\' total)'], ['score', 'Best rounds\' total score']].map(([x, l]) => `<option value="${x}" ${(c && c.rankBy === 'score' ? 'score' : 'league') === x ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     <div class="field"><span>Rounds</span><div id="f-rounds" class="rrows">${rs.map(r => roundRow(r.n, r, perRound)).join('')}</div><p class="hint">Pick each round's first and last day: any days you like, even just one. Golfers can play once in that time.</p></div>
     <label class="check toggle"><input type="checkbox" id="f-paydl" name="payDeadline" ${!c || c.payDeadline !== false ? 'checked' : ''}><span><b>Pay by the night before each round.</b> Once a round opens, anyone who hasn't paid can't start it until they pay (you can let someone play from their payment).</span></label>
     <label class="check toggle"><input type="checkbox" id="f-test" name="test" ${c && c.test ? 'checked' : ''}><span><b>Test month.</b> For trying the app out. It never counts towards the league or handicaps. Delete it when you've finished.</span></label>
@@ -2383,7 +2406,7 @@ function roundResultsText(c, n){
   const x = twosOn() ? twosItem(c.id, n) : null;
   if (x && (x.entrants.length || x.carryIn > 0.004)) lines.push(x.winners.length ? `2's: ${x.winners.map(w => twosWho(w, true)).join(', ')}${x.leftover > 0.004 ? ` · ${euro(x.leftover)} rolls on` : ''}` : `2's: no 2s, ${euro(x.pot)} rolls over to the next round`);
   const lb = leaderboard(c); const lead = lb.ranked && lb.ranked[0];
-  if (lead) lines.push(`Month so far: ${lead.golfer ? lead.golfer.name : gName(lead.gid)} leads`);
+  if (lead) lines.push(`Month so far: ${lead.golfer ? lead.golfer.name : gName(lead.gid)} leads${rankByLeague(c) && lead.points != null ? ` on ${lead.points} league pts` : ''}`);
   lines.push(appUrl());
   return lines.join('\n');
 }
@@ -2499,7 +2522,7 @@ async function resultsPic(c, n){
     const yy = Math.max(y + 20, H - 330); x.fillStyle = C.line; x.fillRect(L, yy - 52, W - 2 * L, 2);
     font(700, 24); x.fillStyle = C.mute; x.fillText('THE MONTH SO FAR', L, yy);
     const leaders = lbm.ranked.filter(r => r.pos === 1).map(r => r.golfer.name).join(' & ');
-    font(600, 34); x.fillStyle = '#FFFFFF'; wrap(`${leaders} lead${lbm.ranked.filter(r => r.pos === 1).length > 1 ? '' : 's'} on ${monthText(lead, c)}${monthUnit(c) ? ' ' + monthUnit(c) : ''}${nx ? ` · round ${nx.n} is next` : ''}`, L, yy + 48, W - 2 * L, 42);
+    font(600, 34); x.fillStyle = '#FFFFFF'; wrap(`${leaders} lead${lbm.ranked.filter(r => r.pos === 1).length > 1 ? '' : 's'} on ${rankByLeague(c) ? lead.points + ' league pts' : monthText(lead, c) + (monthUnit(c) ? ' ' + monthUnit(c) : '')}${nx ? ` · round ${nx.n} is next` : ''}`, L, yy + 48, W - 2 * L, 42);
   }
   x.fillStyle = C.deep; x.fillRect(0, H - 220, W, 220);
   rr(L, H - 190, 160, 160, 14, '#FFFFFF'); x.save(); x.translate(L + 4, H - 186); x.scale(152 / 41, 152 / 41); x.fillStyle = C.ink; x.fill(new Path2D(QR_PATH)); x.restore();
@@ -2877,7 +2900,7 @@ const FORMS = {
     const best = Math.min(count, Math.max(1, Number(fd.get('best')) || count));
     const id = S.sheet.id || newId(); const prev = D.comps[id] || {}; const format = fd.get('format') || 'stableford';
     const pointsSystem = fd.get('pointsSystem') === 'field' ? 'field' : 'fixed';
-    const data = Object.assign({}, prev, {test, pointsSystem, payDeadline: !!fd.get('payDeadline'), name: String(fd.get('name') || '').trim() || (test ? 'Test month' : `${dParts(sorted[0]).month} ${FORMATS[format].short}`), date: sorted[0], rounds, best, format, holes, tee: fd.get('tee') || k.tee, fee: num(fd.get('fee'), k.fee), allowance: num(fd.get('allowance'), k.allowance), status: prev.status || 'open', createdAt: prev.createdAt || Date.now()});
+    const data = Object.assign({}, prev, {test, pointsSystem, rankBy: fd.get('rankBy') === 'score' ? 'score' : 'league', payDeadline: !!fd.get('payDeadline'), name: String(fd.get('name') || '').trim() || (test ? 'Test month' : `${dParts(sorted[0]).month} ${FORMATS[format].short}`), date: sorted[0], rounds, best, format, holes, tee: fd.get('tee') || k.tee, fee: num(fd.get('fee'), k.fee), allowance: num(fd.get('allowance'), k.allowance), status: prev.status || 'open', createdAt: prev.createdAt || Date.now()});
     delete data.id;
     if (await put(`comps/${id}`, data)) { localSet(`comps/${id}`, data); closeSheetQuiet(); S.view = 'comps'; S.compId = id; S.card = null; S.compTab = 'entries'; top(); render(); toast(prev.name ? 'Competition updated' : 'Month created'); }
   },
