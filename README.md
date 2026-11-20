@@ -211,7 +211,9 @@ Off until you switch it on in **Admin → 2's club**.
 
 ## Prepaid credit
 
-For golfers who pay you in advance. In **Admin → Prepaid credit**, choose the golfer, whether it's for the **2's club** or the **Monthly entry**, and the amount they paid, then tap **Add credit**. Use a minus amount to take credit off (for example after a refund). **History** shows every change.
+For golfers who pay you in advance. In **Admin → Prepaid credit**, choose the golfer, whether it's for the **2's club** or the **Monthly entry**, and the amount they paid, then tap **Add credit**. Use a minus amount to take credit off (for example after a refund).
+
+To fix a mistake, tap **Edit** next to the golfer. You'll see every payment recorded for them. **Change** corrects the amount, or switches it between 2's and monthly. **Remove** takes it off. You can also add or take off credit there. What's left updates straight away; rounds and months the credit already paid for stay paid.
 
 - **2's credit:** each round they start, they're put in the 2's automatically and marked paid, and one round's cost (€2) comes off. The Start my round screen says "You're in the 2's club, paid from your credit" with the amount left, and they can tap **Skip the 2's** to keep their credit for another weekend. €8 covers four rounds.
 - **Monthly credit:** your app enters them in each open month and marks the entry paid, taking the entry fee (€10) off. €20 covers two months. This happens whenever your app is open, including straight after you create a new month.

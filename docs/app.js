@@ -1556,11 +1556,23 @@ function creditAdminHtml(){
       <label class="field"><span>For</span><select name="type"><option value="twos">2's club</option><option value="comp">Monthly entry</option></select></label></div>
       <label class="field"><span>Amount paid (€)</span><input name="amount" type="number" step="1" inputmode="numeric" placeholder="e.g. 8"></label>
       <button class="btn primary block" type="submit">Add credit</button><p class="hint">Use a minus amount to take credit off, for example after a refund.</p></form>
-    ${withCredit.length ? `<ul class="plain credit-list">${withCredit.map(g => `<li><span><b>${esc(g.name)}</b><small>${esc(creditText(g.id) || 'No credit left')}</small></span><button class="btn small" data-act="creditLog" data-id="${esc(g.id)}">History</button></li>`).join('')}</ul>` : ''}</div></section>`;
+    ${withCredit.length ? `<ul class="plain credit-list">${withCredit.map(g => `<li><span><b>${esc(g.name)}</b><small>${esc(creditText(g.id) || 'No credit left')}</small></span><button class="btn small" data-act="creditLog" data-id="${esc(g.id)}">Edit</button></li>`).join('')}</ul>` : ''}</div></section>`;
 }
+// A golfer's prepaid credit: every payment recorded, newest first. The organiser can change or remove any of them
+// (a wrong amount, the wrong golfer, 2's instead of monthly) and add or take off credit here too. What's been used
+// is worked out from the rounds and months it paid for, so the balance follows straight away.
 function sheetCredit(){
-  const g = D.golfers[S.sheet.id]; if (!g) return null; const log = (g.credits || []).slice().reverse();
-  return `<h3>${esc(g.name)}'s credit</h3><p class="sub">${esc(creditText(g.id) || 'No credit')}</p><ul class="plain">${log.map(x => `<li><span>${x.type === 'twos' ? "2's club" : 'Monthly entry'} · ${Number(x.amount) < 0 ? '−' : '+'}${euro(Math.abs(Number(x.amount)))}</span><small>${esc(shortDay(x.at))}</small></li>`).join('')}</ul>`;
+  const g = D.golfers[S.sheet.id]; if (!g) return null; const list = (g.credits || []).map((x, i) => Object.assign({i}, x)).reverse(); const ed = S.sheet.edit;
+  const typeSel = (v, name) => `<select name="${name || 'type'}"><option value="twos" ${v !== 'comp' ? 'selected' : ''}>2's club</option><option value="comp" ${v === 'comp' ? 'selected' : ''}>Monthly entry</option></select>`;
+  const usedT = creditIn(g.id, 'twos') - twosCredit(g.id), usedM = creditIn(g.id, 'comp') - compCredit(g.id);
+  let h = `<h3>${esc(g.name)}'s credit</h3><p class="sub">${esc(creditText(g.id) || 'No credit')}</p>`;
+  if (usedT > 0.004 || usedM > 0.004) h += `<p class="hint" style="margin-top:0">Used so far: ${[usedT > 0.004 ? `${euro(usedT)} on 2's rounds` : '', usedM > 0.004 ? `${euro(usedM)} on monthly entries` : ''].filter(Boolean).join(', ')}. Changing a payment below changes what's left; rounds and months already paid stay paid.</p>`;
+  h += `<form data-form="creditEdit" class="credit-add"><input type="hidden" name="i" value="new"><div class="grid2"><label class="field"><span>For</span>${typeSel('twos')}</label><label class="field"><span>Amount (€)</span><input name="amount" type="number" step="1" inputmode="numeric" placeholder="e.g. 8"></label></div><button class="btn primary block" type="submit">Add credit</button><p class="hint" style="margin:6px 0 0">A minus amount takes credit off.</p></form>`;
+  if (!list.length) return h + `<p class="hint">No payments recorded yet.</p>`;
+  h += `<span class="label" style="margin-top:14px">Payments recorded</span><ul class="plain credit-log">${list.map(x => ed === x.i
+    ? `<li class="editing"><form data-form="creditEdit"><input type="hidden" name="i" value="${x.i}"><div class="grid2"><label class="field"><span>For</span>${typeSel(x.type)}</label><label class="field"><span>Amount (€)</span><input name="amount" type="number" step="1" inputmode="numeric" value="${esc(Number(x.amount))}"></label></div><div class="grid2"><button class="btn primary" type="submit">Save</button><button class="btn" type="button" data-act="creditEditCancel">Cancel</button></div></form></li>`
+    : `<li><span><b>${x.type === 'twos' ? "2's club" : 'Monthly entry'} · ${Number(x.amount) < 0 ? '−' : '+'}${euro(Math.abs(Number(x.amount)))}</b><small>${esc(shortDay(x.at))}${x.edited ? ' · changed ' + esc(shortDay(x.edited)) : ''}</small></span><span class="credit-btns"><button class="btn small" data-act="creditEditOpen" data-i="${x.i}">Change</button><button class="btn small" data-act="creditDel" data-i="${x.i}">Remove</button></span></li>`).join('')}</ul>`;
+  return h;
 }
 function viewAdmin(){
   if (!S.loaded.adminCode) return '<p class="loading">Loading…</p>';
@@ -2674,6 +2686,12 @@ const ACT = {
   twosJoin(el){ const cid = el.dataset.cid, round = Number(el.dataset.round); if (canJoinTwos(cid, round)) joinTwos(cid, round); },
   twosPay(el){ openSheet({type:'twosPay', id: el.dataset.id}); },
   creditLog(el){ openSheet({type:'credit', id: el.dataset.id}); },
+  creditEditOpen(el){ if (S.sheet) { S.sheet.edit = Number(el.dataset.i); renderSheet(); } },
+  creditEditCancel(){ if (S.sheet) { S.sheet.edit = null; renderSheet(); } },
+  creditDel(el){ const g = D.golfers[S.sheet && S.sheet.id]; const i = Number(el.dataset.i); const x = g && (g.credits || [])[i]; if (!x || !S.isAdmin) return; const back = {type:'credit', id:g.id};
+    askConfirm('Remove this payment?', `${x.type === 'twos' ? "2's" : 'Monthly'} credit of ${euro(Number(x.amount))} recorded ${shortDay(x.at)} comes off ${g.name}'s credit. Rounds and months it already paid for stay paid.`, 'Remove', async () => {
+      const data = Object.assign({}, g, {credits: (g.credits || []).filter((_, k) => k !== i)}); delete data.id;
+      if (await put(`golfers/${g.id}`, data)) { localSet(`golfers/${g.id}`, data); MEMO = {}; openSheet(back); render(); toast(`Removed. ${firstName(g.name)}: ${creditText(g.id) || 'no credit left'}`); } else openSheet(back); }); },
   twosTable(){ S.view = 'table'; S.leagueTab = 'twos'; S.card = null; S.compId = null; S.playerId = null; top(); render(); },
   twosOpen(el){ openSheet({type:'twos', cid: el.dataset.cid, round: Number(el.dataset.round)}); },
   roundClose(el){ const c = D.comps[el.dataset.cid || S.compId]; const n = Number(el.dataset.round); const r = c && compRounds(c).find(x => x.n === n);
@@ -2872,6 +2890,14 @@ const FORMS = {
     const g = D.golfers[gid]; if (!g) { toast('Choose a golfer'); return; } if (!isFinite(amount) || !amount || Math.abs(amount) > 500) { toast('Enter the amount they paid'); return; }
     const data = Object.assign({}, g, {credits: (g.credits || []).concat([{type, amount, at: Date.now()}])}); delete data.id;
     if (await put(`golfers/${gid}`, data)) { localSet(`golfers/${gid}`, data); render(); toast(`${firstName(g.name)}: ${type === 'twos' ? "2's" : 'monthly'} credit now ${euro(type === 'twos' ? twosCredit(gid) : compCredit(gid))}`); if (type === 'comp') syncCredit(); } },
+  async creditEdit(f){ const sh = S.sheet; if (!sh || sh.type !== 'credit' || !S.isAdmin) return; const g = D.golfers[sh.id]; if (!g) return;
+    const fd = new FormData(f); const i = fd.get('i'); const type = fd.get('type') === 'comp' ? 'comp' : 'twos'; const amount = Number(fd.get('amount'));
+    if (!isFinite(amount) || !amount || Math.abs(amount) > 500) { toast('Enter an amount, e.g. 8 (or −2 to take some off)'); return; }
+    const list = (g.credits || []).slice();
+    if (i === 'new') list.push({type, amount, at: Date.now()});
+    else { const k = Number(i); if (!list[k]) return; list[k] = Object.assign({}, list[k], {type, amount, edited: Date.now()}); }
+    const data = Object.assign({}, g, {credits: list}); delete data.id;
+    if (await put(`golfers/${g.id}`, data)) { localSet(`golfers/${g.id}`, data); MEMO = {}; sh.edit = null; renderSheet(); render(); toast(`${firstName(g.name)}: ${creditText(g.id) || 'no credit left'}`); if (type === 'comp' || list.some(x => x.type === 'comp')) syncCredit(); } },
   async twosAdd(f){ const sh = S.sheet; if (!sh || sh.type !== 'twos' || !S.isAdmin) return; const gids = [...f.querySelectorAll('input[name=gid]:checked')].map(i => i.value);
     if (!gids.length) { toast('Tick at least one golfer.'); return; }
     const ops = gids.map(g => ({path:`comps/${sh.cid}/twos/${sh.round}_${g}`, data: twosDoc(sh.cid, sh.round, g)}));
@@ -3201,7 +3227,8 @@ function sampleData(){
           const upto = state === 'open' && j === 0 && i === 0 ? 11 : 18;
           range(1, upto).forEach(h => { let d = Math.round(gauss() * 0.95 + p.hi / 18 - 0.2); if (d <= -2 && rnd() > 0.25) d = -1; d = Math.min(d, 4); scores[h] = (fmt === 'stableford' && d >= 4 && rnd() < 0.4) ? 'P' : Math.max(1, par[h-1] + d); });
           const signed = !(state === 'open' && i === 2 && j === 1);
-          const startedAt = parseDate(r.from).getTime() + (9 + i) * 3600e3;
+          // Never in the future (on a round's first morning the later groups haven't teed off yet: start them earlier today).
+          const startedAt = Math.min(parseDate(r.from).getTime() + (9 + i) * 3600e3, Date.now() - (i + 1) * 600e3);
           st[`comps/${cid}/cards/${r.n}_${p.id}`] = {compId:cid, golferId:p.id, round:r.n, marker: pair[(j + 1) % pair.length].name, signed, scores, hi:p.hi, shots:null, startedAt, deadline: endOfDay(startedAt)};
         });
       }
