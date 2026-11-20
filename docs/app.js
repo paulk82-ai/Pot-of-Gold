@@ -251,6 +251,7 @@ function holePtsWith(sc, t){
   sc.rows.forEach(r => { out[r.h] = r.g === 'P' ? 0 : typeof r.g === 'number' ? Math.max(0, 2 + r.par - (r.g - al[r.h])) : null; });
   return out;
 }
+function holeRuns(hs){ const out = []; [...hs].sort((a, b) => a - b).forEach(h => { const l = out[out.length - 1]; if (l && h === l[1] + 1) l[1] = h; else out.push([h, h]); }); return out.map(([a, b]) => a === b ? String(a) : `${a}–${b}`).join(', '); }
 function holesText(hs){ return `hole${hs.length > 1 ? 's' : ''} ${hs.length > 1 ? hs.slice(0, -1).join(', ') + ' and ' + hs[hs.length - 1] : hs[0]}`; }
 function cardCheck(sc){
   const w = writtenOf(sc.card); if (!w || w.ok) return null;
@@ -1774,18 +1775,20 @@ function roundRow(n, r, show){
   const ec = S.sheet && S.sheet.type === 'comp' && S.sheet.id ? D.comps[S.sheet.id] : null;
   const locked = startedRounds(ec).includes(n);
   if (locked) { const eff = rcfg(ec, n); r = Object.assign({}, compRounds(ec).find(x => x.n === n), {format: eff.format, tee: eff.tee, holes: eff.holes}); }
-  r = r || {}; const hv = Array.isArray(r.holes) && r.holes.length ? (r.holes.length === 18 ? '18' : '14') : ''; const dis = '';
+  r = r || {}; const rh = Array.isArray(r.holes) && r.holes.length ? r.holes.join() : ''; const mh = ec && Array.isArray(ec.holes) ? ec.holes.join() : '';
+  // The month's own holes show as Default; 1–18 and 1–14 as themselves; any other set (say 1–13 and 18) is kept as it is unless changed.
+  const hv = !rh || rh === mh ? '' : rh === range(1,18).join() ? '18' : rh === range(1,14).join() ? '14' : 'keep'; const dis = '';
   return `<div class="rrow ${locked ? 'locked' : ''}"><div class="rrow-top"><span class="rn">R${n}</span><label class="rd"><small>First day</small><input type="date" id="f-r-${n}" name="r${n}" value="${esc(r.from || '')}" data-len="${r.from && r.to ? Math.max(0, Math.round((parseDate(r.to) - parseDate(r.from)) / 864e5)) : roundDays().len - 1}" required ${locked ? 'readonly' : ''} aria-label="Round ${n} first day"></label><label class="rd"><small>Last day</small><input type="date" id="f-re-${n}" name="re${n}" value="${esc(r.to || r.from || '')}" required ${locked ? 'readonly' : ''} aria-label="Round ${n} last day"></label></div>
     ${locked ? `<p class="hint" style="margin:6px 0 0">Started, so its days stay as they are. You can still change its format, tees or holes${show ? '' : ' (tick "Different format, tees or holes" below)'}: cards already in are re-scored.</p>` : ''}
     <div class="rrow-opts" ${show ? '' : 'hidden'}>
       <label><span>Format</span><select id="f-rf-${n}" name="rf${n}" ${dis} aria-label="Round ${n} format"><option value="">Default</option>${Object.entries(FORMATS).map(([k, f]) => `<option value="${k}" ${r.format === k ? 'selected' : ''}>${f.short}</option>`).join('')}</select></label>
       <label><span>Tees</span><select id="f-rt-${n}" name="rt${n}" ${dis} aria-label="Round ${n} tees"><option value="">Default</option>${Object.entries(TEES).map(([k, t]) => `<option value="${k}" ${r.tee === k ? 'selected' : ''}>${t.name}</option>`).join('')}</select></label>
-      <label><span>Holes</span><select id="f-rh-${n}" name="rh${n}" ${dis} aria-label="Round ${n} holes"><option value="">Default</option><option value="18" ${hv === '18' ? 'selected' : ''}>18</option><option value="14" ${hv === '14' ? 'selected' : ''}>14 (1–14)</option></select></label>
+      <label><span>Holes</span><select id="f-rh-${n}" name="rh${n}" ${dis} aria-label="Round ${n} holes"><option value="">Default</option><option value="18" ${hv === '18' ? 'selected' : ''}>18</option><option value="14" ${hv === '14' ? 'selected' : ''}>14 (1–14)</option>${hv === 'keep' ? `<option value="keep" selected>${esc(holeRuns(r.holes))}</option>` : ''}</select></label>
     </div></div>`;
 }
 // What changes for rounds already under way when the month is saved, in words for the confirm box ('' if nothing does).
 function rescoreText(oldC, newC, ns){
-  const say = x => `${FORMATS[x.format] ? FORMATS[x.format].short : x.format}, ${TEES[x.tee] ? TEES[x.tee].name : x.tee} tees, ${x.holes.length} holes`;
+  const say = x => `${FORMATS[x.format] ? FORMATS[x.format].short : x.format}, ${TEES[x.tee] ? TEES[x.tee].name : x.tee} tees, holes ${holeRuns(x.holes)}`;
   const lines = []; let fewer = false, more = false, hand = false;
   ns.forEach(n => { const a = rcfg(oldC, n), b = rcfg(newC, n);
     if (a.format === b.format && a.tee === b.tee && a.holes.join() === b.holes.join()) return;
@@ -2926,7 +2929,8 @@ const FORMS = {
     const holes = preset === '18' ? range(1,18) : preset === '14' ? range(1,14) : fd.getAll('h').map(Number).sort((a,b) => a-b);
     if (!holes.length) { toast('Pick at least one hole'); return; }
     const count = Math.max(1, Math.min(5, Number(fd.get('rcount')) || 4)); const per = !!fd.get('perround');
-    const rows = range(1, count).map(i => ({from: fd.get('r' + i), to: fd.get('re' + i) || fd.get('r' + i), format: per ? fd.get('rf' + i) || null : null, tee: per ? fd.get('rt' + i) || null : null, holes: per ? ({'18': range(1,18), '14': range(1,14)})[fd.get('rh' + i)] || null : null}));
+    const oc = S.sheet.id ? D.comps[S.sheet.id] : null; const keepHoles = i => { const pr = oc && compRounds(oc).find(x => x.n === i); return pr && Array.isArray(pr.holes) && pr.holes.length ? pr.holes.slice() : null; };
+    const rows = range(1, count).map(i => ({from: fd.get('r' + i), to: fd.get('re' + i) || fd.get('r' + i), format: per ? fd.get('rf' + i) || null : null, tee: per ? fd.get('rt' + i) || null : null, holes: per ? (fd.get('rh' + i) === 'keep' ? keepHoles(i) : ({'18': range(1,18), '14': range(1,14)})[fd.get('rh' + i)] || null) : null}));
     if (rows.some(r => !r.from)) { toast('Set a date for every round'); return; }
     const test = !!fd.get('test');
     if (rows.some(r => r.to < r.from)) { toast("A round's last day can't be before its first day"); return; }

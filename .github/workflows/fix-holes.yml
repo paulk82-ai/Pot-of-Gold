@@ -1,0 +1,21 @@
+# One-off repair, run once by hand (see scripts/fix-holes.mjs).
+name: Fix round holes
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - working-directory: scripts
+        run: npm install --no-save --no-audit --no-fund firebase-admin@12.7.0
+      - working-directory: scripts
+        run: node fix-holes.mjs
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
