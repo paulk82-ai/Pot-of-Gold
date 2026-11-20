@@ -35,6 +35,10 @@ const FORMATS = {
   gross:{name:'Stroke play (gross)', short:'Gross', better:'low'},
   parbogey:{name:'v Par', short:'v Par', better:'high'}
 };
+// Hole sets: winter is holes 1–13 then 18; straight is 1–18; anything else is a custom pick.
+const WINTER = [1,2,3,4,5,6,7,8,9,10,11,12,13,18];
+function holeSet(v, picked){ return v === 'winter' ? WINTER.slice() : v === '18' ? range(1,18) : v === 'custom' ? [...new Set((picked || []).map(Number).filter(h => h >= 1 && h <= 18))].sort((a, b) => a - b) : null; }
+function holeKind(hs){ const j = (hs || []).join(); return j === WINTER.join() ? 'winter' : j === range(1,18).join() ? '18' : 'custom'; }
 const DEFAULTS = { pointsSystem:'field', fee:10, revtag:'paul3d7qv', points:[5,4,3,2], entryPoint:1, prize:[60,40], allowance:95, tee:'white', rounds:4, best:3, roundDay:5, roundDays:3, bands:[10,20], cutWin:[1,2,3], cutRun:[0.5,1,1.5], riseBy:0.5, riseAfter:1, holdMonths:1, hcpMax:54, twosOn:false, twosFee:2, photoRequired:true };
 // Entries are paid through Revolut only: in the Revolut app, or by debit card on the Revolut payment page.
 const METHODS = {revolut:'Revolut', card:'Card (Revolut)', credit:'Paid from credit'};
@@ -1725,9 +1729,10 @@ function sheetAccount(){
 function sheetComp(){
   const c = S.sheet.id ? D.comps[S.sheet.id] : null; const k = cfg();
   const rs = c ? compRounds(c) : weekendRounds(defaultFirstFri(), k.rounds);
-  const fmt = (c && c.format) || 'stableford'; const holes = (c && c.holes) || range(1,18);
-  const is = arr => holes.length === arr.length && holes.every((h,i) => h === arr[i]);
-  const preset = is(range(1,18)) ? '18' : is(range(1,14)) ? '14' : 'custom';
+  // A new month starts on the holes the last month used (winter or straight), so it's usually already right.
+  const last = Object.values(D.comps).filter(x => x && !x.test && Array.isArray(x.holes) && x.holes.length).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))[0];
+  const fmt = (c && c.format) || 'stableford'; const holes = (c && c.holes) || (last && last.holes.slice()) || range(1,18);
+  const preset = holeKind(holes);
   const best = c ? compBest(c) : Math.min(k.best, rs.length);
   const perRound = !!(c && compRounds(c).some(r => r.format || r.tee || (Array.isArray(r.holes) && r.holes.length)));
   return `<form data-form="comp"><h3>${c ? 'Edit competition' : 'New month'}</h3><p class="sub">${c ? esc(c.name) : `Rounds open ${esc(usualDaysText())} to start with. Change any round's days below.`}</p>
@@ -1742,7 +1747,7 @@ function sheetComp(){
     <label class="check toggle"><input type="checkbox" id="f-perround" name="perround" ${perRound ? 'checked' : ''}><span>Different format, tees or holes for some rounds. "Default" uses the month's settings below.</span></label>
     <label class="field"><span>Entry fee for the month (€)</span><input type="number" id="f-fee" name="fee" min="0" step="1" value="${esc(c && c.fee != null ? c.fee : k.fee)}"></label>
     <div class="field"><span>Format${'' /* default */}</span><div class="radios">${Object.entries(FORMATS).map(([key,f]) => radio('format', key, f.name, fmt === key)).join('')}</div></div>
-    <div class="field"><span>Holes</span><div class="radios">${radio('holes','18','18 holes', preset === '18')}${radio('holes','14','14 holes (1–14)', preset === '14')}${radio('holes','custom','Pick holes', preset === 'custom')}</div>
+    <div class="field"><span>Holes</span><div class="radios">${radio('holes','winter','Winter (1–13 & 18)', preset === 'winter')}${radio('holes','18','Straight (1–18)', preset === '18')}${radio('holes','custom','Custom holes', preset === 'custom')}</div>
       <div class="holepick" id="holepick" ${preset === 'custom' ? '' : 'hidden'}>${range(1,18).map(h => `<label class="hp"><input type="checkbox" id="f-h-${h}" name="h" value="${h}" ${holes.includes(h) ? 'checked' : ''}><span>${h}</span></label>`).join('')}</div></div>
     <div class="grid2"><label class="field"><span>Men's tees</span><select id="f-tee" name="tee">${Object.entries(TEES).map(([key,t]) => `<option value="${key}" ${((c && c.tee) || k.tee) === key ? 'selected' : ''}>${t.name}</option>`).join('')}</select></label>
     <label class="field"><span>Allowance %</span><input type="number" id="f-allow" name="allowance" min="0" max="100" value="${esc(c && c.allowance != null ? c.allowance : k.allowance)}"></label></div>
@@ -1761,7 +1766,7 @@ function allowTableHtml(allow, tee, nholes){
 function refreshAllowTable(){
   const box = $('#f-shots'); const f = box && box.closest('form'); if (!box || !f) return;
   const pick = f.querySelector('input[name=holes]:checked'); const v = pick ? pick.value : '18';
-  const n = v === '18' ? 18 : v === '14' ? 14 : f.querySelectorAll('input[name=h]:checked').length;
+  const n = v === 'custom' ? f.querySelectorAll('input[name=h]:checked').length : holeSet(v).length;
   const a = Number(($('#f-allow') || {}).value); box.innerHTML = allowTableHtml(a, ($('#f-tee') || {}).value, n);
   f.querySelectorAll('[data-act=allowSet]').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.v) === a)));
 }
@@ -1777,13 +1782,14 @@ function roundRow(n, r, show){
   if (locked) { const eff = rcfg(ec, n); r = Object.assign({}, compRounds(ec).find(x => x.n === n), {format: eff.format, tee: eff.tee, holes: eff.holes}); }
   r = r || {}; const rh = Array.isArray(r.holes) && r.holes.length ? r.holes.join() : ''; const mh = ec && Array.isArray(ec.holes) ? ec.holes.join() : '';
   // The month's own holes show as Default; 1–18 and 1–14 as themselves; any other set (say 1–13 and 18) is kept as it is unless changed.
-  const hv = !rh || rh === mh ? '' : rh === range(1,18).join() ? '18' : rh === range(1,14).join() ? '14' : 'keep'; const dis = '';
+  const hv = !rh || rh === mh ? '' : holeKind(r.holes); const dis = ''; const picked = hv === 'custom' ? r.holes : [];
   return `<div class="rrow ${locked ? 'locked' : ''}"><div class="rrow-top"><span class="rn">R${n}</span><label class="rd"><small>First day</small><input type="date" id="f-r-${n}" name="r${n}" value="${esc(r.from || '')}" data-len="${r.from && r.to ? Math.max(0, Math.round((parseDate(r.to) - parseDate(r.from)) / 864e5)) : roundDays().len - 1}" required ${locked ? 'readonly' : ''} aria-label="Round ${n} first day"></label><label class="rd"><small>Last day</small><input type="date" id="f-re-${n}" name="re${n}" value="${esc(r.to || r.from || '')}" required ${locked ? 'readonly' : ''} aria-label="Round ${n} last day"></label></div>
     ${locked ? `<p class="hint" style="margin:6px 0 0">Started, so its days stay as they are. You can still change its format, tees or holes${show ? '' : ' (tick "Different format, tees or holes" below)'}: cards already in are re-scored.</p>` : ''}
     <div class="rrow-opts" ${show ? '' : 'hidden'}>
       <label><span>Format</span><select id="f-rf-${n}" name="rf${n}" ${dis} aria-label="Round ${n} format"><option value="">Default</option>${Object.entries(FORMATS).map(([k, f]) => `<option value="${k}" ${r.format === k ? 'selected' : ''}>${f.short}</option>`).join('')}</select></label>
       <label><span>Tees</span><select id="f-rt-${n}" name="rt${n}" ${dis} aria-label="Round ${n} tees"><option value="">Default</option>${Object.entries(TEES).map(([k, t]) => `<option value="${k}" ${r.tee === k ? 'selected' : ''}>${t.name}</option>`).join('')}</select></label>
-      <label><span>Holes</span><select id="f-rh-${n}" name="rh${n}" ${dis} aria-label="Round ${n} holes"><option value="">Default</option><option value="18" ${hv === '18' ? 'selected' : ''}>18</option><option value="14" ${hv === '14' ? 'selected' : ''}>14 (1–14)</option>${hv === 'keep' ? `<option value="keep" selected>${esc(holeRuns(r.holes))}</option>` : ''}</select></label>
+      <label><span>Holes</span><select id="f-rh-${n}" name="rh${n}" ${dis} aria-label="Round ${n} holes"><option value="">Default</option><option value="winter" ${hv === 'winter' ? 'selected' : ''}>Winter</option><option value="18" ${hv === '18' ? 'selected' : ''}>Straight</option><option value="custom" ${hv === 'custom' ? 'selected' : ''}>Custom</option></select></label>
+      <div class="holepick rhp" id="f-rhp-${n}" ${hv === 'custom' ? '' : 'hidden'}>${range(1,18).map(h => `<label class="hp"><input type="checkbox" id="f-rhh-${n}-${h}" name="rhh${n}" value="${h}" ${picked.includes(h) ? 'checked' : ''}><span>${h}</span></label>`).join('')}</div>
     </div></div>`;
 }
 // What changes for rounds already under way when the month is saved, in words for the confirm box ('' if nothing does).
@@ -2926,11 +2932,11 @@ const FORMS = {
   async signup(f){ const fd = new FormData(f); S.busy = true; render(); try { await be.signUpEmail(String(fd.get('email')).trim(), String(fd.get('pw'))); toast('Account created. Check your email to confirm it.'); } catch (e) { toast(authErr(e)); } finally { S.busy = false; render(); } },
   async comp(f){
     const fd = new FormData(f); const k = cfg(); const preset = fd.get('holes');
-    const holes = preset === '18' ? range(1,18) : preset === '14' ? range(1,14) : fd.getAll('h').map(Number).sort((a,b) => a-b);
+    const holes = holeSet(preset === 'winter' || preset === '18' ? preset : 'custom', fd.getAll('h'));
     if (!holes.length) { toast('Pick at least one hole'); return; }
     const count = Math.max(1, Math.min(5, Number(fd.get('rcount')) || 4)); const per = !!fd.get('perround');
-    const oc = S.sheet.id ? D.comps[S.sheet.id] : null; const keepHoles = i => { const pr = oc && compRounds(oc).find(x => x.n === i); return pr && Array.isArray(pr.holes) && pr.holes.length ? pr.holes.slice() : null; };
-    const rows = range(1, count).map(i => ({from: fd.get('r' + i), to: fd.get('re' + i) || fd.get('r' + i), format: per ? fd.get('rf' + i) || null : null, tee: per ? fd.get('rt' + i) || null : null, holes: per ? (fd.get('rh' + i) === 'keep' ? keepHoles(i) : ({'18': range(1,18), '14': range(1,14)})[fd.get('rh' + i)] || null) : null}));
+    const rows = range(1, count).map(i => ({from: fd.get('r' + i), to: fd.get('re' + i) || fd.get('r' + i), format: per ? fd.get('rf' + i) || null : null, tee: per ? fd.get('rt' + i) || null : null, holes: per ? holeSet(fd.get('rh' + i), fd.getAll('rhh' + i)) : null}));
+    if (rows.some(r => Array.isArray(r.holes) && !r.holes.length)) { toast('Tick the holes for each round set to Custom holes'); return; }
     if (rows.some(r => !r.from)) { toast('Set a date for every round'); return; }
     const test = !!fd.get('test');
     if (rows.some(r => r.to < r.from)) { toast("A round's last day can't be before its first day"); return; }
@@ -3310,12 +3316,13 @@ document.addEventListener('change', async ev => {
   if (t.name === 'holes' && t.closest('form[data-form=comp]')) { $('#holepick').hidden = t.value !== 'custom'; refreshAllowTable(); return; }
   if (['f-allow', 'f-tee'].includes(t.id) || (t.name === 'h' && t.closest('form[data-form=comp]'))) refreshAllowTable();
   if (t.id === 'f-rcount') { const n = Number(t.value); const box = $('#f-rounds'); const show = !!($('#f-perround') || {}).checked;
-    const have = [...box.querySelectorAll('.rrow')].map((row, i) => { const v = id => (document.getElementById(id + (i + 1)) || {}).value || ''; const hv = v('f-rh-'); return {from:v('f-r-'), to:v('f-re-'), format:v('f-rf-') || null, tee:v('f-rt-') || null, holes: hv === '18' ? range(1,18) : hv === '14' ? range(1,14) : null}; });
+    const have = [...box.querySelectorAll('.rrow')].map((row, i) => { const v = id => (document.getElementById(id + (i + 1)) || {}).value || ''; const hv = v('f-rh-'); return {from:v('f-r-'), to:v('f-re-'), format:v('f-rf-') || null, tee:v('f-rt-') || null, holes: holeSet(hv, [...row.querySelectorAll(`input[name=rhh${i + 1}]:checked`)].map(x => x.value))}; });
     const first = (have[0] && have[0].from) || defaultFirstFri();
     const len = have[0] && have[0].from && have[0].to >= have[0].from ? Math.round((parseDate(have[0].to) - parseDate(have[0].from)) / 864e5) : roundDays().len - 1;
     box.innerHTML = range(1, n).map(i => roundRow(i, have[i-1] && have[i-1].from ? have[i-1] : {from: addDays(first, 7*(i-1)), to: addDays(first, 7*(i-1) + len)}, show)).join(''); const b = $('#f-best'); if (b && Number(b.value) > n) b.value = String(n); return; }
   if (t.id === 'jq-link') { const box = $('#jq-new'); if (box) box.hidden = !!t.value; return; }
   if (t.id === 'f-test' && t.checked) { const r1 = $('#f-r-1'); if (r1) { r1.value = iso(new Date()); r1.dispatchEvent(new Event('change', {bubbles:true})); } const nm = $('#f-name'); if (nm && !nm.value) nm.value = 'Test month'; return; }
+  if (/^f-rh-\d+$/.test(t.id)) { const b = document.getElementById('f-rhp-' + t.id.slice(5)); if (b) b.hidden = t.value !== 'custom'; return; }
   if (t.id === 'f-perround') { document.querySelectorAll('#f-rounds .rrow-opts').forEach(x => { x.hidden = !t.checked; }); return; }
   // A round's first day moves: its last day moves with it, keeping the same number of days. Moving round 1 moves the
   // later rounds too, a week apart. Changing a last day sets that round's length.
