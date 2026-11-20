@@ -1,0 +1,23 @@
+# Read-only check of the months' round settings and card counts (no names). Run by hand from the Actions tab.
+name: Check data
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Install firebase-admin
+        working-directory: scripts
+        run: npm install --no-save --no-audit --no-fund firebase-admin@12.7.0
+      - name: Check
+        working-directory: scripts
+        run: node check.mjs
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
