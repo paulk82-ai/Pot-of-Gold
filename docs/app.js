@@ -1774,14 +1774,31 @@ function roundRow(n, r, show){
   const ec = S.sheet && S.sheet.type === 'comp' && S.sheet.id ? D.comps[S.sheet.id] : null;
   const locked = startedRounds(ec).includes(n);
   if (locked) { const eff = rcfg(ec, n); r = Object.assign({}, compRounds(ec).find(x => x.n === n), {format: eff.format, tee: eff.tee, holes: eff.holes}); }
-  r = r || {}; const hv = Array.isArray(r.holes) && r.holes.length ? (r.holes.length === 18 ? '18' : '14') : ''; const dis = locked ? 'disabled' : '';
+  r = r || {}; const hv = Array.isArray(r.holes) && r.holes.length ? (r.holes.length === 18 ? '18' : '14') : ''; const dis = '';
   return `<div class="rrow ${locked ? 'locked' : ''}"><div class="rrow-top"><span class="rn">R${n}</span><label class="rd"><small>First day</small><input type="date" id="f-r-${n}" name="r${n}" value="${esc(r.from || '')}" data-len="${r.from && r.to ? Math.max(0, Math.round((parseDate(r.to) - parseDate(r.from)) / 864e5)) : roundDays().len - 1}" required ${locked ? 'readonly' : ''} aria-label="Round ${n} first day"></label><label class="rd"><small>Last day</small><input type="date" id="f-re-${n}" name="re${n}" value="${esc(r.to || r.from || '')}" required ${locked ? 'readonly' : ''} aria-label="Round ${n} last day"></label></div>
-    ${locked ? `<p class="hint" style="margin:6px 0 0">Started, so its date, format, tees and holes stay as they are.</p>` : ''}
+    ${locked ? `<p class="hint" style="margin:6px 0 0">Started, so its days stay as they are. You can still change its format, tees or holes${show ? '' : ' (tick "Different format, tees or holes" below)'}: cards already in are re-scored.</p>` : ''}
     <div class="rrow-opts" ${show ? '' : 'hidden'}>
       <label><span>Format</span><select id="f-rf-${n}" name="rf${n}" ${dis} aria-label="Round ${n} format"><option value="">Default</option>${Object.entries(FORMATS).map(([k, f]) => `<option value="${k}" ${r.format === k ? 'selected' : ''}>${f.short}</option>`).join('')}</select></label>
       <label><span>Tees</span><select id="f-rt-${n}" name="rt${n}" ${dis} aria-label="Round ${n} tees"><option value="">Default</option>${Object.entries(TEES).map(([k, t]) => `<option value="${k}" ${r.tee === k ? 'selected' : ''}>${t.name}</option>`).join('')}</select></label>
       <label><span>Holes</span><select id="f-rh-${n}" name="rh${n}" ${dis} aria-label="Round ${n} holes"><option value="">Default</option><option value="18" ${hv === '18' ? 'selected' : ''}>18</option><option value="14" ${hv === '14' ? 'selected' : ''}>14 (1–14)</option></select></label>
     </div></div>`;
+}
+// What changes for rounds already under way when the month is saved, in words for the confirm box ('' if nothing does).
+function rescoreText(oldC, newC, ns){
+  const say = x => `${FORMATS[x.format] ? FORMATS[x.format].short : x.format}, ${TEES[x.tee] ? TEES[x.tee].name : x.tee} tees, ${x.holes.length} holes`;
+  const lines = []; let fewer = false, more = false, hand = false;
+  ns.forEach(n => { const a = rcfg(oldC, n), b = rcfg(newC, n);
+    if (a.format === b.format && a.tee === b.tee && a.holes.join() === b.holes.join()) return;
+    const cards = Object.values(D.cards).filter(k => k && k.compId === oldC.id && Number(k.round) === n);
+    const ins = cards.filter(k => cardStarted(k) || (k.scores && Object.keys(k.scores).length));
+    if (b.holes.some(h => !a.holes.includes(h))) more = true; if (a.holes.some(h => !b.holes.includes(h))) fewer = true;
+    if (ins.some(k => k.shots != null)) hand = true;
+    lines.push(`Round ${n}: ${say(a)} → ${say(b)}. ${ins.length} card${ins.length === 1 ? '' : 's'} in.`); });
+  if (!lines.length) return '';
+  return lines.join(' ') + ' Every card in those rounds is worked out again with the new settings: shots, points and places can change.'
+    + (more ? " Cards won't show as finished until the extra holes are filled in, so ask those golfers (or fill them in on their card)." : '')
+    + (fewer ? ' Scores on the dropped holes are kept but no longer count.' : '')
+    + (hand ? ' Shots you set by hand on a card stay as you set them.' : '');
 }
 function sheetAddEntry(){
   const c = D.comps[S.compId]; if (!c) return null;
@@ -2918,8 +2935,9 @@ const FORMS = {
     const rounds = rows.map((r, i) => ({n:i+1, from:r.from, to:r.to, opens: be.stamp(parseDate(r.from)), closes: be.stamp(parseDate(addDays(r.to, 1))), format:r.format, tee:r.tee, holes:r.holes}));
     const ec = S.sheet.id ? D.comps[S.sheet.id] : null; const done = startedRounds(ec);
     if (done.length > count) { toast(`${done.length} rounds have already started, so the month needs at least ${done.length}.`); return; }
-    done.forEach(n => { const pr = compRounds(ec).find(x => x.n === n); const eff = rcfg(ec, n);
-      rounds[n - 1] = Object.assign({}, pr, {n, format: eff.format, tee: eff.tee, holes: eff.holes, allowance: eff.allowance}); });
+    // A started round keeps its days (and allowance), but its format, tees and holes can change: the cards already in are re-scored.
+    done.forEach(n => { const pr = compRounds(ec).find(x => x.n === n); const eff = rcfg(ec, n); const sub = rounds.find(x => x.from === pr.from) || rounds[n - 1] || {};
+      rounds[n - 1] = Object.assign({}, pr, {n, format: sub.format || null, tee: sub.tee || null, holes: sub.holes || null, allowance: eff.allowance}); });
     rounds.sort((a, b) => a.from.localeCompare(b.from)); rounds.forEach((r, i) => { if (i && r.from <= rounds[i - 1].from) r.bad = true; });
     rounds.forEach((r, i) => { if (i && r.from <= rounds[i - 1].to) r.bad = true; });
     if (rounds.some(r => r.bad)) { toast("Rounds can't overlap: each one has to start after the one before ends."); return; }
@@ -2928,7 +2946,9 @@ const FORMS = {
     const pointsSystem = fd.get('pointsSystem') === 'field' ? 'field' : 'fixed';
     const data = Object.assign({}, prev, {test, pointsSystem, rankBy: fd.get('rankBy') === 'score' ? 'score' : 'league', payDeadline: !!fd.get('payDeadline'), name: String(fd.get('name') || '').trim() || (test ? 'Test month' : `${dParts(sorted[0]).month} ${FORMATS[format].short}`), date: sorted[0], rounds, best, format, holes, tee: fd.get('tee') || k.tee, fee: num(fd.get('fee'), k.fee), allowance: num(fd.get('allowance'), k.allowance), status: prev.status || 'open', createdAt: prev.createdAt || Date.now()});
     delete data.id;
-    if (await put(`comps/${id}`, data)) { localSet(`comps/${id}`, data); closeSheetQuiet(); S.view = 'comps'; S.compId = id; S.card = null; S.compTab = 'entries'; top(); render(); toast(prev.name ? 'Competition updated' : 'Month created'); }
+    const save = async () => { if (await put(`comps/${id}`, data)) { localSet(`comps/${id}`, data); MEMO = {}; closeSheetQuiet(); S.view = 'comps'; S.compId = id; S.card = null; S.compTab = 'entries'; top(); render(); toast(prev.name ? 'Competition updated' : 'Month created'); } };
+    const moved = ec ? rescoreText(ec, Object.assign({}, data, {id}), done) : '';
+    if (moved) askConfirm('Re-score cards already in?', moved, 'Save and re-score', save); else await save();
   },
   async addEntries(f){
     const fd = new FormData(f); const ids = fd.getAll('gid'); const pay = fd.get('pay') || ''; const c = D.comps[S.compId];
@@ -3320,5 +3340,5 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 setInterval(() => { if (document.visibilityState === 'visible') checkVersion(); }, 30 * 60e3);
 checkVersion();
 const hv = (location.hash || '').slice(1); if (['home','table','me','comps','golfers','admin'].includes(hv)) S.view = hv; else if (hv === 'league') S.view = 'table';
-window.__rgc = {S, D, watchList, myStats, curHcp, hcpLedger, hcpRules, scoreCard, leaderboard, roundBoard, roundPoints, league, allocShots, checkVersion, twosLedger, cardCounts};
+window.__rgc = {S, D, watchList, myStats, curHcp, hcpLedger, hcpRules, scoreCard, leaderboard, roundBoard, roundPoints, league, allocShots, checkVersion, twosLedger, cardCounts, startedRounds, rcfg};
 boot();
