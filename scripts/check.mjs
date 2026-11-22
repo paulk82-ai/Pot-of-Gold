@@ -9,7 +9,7 @@ const comps = await db.collection('comps').get();
 const ms = v => v && typeof v.toMillis === 'function' ? v.toMillis() : v;
 for (const cs of comps.docs) {
   const c = cs.data(); if (c.test) continue;
-  console.log(`\n=== ${cs.id} "${c.name}" status=${c.status} format=${c.format} tee=${c.tee} holes=${JSON.stringify(c.holes)} best=${c.best} allowance=${c.allowance} rankBy=${c.rankBy} updated=${c.updatedAt || ''}`);
+  console.log(`\n=== ${cs.id} "${c.name}" status=${c.status} format=${c.format} tee=${c.tee} holes=${JSON.stringify(c.holes)} best=${c.best} allowance=${c.allowance} rankBy=${c.rankBy} points=${c.pointsSystem} fee=${c.fee} date=${c.date} payDeadline=${c.payDeadline} updated=${c.updatedAt || ''}`);
   (c.rounds || []).forEach(r => console.log(`  round n=${r.n} ${r.from}..${r.to} format=${r.format} tee=${r.tee} holes=${JSON.stringify(r.holes)} allowance=${r.allowance} opens=${ms(r.opens)} closes=${ms(r.closes)} closedAt=${ms(r.closedAt) || ''}`));
   const cards = (await cs.ref.collection('cards').get()).docs.map(d => d.data());
   const by = {}; cards.forEach(k => { const n = String(k.round); (by[n] = by[n] || []).push(k); });
